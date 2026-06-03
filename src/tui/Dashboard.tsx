@@ -1,9 +1,9 @@
 /** @jsxImportSource @opentui/react */
 
-import { useState, type ReactNode } from "react";
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
+import { useState, useEffect, type ReactNode } from "react";
+import { useKeyboard, useRenderer, useTerminalDimensions, useTimeline } from "@opentui/react";
 import type { ProjectStatus } from "../app/decode-app";
-import type { RoadmapWorkspace, WorkspaceGroup } from "../app/roadmap-workspace";
+import type { RoadmapWorkspace, WorkspaceGroup, WorkspaceItem } from "../app/roadmap-workspace";
 import type {
   CompactContext,
   Decision,
@@ -17,6 +17,7 @@ import type {
 } from "../domain/schemas";
 import {
   eventGlyph,
+  lerpHex,
   palette,
   progressBar,
   severityBadge,
@@ -44,6 +45,8 @@ export type DashboardData = {
 export type DashboardProps = {
   initialData: DashboardData;
   reload?: () => Promise<DashboardData>;
+  /** Enable animations. Defaults to false so tests render deterministic static frames. */
+  motion?: boolean;
 };
 
 const sections = [
@@ -72,14 +75,16 @@ const initialWorkspaceState: WorkspaceState = { groupIdx: 0, itemIdx: 0, detailI
 
 type Row = {
   key: string;
-  glyph: string;
-  glyphColor: string;
+  glyph?: string;
+  glyphColor?: string;
   title: string;
   titleColor?: string;
   badge?: { text: string; color: string };
+  selectable?: boolean;
+  variant?: "header";
 };
 
-export function Dashboard({ initialData, reload }: DashboardProps) {
+export function Dashboard({ initialData, reload, motion = false }: DashboardProps) {
   const [data, setData] = useState<DashboardData>(initialData);
   const [activeSection, setActiveSection] = useState<SectionId>("home");
   const [selectionBySection, setSelectionBySection] = useState<SelectionState>(initialSelection);
@@ -135,7 +140,7 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
     const numbered = sectionByNumber(token);
     if (numbered) {
       goToSection(numbered);
-      setFocusRegion("content");
+      setFocusRegion(sectionHasFocusableContent(numbered, data) ? "content" : "sidebar");
       if (numbered !== "roadmap") {
         setWorkspaceState(initialWorkspaceState);
       }
@@ -164,7 +169,9 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
         return;
       }
       if (key.name === "return" || key.name === "enter" || key.name === "right" || key.name === "tab") {
-        setFocusRegion("content");
+        if (sectionHasFocusableContent(activeSection, data)) {
+          setFocusRegion("content");
+        }
         return;
       }
       return;
@@ -211,7 +218,7 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
 
   return (
     <box style={{ width: "100%", height: "100%", flexDirection: "column", backgroundColor: palette.bg, padding: 1 }}>
-      <Header status={data.status} refreshing={refreshing} />
+      <Header status={data.status} refreshing={refreshing} motion={motion} />
       <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
         <Sidebar data={data} activeSection={activeSection} hasFocus={focusRegion === "sidebar"} />
         <box style={{ flexDirection: "column", flexGrow: 1 }}>
@@ -230,15 +237,29 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
           )}
         </box>
       </box>
-      <Footer status={data.status} overlayOpen={overlay !== null} />
+      <Footer status={data.status} overlayOpen={overlay !== null} motion={motion} />
     </box>
   );
 }
 
-function Header({ status, refreshing }: { status: ProjectStatus; refreshing: boolean }) {
+const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+
+function Header({ status, refreshing, motion }: { status: ProjectStatus; refreshing: boolean; motion: boolean }) {
   const project = status.project?.name ?? "unregistered";
   const branch = status.git.branch ?? "no-branch";
   const dirty = status.git.dirty ? "●dirty" : "clean";
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+
+  useEffect(() => {
+    if (!motion || !refreshing) return;
+    const id = setInterval(() => {
+      setSpinnerFrame((prev) => (prev + 1) % BRAILLE_FRAMES.length);
+    }, 80);
+    return () => clearInterval(id);
+  }, [motion, refreshing]);
+
+  const spinnerGlyph = BRAILLE_FRAMES[spinnerFrame % BRAILLE_FRAMES.length]!;
+
   return (
     <box style={{ flexDirection: "row", justifyContent: "space-between", height: 1 }}>
       <text>
@@ -251,7 +272,13 @@ function Header({ status, refreshing }: { status: ProjectStatus; refreshing: boo
         <span fg={palette.accentAlt}>{truncate(branch, 18)}</span>
         <span fg={palette.faint}>{" · "}</span>
         <span fg={status.git.dirty ? palette.warning : palette.success}>{dirty}</span>
-        {refreshing ? <span fg={palette.muted}>{"  refreshing…"}</span> : null}
+        {refreshing ? (
+          motion ? (
+            <span fg={palette.accent}>{`  ${spinnerGlyph}`}</span>
+          ) : (
+            <span fg={palette.muted}>{"  ⠿ refreshing…"}</span>
+          )
+        ) : null}
       </text>
     </box>
   );
@@ -265,8 +292,9 @@ function Sidebar({ data, activeSection, hasFocus }: { data: DashboardData; activ
   return (
     <box
       border
+      borderStyle="rounded"
       borderColor={hasFocus ? palette.borderActive : palette.border}
-      backgroundColor={palette.panel}
+      backgroundColor={hasFocus ? palette.panelAlt : palette.panel}
       style={{ width: sidebarWidth, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
     >
       {sections.map((section) => {
@@ -274,13 +302,13 @@ function Sidebar({ data, activeSection, hasFocus }: { data: DashboardData; activ
         const badge = sidebarBadge(section.id, data);
         return (
           <text key={section.id}>
-            <span fg={active && hasFocus ? palette.accent : palette.faint}>{active ? "▸ " : "  "}</span>
+            <span fg={active ? (hasFocus ? palette.accent : palette.accentDim) : palette.faint}>{active ? "▸ " : "  "}</span>
             <span fg={active && hasFocus ? palette.accent : palette.text}>{section.label}</span>
             {badge ? <span fg={badge.color}>{` ${badge.text}`}</span> : null}
           </text>
         );
       })}
-      <text fg={palette.faint}>{"────────────"}</text>
+      <box border={["top"]} borderColor={palette.border} style={{ height: 1 }} />
       <text fg={palette.muted}>PULSE</text>
       <text>
         <span fg={palette.faint}>plan </span>
@@ -302,11 +330,40 @@ function Sidebar({ data, activeSection, hasFocus }: { data: DashboardData; activ
   );
 }
 
-function Footer({ status, overlayOpen }: { status: ProjectStatus; overlayOpen: boolean }) {
+function Footer({ status, overlayOpen, motion }: { status: ProjectStatus; overlayOpen: boolean; motion: boolean }) {
+  const [nextGlyphColor, setNextGlyphColor] = useState<string>(palette.accent);
+  const timeline = useTimeline({ loop: true, autoplay: false });
+
+  useEffect(() => {
+    const target = { progress: 0 };
+    if (motion) {
+      timeline.add(target, {
+        duration: 2000,
+        ease: "inOutSine",
+        loop: true,
+        alternate: true,
+        onUpdate: (anim) => {
+          setNextGlyphColor(lerpHex(palette.accent, palette.accentAlt, anim.progress));
+        },
+      });
+      timeline.play();
+    } else {
+      timeline.pause();
+      setNextGlyphColor(palette.accent);
+    }
+    return () => {
+      // Timeline (@opentui/core) exposes no per-track removal; resetItems() clears the
+      // item state so a re-run (only possible if `motion` toggled) cannot stack live tracks.
+      // In practice `motion` is env-derived and constant for the component lifetime.
+      timeline.pause();
+      timeline.resetItems();
+    };
+  }, [motion]);
+
   return (
     <box style={{ flexDirection: "column", height: 2 }}>
       <text>
-        <span fg={palette.accent}>▶ NEXT  </span>
+        <span fg={nextGlyphColor}>▶ NEXT  </span>
         <span fg={palette.text}>{truncate(status.next.recommendation ?? "nothing pending", 60)}</span>
         <span fg={palette.faint}>{`  — ${truncate(status.next.reason, 50)}`}</span>
       </text>
@@ -335,6 +392,7 @@ function TimelineOverlay({
   return (
     <box
       border
+      borderStyle="rounded"
       borderColor={palette.borderActive}
       backgroundColor={palette.panel}
       style={{ flexDirection: "column", flexGrow: 1, padding: 1 }}
@@ -414,7 +472,7 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
   return (
     <box style={{ flexDirection: "column", flexGrow: 1, gap: 1 }}>
       {showHero ? (
-        <box border borderColor={palette.border} backgroundColor={palette.panel} style={{ paddingLeft: 1, paddingRight: 1 }}>
+        <box border borderStyle="rounded" borderColor={palette.border} backgroundColor={palette.panel} style={{ paddingLeft: 1, paddingRight: 1 }}>
           <ascii-font text="ZENITH" font="tiny" />
         </box>
       ) : null}
@@ -454,7 +512,10 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
         <box style={{ flexDirection: "column", flexGrow: 1, gap: 1 }}>
           <Panel title={`Findings (${status.openFindings.length})`}>
             {status.openFindings.length === 0 ? (
-              <text fg={palette.muted}>none open</text>
+              <>
+                <text fg={palette.accentDim}>⚠  all clear</text>
+                <text fg={palette.faint}>zenith finding record ...</text>
+              </>
             ) : (
               status.openFindings.slice(0, 3).map((finding) => (
                 <text key={finding.id}>
@@ -466,7 +527,10 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
           </Panel>
           <Panel title={`Spikes (${data.spikes.length})`}>
             {data.spikes.length === 0 ? (
-              <text fg={palette.muted}>none</text>
+              <>
+                <text fg={palette.accentDim}>◆  no spikes</text>
+                <text fg={palette.faint}>zenith spike create ...</text>
+              </>
             ) : (
               data.spikes.slice(0, 3).map((spike) => (
                 <text key={spike.id} fg={palette.text}>
@@ -536,8 +600,9 @@ function RoadmapWorkspaceView({
   const groups = workspace.groups;
   if (groups.length === 0) {
     return (
-      <box border borderColor={palette.border} backgroundColor={palette.panel} style={{ flexGrow: 1, padding: 1 }}>
-        <text fg={palette.muted}>No roadmaps yet. Use `zenith roadmap create`.</text>
+      <box border borderStyle="rounded" borderColor={palette.border} backgroundColor={palette.panel} style={{ flexGrow: 1, padding: 1, flexDirection: "column", alignItems: "center" }}>
+        <text fg={palette.accentDim}>◈  no roadmaps</text>
+        <text fg={palette.faint}>zenith roadmap create ...</text>
       </box>
     );
   }
@@ -583,8 +648,9 @@ function RoadmapWorkspaceView({
       <box
         title="Detail"
         border
+        borderStyle="rounded"
         borderColor={hasFocus && state.level === 2 ? palette.borderActive : palette.border}
-        backgroundColor={palette.panel}
+        backgroundColor={hasFocus && state.level === 2 ? palette.panelAlt : palette.panel}
         style={{ flexGrow: 1, flexBasis: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
       >
         <scrollbox focused style={{ flexGrow: 1 }}>
@@ -612,7 +678,7 @@ function WorkspaceDetail({
     return <PlanDetail plan={plan} detailIdx={detailIdx} detailActive={detailActive} />;
   }
 
-  const entry = group.items[itemIdx];
+  const entry = orderedWorkspaceItems(group)[itemIdx];
   if (!entry) return <text fg={palette.muted}>No roadmap items.</text>;
 
   return (
@@ -687,7 +753,10 @@ function SpikesView({ data, selectedIndex, bodyHeight, contentHasFocus }: Sectio
           <DetailText label="Recommendation" value={spike.recommendation ?? "none"} />
         </>
       ) : (
-        <text fg={palette.muted}>No spikes recorded.</text>
+        <>
+          <text fg={palette.accentDim}>◆  no spikes recorded</text>
+          <text fg={palette.faint}>zenith spike create ...</text>
+        </>
       )}
     </MasterDetail>
   );
@@ -729,7 +798,10 @@ function FindingsView({ data, selectedIndex, bodyHeight, contentHasFocus }: Sect
           {finding.relatedPhaseId && <DetailRow label="Phase" value={finding.relatedPhaseId} />}
         </>
       ) : (
-        <text fg={palette.muted}>No findings.</text>
+        <>
+          <text fg={palette.accentDim}>⚠  no findings</text>
+          <text fg={palette.faint}>zenith finding record ...</text>
+        </>
       )}
     </MasterDetail>
   );
@@ -765,7 +837,10 @@ function SessionsView({ data, selectedIndex, bodyHeight, contentHasFocus }: Sect
           <DetailRow label="Plan" value={session.relatedPlanId ?? "none"} />
         </>
       ) : (
-        <text fg={palette.muted}>No sessions recorded.</text>
+        <>
+          <text fg={palette.accentDim}>▷  no sessions recorded</text>
+          <text fg={palette.faint}>zenith session start</text>
+        </>
       )}
     </MasterDetail>
   );
@@ -799,7 +874,10 @@ function DecisionsView({ data, selectedIndex, bodyHeight, contentHasFocus }: Sec
           <DetailRow label="Created" value={truncate(decision.createdAt, 24)} />
         </>
       ) : (
-        <text fg={palette.muted}>No decisions recorded.</text>
+        <>
+          <text fg={palette.accentDim}>◇  no decisions recorded</text>
+          <text fg={palette.faint}>zenith decision record ...</text>
+        </>
       )}
     </MasterDetail>
   );
@@ -830,6 +908,7 @@ function MasterDetail({
       <box
         title={detailTitle}
         border
+        borderStyle="rounded"
         borderColor={palette.border}
         backgroundColor={palette.panel}
         style={{ flexGrow: 1, flexBasis: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
@@ -859,8 +938,10 @@ function ListPanel({
   titleMax?: number;
   width?: number;
 }) {
+  const selectableIndexes = selectableRowIndexes(rows);
+  const selectedRowIndex = selectableIndexes[clamp(selectedIndex, selectableIndexes.length)] ?? -1;
   const maxStart = Math.max(0, rows.length - visibleRows);
-  const desired = selectedIndex - Math.floor(visibleRows / 2);
+  const desired = Math.max(0, selectedRowIndex) - Math.floor(visibleRows / 2);
   const windowStart = Math.max(0, Math.min(desired, maxStart));
   const slice = rows.slice(windowStart, windowStart + visibleRows);
   const hiddenBefore = windowStart;
@@ -870,18 +951,26 @@ function ListPanel({
     <box
       title={title}
       border
+      borderStyle="rounded"
       borderColor={active ? palette.borderActive : palette.border}
-      backgroundColor={palette.panel}
+      backgroundColor={active ? palette.panelAlt : palette.panel}
       style={{ width, flexShrink: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
     >
       {rows.length === 0 ? <text fg={palette.muted}>Nothing here.</text> : null}
       {hiddenBefore > 0 ? <text fg={palette.faint}>{`↑ ${hiddenBefore} more`}</text> : null}
       {slice.map((row, index) => {
         const idx = windowStart + index;
-        const selected = active && idx === selectedIndex;
+        if (row.variant === "header") {
+          return (
+            <text key={row.key}>
+              <span fg={row.titleColor ?? palette.faint}>{row.title}</span>
+            </text>
+          );
+        }
+        const selected = active && idx === selectedRowIndex && row.selectable !== false;
         return (
           <text key={row.key} {...(selected ? { bg: palette.highlight } : {})}>
-            <span fg={selected ? palette.accent : row.glyphColor}>{`${selected ? "▸" : " "}${row.glyph} `}</span>
+            <span fg={selected ? palette.accent : (row.glyphColor ?? palette.faint)}>{`${selected ? "▸" : " "}${row.glyph ?? " "} `}</span>
             <span fg={selected ? palette.accent : (row.titleColor ?? palette.text)}>{truncate(row.title, titleMax ?? row.title.length)}</span>
             {row.badge ? <span fg={row.badge.color}>{`  ${row.badge.text}`}</span> : null}
           </text>
@@ -897,6 +986,7 @@ function Panel({ title, children, grow = true }: { title: string; children: Reac
     <box
       title={title}
       border
+      borderStyle="rounded"
       borderColor={palette.border}
       backgroundColor={palette.panel}
       style={{ flexGrow: grow ? 1 : 0, flexBasis: grow ? 0 : undefined, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
@@ -948,6 +1038,11 @@ function selectionCount(section: SectionId, data: DashboardData): number {
   return 0;
 }
 
+function sectionHasFocusableContent(section: SectionId, data: DashboardData): boolean {
+  if (section === "roadmap") return data.workspace.groups.length > 0;
+  return selectionCount(section, data) > 0;
+}
+
 function clampAll(selection: SelectionState, data: DashboardData): SelectionState {
   return Object.fromEntries(
     sections.map((section) => [section.id, clamp(selection[section.id] ?? 0, selectionCount(section.id, data))]),
@@ -976,10 +1071,11 @@ function groupItemCount(group: WorkspaceGroup | undefined): number {
 
 function selectedItemPlans(group: WorkspaceGroup | undefined, itemIdx: number): Plan[] {
   if (!group) return [];
-  if (itemIdx < group.items.length) {
-    return group.items[itemIdx]?.linkedPlans ?? [];
+  const orderedItems = orderedWorkspaceItems(group);
+  if (itemIdx < orderedItems.length) {
+    return orderedItems[itemIdx]?.linkedPlans ?? [];
   }
-  const standalone = group.standalonePlans[itemIdx - group.items.length];
+  const standalone = group.standalonePlans[itemIdx - orderedItems.length];
   return standalone ? [standalone] : [];
 }
 
@@ -1022,15 +1118,56 @@ function workspaceItemRows(group: WorkspaceGroup): Row[] {
     }));
   }
 
-  return group.items.map((entry) => ({
+  const buckets = roadmapItemBuckets(group.items);
+  return [
+    ...roadmapItemBucketRows("NEXT", buckets.next),
+    ...roadmapItemBucketRows("LATER", buckets.later),
+    ...roadmapItemBucketRows("DONE", buckets.done),
+  ];
+}
+
+function selectableRowIndexes(rows: Row[]): number[] {
+  return rows.flatMap((row, index) => (row.selectable === false ? [] : [index]));
+}
+
+function orderedWorkspaceItems(group: WorkspaceGroup | undefined): WorkspaceItem[] {
+  if (!group || group.roadmapId === null) return [];
+  const buckets = roadmapItemBuckets(group.items);
+  return [...buckets.next, ...buckets.later, ...buckets.done];
+}
+
+function roadmapItemBuckets(items: WorkspaceItem[]): {
+  next: WorkspaceItem[];
+  later: WorkspaceItem[];
+  done: WorkspaceItem[];
+} {
+  return {
+    next: items.filter((entry) => entry.item.status === "in_progress" || entry.item.status === "todo"),
+    later: items.filter((entry) => entry.item.status === "deferred"),
+    done: items.filter((entry) => entry.item.status === "done"),
+  };
+}
+
+function roadmapItemBucketRows(label: "NEXT" | "LATER" | "DONE", entries: WorkspaceItem[]): Row[] {
+  if (entries.length === 0) return [];
+  return [
+    { key: `section-${label}`, title: label, titleColor: palette.faint, selectable: false, variant: "header" },
+    ...entries.map((entry) => roadmapItemRow(entry)),
+  ];
+}
+
+function roadmapItemRow(entry: WorkspaceItem): Row {
+  const done = entry.item.status === "done";
+  return {
     key: entry.item.id,
     glyph: statusGlyph(entry.item.status),
-    glyphColor: statusColor(entry.item.status),
+    glyphColor: done ? palette.faint : statusColor(entry.item.status),
     title: entry.item.title,
+    ...(done ? { titleColor: palette.muted } : {}),
     ...(entry.phaseProgress.total > 0
-      ? { badge: { text: `${entry.phaseProgress.done}/${entry.phaseProgress.total}`, color: palette.muted } }
+      ? { badge: { text: `${entry.phaseProgress.done}/${entry.phaseProgress.total}`, color: done ? palette.faint : palette.muted } }
       : {}),
-  }));
+  };
 }
 
 function moveWorkspace(state: WorkspaceState, workspace: RoadmapWorkspace, delta: number): WorkspaceState {

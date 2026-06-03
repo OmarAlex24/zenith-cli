@@ -9,6 +9,7 @@ export const palette = {
   faint: "#566072",
   accent: "#8bd5ca",
   accentAlt: "#7dc4e4",
+  accentDim: "#5e8a83",
   warning: "#f5a97f",
   danger: "#ed8796",
   success: "#a6da95",
@@ -116,4 +117,35 @@ const eventGlyphMap: Record<string, string> = {
 
 export function eventGlyph(type: string): string {
   return eventGlyphMap[type] ?? "·";
+}
+
+// ---------------------------------------------------------------------------
+// Color lerp utility (used for the ▶ NEXT pulse animation)
+// ---------------------------------------------------------------------------
+
+function hexToRgb(hex: string): [number, number, number] {
+  const cleaned = hex.replace("#", "");
+  const r = parseInt(cleaned.slice(0, 2), 16);
+  const g = parseInt(cleaned.slice(2, 4), 16);
+  const b = parseInt(cleaned.slice(4, 6), 16);
+  return [r, g, b];
+}
+
+function hexByte(value: number): string {
+  return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+}
+
+/**
+ * Linearly interpolate between two hex colors.
+ * @param from - start color (e.g. "#8bd5ca")
+ * @param to   - end color   (e.g. "#7dc4e4")
+ * @param t    - progress in [0, 1]
+ */
+export function lerpHex(from: string, to: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(from);
+  const [r2, g2, b2] = hexToRgb(to);
+  const r = r1 + (r2 - r1) * t;
+  const g = g1 + (g2 - g1) * t;
+  const b = b1 + (b2 - b1) * t;
+  return `#${hexByte(r)}${hexByte(g)}${hexByte(b)}`;
 }

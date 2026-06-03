@@ -16,8 +16,9 @@ export async function runTui(options: RunTuiOptions = {}): Promise<void> {
   try {
     const initialData = await loadDashboardData(services.app);
     renderer.setTerminalTitle("Zenith CLI");
+    const motionEnabled = process.env["ZENITH_NO_MOTION"] !== "1";
     createRoot(renderer).render(
-      <Dashboard initialData={initialData} reload={() => loadDashboardData(services.app)} />,
+      <Dashboard initialData={initialData} reload={() => loadDashboardData(services.app)} motion={motionEnabled} />,
     );
 
     await new Promise<void>((resolve) => {

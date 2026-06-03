@@ -37,13 +37,9 @@ describe("OpenTUI dashboard", () => {
     expect(roadmapTop).toContain("Items");
     expect(roadmapTop).toContain("Detail");
 
-    // Drill into items, then select the in-progress item that has a linked plan.
+    // Drill into items; the in-progress linked item is prioritized above completed work.
     await act(async () => {
       setup.mockInput.pressEnter();
-    });
-    await setup.flush();
-    await act(async () => {
-      setup.mockInput.pressArrow("down");
     });
     await setup.flush();
     const roadmap = setup.captureCharFrame();
@@ -239,6 +235,79 @@ describe("OpenTUI dashboard", () => {
     });
   });
 
+  test("right arrow does not leave sidebar when section has no focusable content", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    expect(fgAtText(setup.captureSpans(), setup.captureCharFrame(), "Home")).toBe(palette.accent);
+
+    await act(async () => {
+      setup.mockInput.pressArrow("right");
+    });
+    await setup.flush();
+
+    expect(fgAtText(setup.captureSpans(), setup.captureCharFrame(), "Home")).toBe(palette.accent);
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("roadmap items prioritize actionable work and keep completed items selectable", async () => {
+    const roadmap: Roadmap = {
+      ...makeRoadmap(),
+      items: [
+        {
+          id: "rmi_done",
+          roadmapId: "roadmap_1",
+          title: "Completed Foundation",
+          description: "Completed work is still inspectable.",
+          status: "done",
+          evidence: [],
+        },
+        { id: "rmi_active", roadmapId: "roadmap_1", title: "Active Polish", status: "in_progress", evidence: [] },
+        { id: "rmi_later", roadmapId: "roadmap_1", title: "Deferred Review", status: "deferred", evidence: [] },
+        { id: "rmi_todo", roadmapId: "roadmap_1", title: "Next Agent Pack", status: "todo", evidence: [] },
+      ],
+    };
+    const data = makeDashboardData({ roadmaps: [roadmap], plans: [] });
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 140, height: 32 });
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressKey("3");
+    });
+    await setup.flush();
+
+    const prioritized = setup.captureCharFrame();
+    const detailX = xOfText(prioritized, "Detail");
+    expect(yOfTextBeforeX(prioritized, "NEXT", detailX)).toBeLessThan(yOfTextBeforeX(prioritized, "Active Polish", detailX));
+    expect(yOfTextBeforeX(prioritized, "Active Polish", detailX)).toBeLessThan(yOfTextBeforeX(prioritized, "Deferred Review", detailX));
+    expect(yOfTextBeforeX(prioritized, "Deferred Review", detailX)).toBeLessThan(yOfTextBeforeX(prioritized, "Completed Foundation", detailX));
+    expect(yOfTextBeforeX(prioritized, "DONE", detailX)).toBeLessThan(yOfTextBeforeX(prioritized, "Completed Foundation", detailX));
+    expect(fgAtText(setup.captureSpans(), prioritized, "Completed Foundation")).toBe(palette.muted);
+
+    await act(async () => {
+      setup.mockInput.pressEnter();
+    });
+    await setup.flush();
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => {
+        setup.mockInput.pressArrow("down");
+      });
+      await setup.flush();
+    }
+
+    const completedSelected = setup.captureCharFrame();
+    expect(fgAtText(setup.captureSpans(), completedSelected, "Completed Foundation")).toBe(palette.accent);
+    expect(completedSelected).toContain("Completed work is still inspectable.");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
   test("roadmap workspace expands its left navigation columns on wide terminals", async () => {
     const data = makeDashboardData();
     const setup = await testRender(<Dashboard initialData={data} />, { width: 180, height: 32 });
@@ -253,6 +322,90 @@ describe("OpenTUI dashboard", () => {
     const detailX = xOfText(frame, "Detail");
     expect(detailX).toBeGreaterThanOrEqual(88);
     expect(detailX).toBeLessThanOrEqual(100);
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("rounded border characters are present in the rendered frame", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+
+    // Rounded borders use ╭ ╮ ╰ ╯ corner characters
+    expect(frame).toContain("╭");
+    expect(frame).toContain("╮");
+    expect(frame).toContain("╰");
+    expect(frame).toContain("╯");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("empty-state panels show CLI hint text when no data", async () => {
+    const data = makeDashboardData({ findings: [] });
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    // Home view shows CLI hints for empty findings and spikes (data has 1 spike, so check findings)
+    const home = setup.captureCharFrame();
+    expect(home).toContain("zenith finding record");
+
+    // Navigate to spikes section with no spikes
+    const noSpikeData = makeDashboardData({ findings: [] });
+    noSpikeData.spikes = [];
+    const setup2 = await testRender(<Dashboard initialData={noSpikeData} />, { width: 120, height: 32 });
+    await setup2.flush();
+    await act(async () => {
+      setup2.mockInput.pressKey("4");
+    });
+    await setup2.flush();
+    const spikesFrame = setup2.captureCharFrame();
+    expect(spikesFrame).toContain("zenith spike create");
+
+    act(() => {
+      setup.renderer.destroy();
+      setup2.renderer.destroy();
+    });
+  });
+
+  test("refresh affordance is visible while reloading", async () => {
+    const initialData = makeDashboardData();
+    let resolveReload!: (data: DashboardData) => void;
+
+    const setup = await testRender(
+      <Dashboard
+        initialData={initialData}
+        reload={() =>
+          new Promise<DashboardData>((resolve) => {
+            resolveReload = resolve;
+          })
+        }
+      />,
+      { width: 120, height: 32 },
+    );
+    await setup.flush();
+
+    // Trigger refresh
+    await act(async () => {
+      setup.mockInput.pressKey("r");
+    });
+    await setup.flush();
+
+    // While refreshing, the static refresh affordance must be visible
+    const refreshingFrame = setup.captureCharFrame();
+    expect(refreshingFrame).toContain("⠿ refreshing");
+
+    // Resolve and confirm it clears
+    await act(async () => {
+      resolveReload(initialData);
+    });
+    await setup.flush();
+    const doneFrame = setup.captureCharFrame();
+    expect(doneFrame).not.toContain("⠿ refreshing");
 
     act(() => {
       setup.renderer.destroy();
@@ -277,6 +430,21 @@ function xOfText(charFrame: string, text: string): number {
   return textLines[y]!.indexOf(text);
 }
 
+function yOfText(charFrame: string, text: string): number {
+  const y = charFrame.split("\n").findIndex((line) => line.includes(text));
+  expect(y).toBeGreaterThanOrEqual(0);
+  return y;
+}
+
+function yOfTextBeforeX(charFrame: string, text: string, maxX: number): number {
+  const y = charFrame.split("\n").findIndex((line) => {
+    const x = line.indexOf(text);
+    return x >= 0 && x < maxX;
+  });
+  expect(y).toBeGreaterThanOrEqual(0);
+  return y;
+}
+
 function cellsForLine(line: CapturedLine) {
   return line.spans.flatMap((span) =>
     Array.from(span.text).map(() => ({
@@ -296,11 +464,13 @@ function hexByte(value: number) {
 }
 
 function makeDashboardData(
-  options: { findings?: Finding[]; projectName?: string; timeline?: Event[] } = {},
+  options: { findings?: Finding[]; projectName?: string; timeline?: Event[]; roadmaps?: Roadmap[]; plans?: Plan[] } = {},
 ): DashboardData {
   const findings = options.findings ?? [makeFinding()];
   const status = makeStatus({ findings, ...(options.projectName ? { projectName: options.projectName } : {}) });
-  const plans = [status.activePlan!];
+  const roadmaps = options.roadmaps ?? status.recentRoadmaps;
+  const plans = options.plans ?? [status.activePlan!];
+  status.recentRoadmaps = roadmaps;
   return {
     status,
     brief: makeBrief(),
