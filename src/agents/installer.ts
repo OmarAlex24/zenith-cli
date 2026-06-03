@@ -149,6 +149,8 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Prefer \`zenith ...\`; use \`bun run zenith ...\` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
+- Use \`zenith timeline --json\` (with optional \`--limit <n>\`) for a read-only view of recent project activity.
+- Phase prerequisites are expressed with \`dependsOn\` (array of phase ids) via \`plan update-phase\`; when all remaining phases are gated, \`plan next\` reports \`Blocked by dependency\`.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow
@@ -239,6 +241,8 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith plan update-phase <plan-id> --json --input -\`
 - \`zenith plan next --json\`
 
+\`plan update-phase\` JSON input accepts optional \`dependsOn\` (array of phase ids) to declare phase prerequisites. When all remaining \`todo\` phases are gated by unmet dependencies, \`plan next\` returns a recommendation prefixed \`Blocked by dependency:\` with a \`blockedBy\` array.
+
 \`plan next\` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
 
 ## Context
@@ -247,6 +251,7 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith context compact --json\`
 - \`zenith resume --json\`
 - \`zenith phase show <phase-id> --json\`
+- \`zenith timeline --json\` — read-only activity log; accepts \`--limit <n>\`
 
 ## Decisions
 
@@ -263,6 +268,8 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith finding show <finding-id> --json\`
 - \`zenith finding update <finding-id> --json --input -\`
 - \`zenith finding close <finding-id> --json\`
+
+\`finding record\` and \`finding update\` JSON input accept optional \`relatedPlanId\` and \`relatedPhaseId\` to link a finding to an active plan or phase.
 
 ## Spikes
 
@@ -448,6 +455,25 @@ Payload:
 }
 \`\`\`
 
+## Sequence Phases With Dependencies
+
+To declare that a phase must not start until another phase is done, set \`dependsOn\` via \`plan update-phase\`:
+
+\`\`\`bash
+zenith plan update-phase plan_id --json --input -
+\`\`\`
+
+Payload:
+
+\`\`\`json
+{
+  "phaseId": "phase_x",
+  "dependsOn": ["phase_y"]
+}
+\`\`\`
+
+\`plan next\` skips phases whose \`dependsOn\` prerequisites are not yet \`done\`. When all remaining \`todo\` phases are gated, \`plan next\` returns a recommendation prefixed \`Blocked by dependency:\` and includes a \`blockedBy\` array listing the blocking phase ids.
+
 ## Update Plan Metadata
 
 \`\`\`bash
@@ -506,9 +532,13 @@ Payload:
   "severity": "high",
   "title": "Missing retry around sync",
   "description": "A transient failure can drop pending progress.",
-  "relatedFiles": ["src/sync.ts"]
+  "relatedFiles": ["src/sync.ts"],
+  "relatedPlanId": "plan_id",
+  "relatedPhaseId": "phase_id"
 }
 \`\`\`
+
+Both \`relatedPlanId\` and \`relatedPhaseId\` are optional; include them to link the finding to the active plan or phase. \`finding update\` accepts the same optional fields.
 
 Close a finding after the issue is handled:
 

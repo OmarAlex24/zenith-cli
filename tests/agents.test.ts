@@ -54,6 +54,21 @@ describe("agent installer", () => {
     expect(generated.replace("Use `decode` only as a legacy alias when `zenith` is unavailable.", "")).not.toMatch(
       /`(?:bun run )?decode\s+[^`]+`/,
     );
+
+    // New capability assertions
+    expect(cliReference).toContain("zenith timeline");
+    expect(cliReference).toContain("--limit <n>");
+    expect(cliReference).toContain("dependsOn");
+    expect(cliReference).toContain("Blocked by dependency:");
+    expect(cliReference).toContain("relatedPlanId");
+    expect(cliReference).toContain("relatedPhaseId");
+    expect(skill).toContain("zenith timeline");
+    expect(skill).toContain("dependsOn");
+    expect(workflows).toContain("Sequence Phases With Dependencies");
+    expect(workflows).toContain("dependsOn");
+    expect(workflows).toContain("Blocked by dependency");
+    expect(workflows).toContain("relatedPlanId");
+    expect(workflows).toContain("relatedPhaseId");
   });
 
   test("updates only the marked block in existing agent file", () => {
@@ -71,5 +86,18 @@ describe("agent installer", () => {
     expect(content).not.toContain("\nold\n");
     expect(content).toContain("zenith context compact --json");
     expect(content).toContain("zenith plan next --json");
+  });
+
+  test("installAgentPack is idempotent: second run returns all unchanged", () => {
+    const dir = makeTempDir();
+    tempDirs.push(dir);
+
+    // First install — should create files
+    const result1 = installAgentPack("codex", dir);
+    expect(result1.files.every((f) => f.action === "created")).toBe(true);
+
+    // Second install — nothing should change
+    const result2 = installAgentPack("codex", dir);
+    expect(result2.files.every((f) => f.action === "unchanged")).toBe(true);
   });
 });
