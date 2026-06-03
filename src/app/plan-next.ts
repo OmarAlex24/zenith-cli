@@ -2,11 +2,16 @@ import type { Finding, NextStep, Plan, PlanPhase, Roadmap, Session } from "../do
 
 export type PlanNextResult = NextStep;
 
+// Reserved groundwork for staleness/top-N ranking (planned later) — intentionally unused for now.
+// IMPORTANT: never call a clock (Date.now(), new Date()) inside computeNext — options.now is the injection point.
+export type ComputeNextOptions = { now?: string; staleAfterDays?: number; top?: number };
+
 export function computeNext(
   activePlan: Plan | null,
   recentSessions: Session[],
   openFindings: Array<Pick<Finding, "id" | "severity" | "title">>,
   recentRoadmaps: Roadmap[] = [],
+  options: ComputeNextOptions = {},
 ): PlanNextResult {
   const blockingFinding = openFindings.find((finding) => finding.severity === "critical" || finding.severity === "high");
   if (blockingFinding) {
