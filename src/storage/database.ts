@@ -208,6 +208,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 7,
     sql: "",
   },
+  {
+    version: 8,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -263,6 +267,8 @@ export function runMigrations(db: Database): void {
         runFindingLinksMigration(db);
       } else if (migration.version === 7) {
         runPhaseDependsOnMigration(db);
+      } else if (migration.version === 8) {
+        runFocusAndMultiPlanMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -291,6 +297,33 @@ function runPhaseDependsOnMigration(db: Database): void {
   if (!tableHasColumn(db, "plan_phases", "depends_on_json")) {
     db.run("ALTER TABLE plan_phases ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'");
   }
+}
+
+function runFocusAndMultiPlanMigration(db: Database): void {
+  // Allow one active plan per roadmap (plus one standalone) instead of one per project.
+  db.run("DROP INDEX IF EXISTS idx_plans_one_active_per_project");
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_plans_one_active_per_roadmap
+      ON plans(project_id, IFNULL(source_roadmap_id, ''))
+      WHERE status = 'active'`,
+  );
+
+  // Bind a worktree (and its branch) to the roadmap it is implementing.
+  db.run(
+    `CREATE TABLE IF NOT EXISTS roadmap_focus (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      worktree_key TEXT NOT NULL,
+      branch TEXT,
+      roadmap_id TEXT NOT NULL REFERENCES roadmaps(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_roadmap_focus_worktree_unique
+      ON roadmap_focus(project_id, worktree_key)`,
+  );
 }
 
 function runFindingLinksMigration(db: Database): void {

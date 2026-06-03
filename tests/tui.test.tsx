@@ -5,6 +5,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
+import { buildRoadmapWorkspace } from "../src/app/roadmap-workspace";
 import type { CompactContext, Decision, Event, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
 
 describe("OpenTUI dashboard", () => {
@@ -23,9 +24,20 @@ describe("OpenTUI dashboard", () => {
     expect(home).toContain("Findings");
     expect(home).toContain("Next action");
     expect(home).toContain("NEXT");
+    expect(home).toContain("Focus");
 
     await act(async () => {
       setup.mockInput.pressKey("3");
+    });
+    await setup.flush();
+    const roadmapTop = setup.captureCharFrame();
+    expect(roadmapTop).toContain("Roadmaps");
+    expect(roadmapTop).toContain("Items");
+    expect(roadmapTop).toContain("Detail");
+
+    // Drill into items, then select the in-progress item that has a linked plan.
+    await act(async () => {
+      setup.mockInput.pressEnter();
     });
     await setup.flush();
     await act(async () => {
@@ -33,24 +45,12 @@ describe("OpenTUI dashboard", () => {
     });
     await setup.flush();
     const roadmap = setup.captureCharFrame();
-    expect(roadmap).toContain("Roadmap items");
-    expect(roadmap).toContain("Item detail");
-    expect(roadmap).toContain("Product And Architecture Hardening");
-    expect(roadmap).toContain("in progress");
     expect(roadmap).toContain("Why");
+    expect(roadmap).toContain("Zenith MVP");
+    expect(roadmap).toContain("Foundation");
 
     await act(async () => {
-      setup.mockInput.pressKey("4");
-    });
-    await setup.flush();
-    const plan = setup.captureCharFrame();
-    expect(plan).toContain("Plans");
-    expect(plan).toContain("Zenith MVP");
-    expect(plan).toContain("Phases");
-    expect(plan).toContain("Foundation");
-
-    await act(async () => {
-      setup.mockInput.pressKey("6");
+      setup.mockInput.pressKey("5");
     });
     await setup.flush();
     const findings = setup.captureCharFrame();
@@ -62,7 +62,7 @@ describe("OpenTUI dashboard", () => {
     expect(findings).toContain("src/cli/program.ts");
 
     await act(async () => {
-      setup.mockInput.pressKey("7");
+      setup.mockInput.pressKey("6");
     });
     await setup.flush();
     const sessions = setup.captureCharFrame();
@@ -70,7 +70,7 @@ describe("OpenTUI dashboard", () => {
     expect(sessions).toContain("Finished context work");
 
     await act(async () => {
-      setup.mockInput.pressKey("8");
+      setup.mockInput.pressKey("7");
     });
     await setup.flush();
     const decisions = setup.captureCharFrame();
@@ -87,7 +87,7 @@ describe("OpenTUI dashboard", () => {
     expect(brief).toContain("Meridian Brief");
 
     await act(async () => {
-      setup.mockInput.pressKey("9");
+      setup.mockInput.pressKey("8");
     });
     await setup.flush();
     const context = setup.captureCharFrame();
@@ -148,7 +148,7 @@ describe("OpenTUI dashboard", () => {
     await setup.flush();
 
     await act(async () => {
-      setup.mockInput.pressKey("6");
+      setup.mockInput.pressKey("5");
     });
     await setup.flush();
 
@@ -215,11 +215,13 @@ function makeDashboardData(
 ): DashboardData {
   const findings = options.findings ?? [makeFinding()];
   const status = makeStatus({ findings, ...(options.projectName ? { projectName: options.projectName } : {}) });
+  const plans = [status.activePlan!];
   return {
     status,
     brief: makeBrief(),
-    plans: [status.activePlan!],
+    plans,
     roadmaps: status.recentRoadmaps,
+    workspace: buildRoadmapWorkspace(status.recentRoadmaps, plans, null),
     spikes: [makeSpike()],
     findings,
     sessions: status.recentSessions,
@@ -284,7 +286,15 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     },
-    git: { isGitRepo: true, rootPath: "/work/meridian", branch: "main", changedFiles: [], dirty: false },
+    git: {
+      isGitRepo: true,
+      rootPath: "/work/meridian",
+      worktreeRoot: "/work/meridian",
+      repoRoot: "/work/meridian",
+      branch: "main",
+      changedFiles: [],
+      dirty: false,
+    },
     registered: true,
     activePlan,
     currentPhase: activePlan.phases[0]!,
@@ -324,6 +334,8 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
       title: finding.title,
       relatedFiles: finding.relatedFiles,
     })),
+    focus: null,
+    focusAmbiguous: false,
     next: {
       recommendation: "Foundation",
       reason: "First ready todo phase in the active plan.",

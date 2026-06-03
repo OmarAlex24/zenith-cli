@@ -172,6 +172,8 @@ export const SessionSchema = z.object({
 export const GitContextSchema = z.object({
   isGitRepo: z.boolean(),
   rootPath: z.string().min(1),
+  worktreeRoot: z.string().min(1).optional(),
+  repoRoot: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
   repositoryUrl: z.string().min(1).optional(),
   headCommit: z.string().min(1).optional(),

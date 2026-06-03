@@ -119,6 +119,14 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   roadmap
+    .command("workspace")
+    .description("Roadmaps with their linked plans, phase rollups, and worktree focus")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.roadmapWorkspace(), humanRoadmapWorkspace);
+    });
+
+  roadmap
     .command("show")
     .argument("<roadmap-id>")
     .option("--json", "Emit stable JSON")
@@ -179,6 +187,33 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) =>
         app.createPlanFromRoadmap(roadmapId, await readJsonInput(commandOptions.input)),
       humanPlan);
+    });
+
+  const focus = program.command("focus").description("Bind the current worktree/branch to a roadmap");
+
+  focus
+    .command("show")
+    .description("Show the roadmap focus resolved for the current worktree")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.focusStatus(), humanFocusStatus);
+    });
+
+  focus
+    .command("set")
+    .description("Bind the current worktree to a roadmap")
+    .argument("<roadmap-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (roadmapId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.setFocus(roadmapId), humanFocusStatus);
+    });
+
+  focus
+    .command("clear")
+    .description("Remove the roadmap focus for the current worktree")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.clearFocus(), humanFocusStatus);
     });
 
   const spike = program.command("spike").description("Bounded investigations");
@@ -606,6 +641,58 @@ function humanRoadmap(roadmap: {
 
 function humanRoadmapList(roadmaps: Array<{ id: string; title: string; status: string }>): string {
   return roadmaps.map((roadmap) => `${roadmap.id} ${roadmap.status} ${roadmap.title}`).join("\n");
+}
+
+function humanRoadmapWorkspace(workspace: {
+  groups: Array<{
+    roadmapId: string | null;
+    title: string;
+    status: string;
+    isFocused: boolean;
+    itemProgress: { done: number; total: number };
+    items: Array<{
+      item: { id: string; title: string; status: string };
+      linkedPlans: Array<{ id: string; title: string }>;
+      phaseProgress: { done: number; total: number };
+    }>;
+    standalonePlans: Array<{ id: string; title: string; status: string }>;
+  }>;
+}): string {
+  return workspace.groups
+    .map((group) => {
+      const header = `${group.isFocused ? "* " : ""}${group.title} [${group.status}] ${group.itemProgress.done}/${group.itemProgress.total}`;
+      const items = group.items.map((entry) => {
+        const plans = entry.linkedPlans.map((plan) => plan.title).join(", ");
+        const planLabel = plans.length > 0 ? ` -> ${plans} (${entry.phaseProgress.done}/${entry.phaseProgress.total})` : " -> no plan";
+        return `  - ${entry.item.status}: ${entry.item.title}${planLabel}`;
+      });
+      const standalone = group.standalonePlans.map((plan) => `  - ${plan.status}: ${plan.title}`);
+      return [header, ...items, ...standalone].join("\n");
+    })
+    .join("\n\n");
+}
+
+function humanFocusStatus(status: {
+  worktreeKey: string;
+  branch: string | null;
+  focus: { roadmapId: string; roadmapTitle: string } | null;
+  ambiguous: boolean;
+  candidates: Array<{ roadmapId: string; roadmapTitle: string; planTitle: string }>;
+  activePlan: { id: string; title: string } | null;
+}): string {
+  const lines = [
+    `Worktree: ${status.worktreeKey}`,
+    `Branch: ${status.branch ?? "none"}`,
+    `Focus: ${status.focus ? `${status.focus.roadmapTitle} (${status.focus.roadmapId})` : "none"}`,
+    `Active plan: ${status.activePlan ? status.activePlan.title : "none"}`,
+  ];
+  if (status.ambiguous) {
+    lines.push("Ambiguous: multiple roadmaps have an active plan. Use `zenith focus set <roadmap-id>`.");
+    for (const candidate of status.candidates) {
+      lines.push(`  - ${candidate.roadmapTitle} (${candidate.roadmapId}): ${candidate.planTitle}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function humanSpike(spike: {

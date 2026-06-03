@@ -20,6 +20,14 @@ zenith phase show phase_id --json
 
 Use that phase as the implementation target. If the user's prompt names a different target than `plan next`, stop and ask for confirmation.
 
+If `plan next` recommends `Set roadmap focus for this worktree`, resolve it first:
+
+```bash
+zenith focus show --json
+zenith focus set <roadmap-id> --json
+zenith plan next --json
+```
+
 ## Before Planning
 
 Run:

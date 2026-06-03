@@ -169,11 +169,32 @@ type EventRow = {
   created_at: string;
 };
 
+type RoadmapFocusRow = {
+  id: string;
+  project_id: string;
+  worktree_key: string;
+  branch: string | null;
+  roadmap_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RegisterProjectInput = {
   name: string;
   rootPath: string;
+  worktreeRoot?: string;
   repositoryUrl?: string;
   branch?: string;
+};
+
+export type RoadmapFocus = {
+  id: string;
+  projectId: string;
+  worktreeKey: string;
+  branch?: string;
+  roadmapId: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type InsertPlanInput = {
@@ -306,9 +327,10 @@ export class ZenithRepository {
         )
         .run(input.name, input.repositoryUrl ?? null, input.branch ?? null, timestamp, existing.id);
 
-      this.db
-        .query("UPDATE project_paths SET last_seen_at = ? WHERE project_id = ? AND root_path = ?")
-        .run(timestamp, existing.id, input.rootPath);
+      this.recordProjectPath(existing.id, input.rootPath, timestamp);
+      if (input.worktreeRoot && input.worktreeRoot !== input.rootPath) {
+        this.recordProjectPath(existing.id, input.worktreeRoot, timestamp);
+      }
 
       return this.getProjectById(existing.id)!;
     }
@@ -324,14 +346,10 @@ export class ZenithRepository {
         )
         .run(id, input.name, input.rootPath, input.repositoryUrl ?? null, input.branch ?? null, timestamp, timestamp);
 
-      this.db
-        .query(
-          `
-          INSERT INTO project_paths (id, project_id, root_path, first_seen_at, last_seen_at)
-          VALUES (?, ?, ?, ?, ?)
-        `,
-        )
-        .run(createId("path"), id, input.rootPath, timestamp, timestamp);
+      this.recordProjectPath(id, input.rootPath, timestamp);
+      if (input.worktreeRoot && input.worktreeRoot !== input.rootPath) {
+        this.recordProjectPath(id, input.worktreeRoot, timestamp);
+      }
 
       this.recordEvent(id, "project.registered", "project", id, { rootPath: input.rootPath });
     })();
@@ -339,9 +357,37 @@ export class ZenithRepository {
     return this.getProjectById(id)!;
   }
 
+  private recordProjectPath(projectId: string, rootPath: string, timestamp: string): void {
+    const updated = this.db
+      .query("UPDATE project_paths SET last_seen_at = ? WHERE project_id = ? AND root_path = ?")
+      .run(timestamp, projectId, rootPath);
+    if (updated.changes === 0) {
+      this.db
+        .query(
+          `
+          INSERT OR IGNORE INTO project_paths (id, project_id, root_path, first_seen_at, last_seen_at)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+        )
+        .run(createId("path"), projectId, rootPath, timestamp, timestamp);
+    }
+  }
+
   findProjectByRootPath(rootPath: string): Project | null {
-    const row = this.db.query<ProjectRow, [string]>("SELECT * FROM projects WHERE root_path = ?").get(rootPath);
-    return row ? mapProject(row) : null;
+    const direct = this.db.query<ProjectRow, [string]>("SELECT * FROM projects WHERE root_path = ?").get(rootPath);
+    if (direct) {
+      return mapProject(direct);
+    }
+
+    const viaPath = this.db
+      .query<ProjectRow, [string]>(
+        `SELECT p.* FROM projects p
+         JOIN project_paths pp ON pp.project_id = p.id
+         WHERE pp.root_path = ?
+         LIMIT 1`,
+      )
+      .get(rootPath);
+    return viaPath ? mapProject(viaPath) : null;
   }
 
   getProjectById(projectId: string): Project | null {
@@ -818,6 +864,81 @@ export class ZenithRepository {
       .get(projectId);
 
     return row ? this.mapPlan(row) : null;
+  }
+
+  listActivePlans(projectId: string): Plan[] {
+    return this.db
+      .query<PlanRow, [string]>(
+        "SELECT * FROM plans WHERE project_id = ? AND status = 'active' ORDER BY updated_at DESC",
+      )
+      .all(projectId)
+      .map((row) => this.mapPlan(row));
+  }
+
+  getActivePlanForRoadmap(projectId: string, roadmapId: string): Plan | null {
+    const row = this.db
+      .query<PlanRow, [string, string]>(
+        "SELECT * FROM plans WHERE project_id = ? AND source_roadmap_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
+      )
+      .get(projectId, roadmapId);
+
+    return row ? this.mapPlan(row) : null;
+  }
+
+  // Roadmap focus (worktree/branch -> roadmap binding)
+  getFocus(projectId: string, worktreeKey: string): RoadmapFocus | null {
+    const row = this.db
+      .query<RoadmapFocusRow, [string, string]>(
+        "SELECT * FROM roadmap_focus WHERE project_id = ? AND worktree_key = ?",
+      )
+      .get(projectId, worktreeKey);
+    return row ? mapRoadmapFocus(row) : null;
+  }
+
+  listFocus(projectId: string): RoadmapFocus[] {
+    return this.db
+      .query<RoadmapFocusRow, [string]>("SELECT * FROM roadmap_focus WHERE project_id = ? ORDER BY updated_at DESC")
+      .all(projectId)
+      .map(mapRoadmapFocus);
+  }
+
+  setFocus(input: { projectId: string; worktreeKey: string; roadmapId: string; branch?: string }): RoadmapFocus {
+    const roadmap = this.db
+      .query<{ id: string }, [string, string]>("SELECT id FROM roadmaps WHERE id = ? AND project_id = ?")
+      .get(input.roadmapId, input.projectId);
+    if (!roadmap) {
+      throw new Error(`Roadmap not found: ${input.roadmapId}`);
+    }
+
+    const timestamp = nowIso();
+    const existing = this.getFocus(input.projectId, input.worktreeKey);
+
+    if (existing) {
+      this.db
+        .query("UPDATE roadmap_focus SET roadmap_id = ?, branch = ?, updated_at = ? WHERE id = ?")
+        .run(input.roadmapId, input.branch ?? null, timestamp, existing.id);
+    } else {
+      this.db
+        .query(
+          `INSERT INTO roadmap_focus (id, project_id, worktree_key, branch, roadmap_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(createId("focus"), input.projectId, input.worktreeKey, input.branch ?? null, input.roadmapId, timestamp, timestamp);
+    }
+
+    this.recordEvent(input.projectId, "focus.set", "roadmap", input.roadmapId, {
+      worktreeKey: input.worktreeKey,
+      branch: input.branch ?? null,
+    });
+
+    return this.getFocus(input.projectId, input.worktreeKey)!;
+  }
+
+  clearFocus(projectId: string, worktreeKey: string): boolean {
+    const result = this.db
+      .query("DELETE FROM roadmap_focus WHERE project_id = ? AND worktree_key = ?")
+      .run(projectId, worktreeKey);
+    return result.changes > 0;
   }
 
   updatePlan(planId: string, patch: UpdatePlanPatch): Plan {
@@ -1388,6 +1509,18 @@ function mapProject(row: ProjectRow): Project {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+}
+
+function mapRoadmapFocus(row: RoadmapFocusRow): RoadmapFocus {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    worktreeKey: row.worktree_key,
+    ...(row.branch === null ? {} : { branch: row.branch }),
+    roadmapId: row.roadmap_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function mapPhase(row: PhaseRow): PlanPhase {

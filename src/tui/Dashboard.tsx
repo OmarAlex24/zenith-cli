@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { ProjectStatus } from "../app/decode-app";
+import type { RoadmapWorkspace, WorkspaceGroup } from "../app/roadmap-workspace";
 import type {
   CompactContext,
   Decision,
@@ -31,6 +32,7 @@ export type DashboardData = {
   brief: ProjectBrief | null;
   plans: Plan[];
   roadmaps: Roadmap[];
+  workspace: RoadmapWorkspace;
   spikes: Spike[];
   findings: Finding[];
   sessions: Session[];
@@ -48,7 +50,6 @@ const sections = [
   { id: "home", label: "Home" },
   { id: "brief", label: "Brief" },
   { id: "roadmap", label: "Roadmap" },
-  { id: "plan", label: "Plan" },
   { id: "spikes", label: "Spikes" },
   { id: "findings", label: "Findings" },
   { id: "sessions", label: "Sessions" },
@@ -58,6 +59,10 @@ const sections = [
 
 type SectionId = (typeof sections)[number]["id"];
 type SelectionState = Record<SectionId, number>;
+
+type WorkspaceState = { groupIdx: number; itemIdx: number; detailIdx: number; level: 0 | 1 | 2 };
+
+const initialWorkspaceState: WorkspaceState = { groupIdx: 0, itemIdx: 0, detailIdx: 0, level: 0 };
 
 type Row = {
   key: string;
@@ -72,6 +77,8 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
   const [data, setData] = useState<DashboardData>(initialData);
   const [activeSection, setActiveSection] = useState<SectionId>("home");
   const [selectionBySection, setSelectionBySection] = useState<SelectionState>(initialSelection);
+  const [workspaceState, setWorkspaceState] = useState<WorkspaceState>(initialWorkspaceState);
+  const [focusRegion, setFocusRegion] = useState<"sidebar" | "content">("sidebar");
   const [refreshing, setRefreshing] = useState(false);
   const [overlay, setOverlay] = useState<"timeline" | null>(null);
   const [timelineScrollIndex, setTimelineScrollIndex] = useState(0);
@@ -118,27 +125,14 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
       return;
     }
 
-    if (key.name === "right" || key.name === "tab") {
-      goToSection(stepSection(activeSection, 1));
-      return;
-    }
-    if (key.name === "left") {
-      goToSection(stepSection(activeSection, -1));
-      return;
-    }
-
-    if (key.name === "up" || key.name === "k") {
-      setSelectionBySection((prev) => ({ ...prev, [activeSection]: clamp(selectedIndex - 1, count) }));
-      return;
-    }
-    if (key.name === "down" || key.name === "j") {
-      setSelectionBySection((prev) => ({ ...prev, [activeSection]: clamp(selectedIndex + 1, count) }));
-      return;
-    }
-
+    // Global shortcuts that always work
     const numbered = sectionByNumber(token);
     if (numbered) {
       goToSection(numbered);
+      setFocusRegion("content");
+      if (numbered !== "roadmap") {
+        setWorkspaceState(initialWorkspaceState);
+      }
       return;
     }
 
@@ -148,8 +142,62 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
         .then((next) => {
           setData(next);
           setSelectionBySection((prev) => clampAll(prev, next));
+          setWorkspaceState((prev) => clampWorkspace(prev, next.workspace));
         })
         .finally(() => setRefreshing(false));
+      return;
+    }
+
+    if (focusRegion === "sidebar") {
+      if (key.name === "up" || key.name === "k") {
+        goToSection(stepSection(activeSection, -1));
+        return;
+      }
+      if (key.name === "down" || key.name === "j") {
+        goToSection(stepSection(activeSection, 1));
+        return;
+      }
+      if (key.name === "return" || key.name === "enter" || key.name === "right" || key.name === "tab") {
+        setFocusRegion("content");
+        return;
+      }
+      return;
+    }
+
+    // focusRegion === "content"
+    if (key.name === "backspace" || key.name === "left") {
+      if (activeSection === "roadmap" && workspaceState.level > 0) {
+        setWorkspaceState((prev) => stepWorkspaceLevel(prev, data.workspace, -1));
+      } else {
+        setFocusRegion("sidebar");
+      }
+      return;
+    }
+
+    if (activeSection === "roadmap") {
+      if (key.name === "return" || key.name === "enter" || key.name === "right" || key.name === "tab") {
+        setWorkspaceState((prev) => stepWorkspaceLevel(prev, data.workspace, 1));
+        return;
+      }
+      if (key.name === "up" || key.name === "k") {
+        setWorkspaceState((prev) => moveWorkspace(prev, data.workspace, -1));
+        return;
+      }
+      if (key.name === "down" || key.name === "j") {
+        setWorkspaceState((prev) => moveWorkspace(prev, data.workspace, 1));
+        return;
+      }
+      return;
+    }
+
+    // Other sections: up/down move the selection within the content list
+    if (key.name === "up" || key.name === "k") {
+      setSelectionBySection((prev) => ({ ...prev, [activeSection]: clamp(selectedIndex - 1, count) }));
+      return;
+    }
+    if (key.name === "down" || key.name === "j") {
+      setSelectionBySection((prev) => ({ ...prev, [activeSection]: clamp(selectedIndex + 1, count) }));
+      return;
     }
   });
 
@@ -159,12 +207,18 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
     <box style={{ width: "100%", height: "100%", flexDirection: "column", backgroundColor: palette.bg, padding: 1 }}>
       <Header status={data.status} refreshing={refreshing} />
       <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
-        <Sidebar data={data} activeSection={activeSection} />
+        <Sidebar data={data} activeSection={activeSection} hasFocus={focusRegion === "sidebar"} />
         <box style={{ flexDirection: "column", flexGrow: 1 }}>
           {overlay === "timeline" ? (
             <TimelineOverlay timeline={data.timeline} scrollIndex={timelineScrollIndex} bodyHeight={bodyHeight} />
           ) : (
-            <Main data={data} section={activeSection} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />
+            <Main
+              data={data}
+              section={activeSection}
+              selectedIndex={selectedIndex}
+              bodyHeight={bodyHeight}
+              workspaceState={workspaceState}
+            />
           )}
         </box>
       </box>
@@ -195,7 +249,7 @@ function Header({ status, refreshing }: { status: ProjectStatus; refreshing: boo
   );
 }
 
-function Sidebar({ data, activeSection }: { data: DashboardData; activeSection: SectionId }) {
+function Sidebar({ data, activeSection, hasFocus }: { data: DashboardData; activeSection: SectionId; hasFocus: boolean }) {
   const plan = data.status.activePlan;
   const phaseTotal = plan?.phases.length ?? 0;
   const phaseDone = plan?.phases.filter((phase) => phase.status === "done").length ?? 0;
@@ -203,7 +257,7 @@ function Sidebar({ data, activeSection }: { data: DashboardData; activeSection: 
   return (
     <box
       border
-      borderColor={palette.border}
+      borderColor={hasFocus ? palette.borderActive : palette.border}
       backgroundColor={palette.panel}
       style={{ width: 18, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
     >
@@ -251,7 +305,7 @@ function Footer({ status, overlayOpen }: { status: ProjectStatus; overlayOpen: b
       {overlayOpen ? (
         <text fg={palette.faint}>t/esc close timeline · ↑↓ scroll · q quit</text>
       ) : (
-        <text fg={palette.faint}>1-9 section · ←→ switch · ↑↓ select · t timeline · r refresh · q quit</text>
+        <text fg={palette.faint}>↑↓ nav · enter focus · ⌫ back · 1-8 jump · t timeline · r refresh · q quit</text>
       )}
     </box>
   );
@@ -308,17 +362,19 @@ function Main({
   section,
   selectedIndex,
   bodyHeight,
+  workspaceState,
 }: {
   data: DashboardData;
   section: SectionId;
   selectedIndex: number;
   bodyHeight: number;
+  workspaceState: WorkspaceState;
 }) {
   if (section === "home") return <HomeView data={data} bodyHeight={bodyHeight} />;
   if (section === "brief") return <BriefView data={data} />;
   if (section === "context") return <ContextView data={data} />;
-  if (section === "roadmap") return <RoadmapView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
-  if (section === "plan") return <PlanView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
+  if (section === "roadmap")
+    return <RoadmapWorkspaceView workspace={data.workspace} state={workspaceState} bodyHeight={bodyHeight} />;
   if (section === "spikes") return <SpikesView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
   if (section === "findings") return <FindingsView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
   if (section === "sessions") return <SessionsView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
@@ -343,6 +399,19 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
       <Panel title="Next action" grow={false}>
         <text fg={palette.accent}>{status.next.recommendation ?? "nothing pending"}</text>
         <text fg={palette.muted}>{status.next.reason}</text>
+      </Panel>
+
+      <Panel title="Focus" grow={false}>
+        {status.focus ? (
+          <text>
+            <span fg={palette.accent}>{truncate(status.focus.roadmapTitle, 44)}</span>
+            <span fg={palette.faint}>{`  ${status.focus.branch ?? "no-branch"}`}</span>
+          </text>
+        ) : status.focusAmbiguous ? (
+          <text fg={palette.warning}>{"no focus — multiple roadmaps active · zenith focus set <id>"}</text>
+        ) : (
+          <text fg={palette.muted}>{"no focus binding for this worktree"}</text>
+        )}
       </Panel>
 
       <box style={{ flexDirection: "row", gap: 1, flexGrow: 1 }}>
@@ -428,85 +497,134 @@ function ContextView({ data }: { data: DashboardData }) {
   );
 }
 
-function RoadmapView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
-  const entries = roadmapEntries(data);
-  const selected = entries[selectedIndex];
-  const rows: Row[] = entries.map((entry) => ({
-    key: entry.item.id,
-    glyph: statusGlyph(entry.item.status),
-    glyphColor: statusColor(entry.item.status),
-    title: truncate(entry.item.title, 24),
+function RoadmapWorkspaceView({
+  workspace,
+  state,
+  bodyHeight,
+}: {
+  workspace: RoadmapWorkspace;
+  state: WorkspaceState;
+  bodyHeight: number;
+}) {
+  const groups = workspace.groups;
+  if (groups.length === 0) {
+    return (
+      <box border borderColor={palette.border} backgroundColor={palette.panel} style={{ flexGrow: 1, padding: 1 }}>
+        <text fg={palette.muted}>No roadmaps yet. Use `zenith roadmap create`.</text>
+      </box>
+    );
+  }
+
+  const groupIdx = clamp(state.groupIdx, groups.length);
+  const group = groups[groupIdx]!;
+  const itemCount = groupItemCount(group);
+  const itemIdx = clamp(state.itemIdx, itemCount);
+
+  const groupRows: Row[] = groups.map((entry) => ({
+    key: entry.roadmapId ?? "standalone",
+    glyph: entry.isFocused ? "◎" : statusGlyph(entry.status),
+    glyphColor: entry.isFocused ? palette.accent : statusColor(entry.status),
+    title: truncate(entry.title, 18),
+    badge: { text: `${entry.itemProgress.done}/${entry.itemProgress.total}`, color: palette.muted },
   }));
 
+  const itemRows: Row[] = workspaceItemRows(group);
+
+  const visibleRows = Math.max(3, bodyHeight - 2);
+
   return (
-    <MasterDetail
-      listTitle={`Roadmap items (${entries.length})`}
-      rows={rows}
-      selectedIndex={selectedIndex}
-      bodyHeight={bodyHeight}
-      detailTitle="Item detail"
-    >
-      {selected ? (
-        <>
-          <text fg={palette.accent}>{selected.item.title}</text>
-          <DetailRow label="Status" value={statusLabel(selected.item.status)} color={statusColor(selected.item.status)} />
-          <DetailRow label="Roadmap" value={selected.roadmap.title} />
-          <DetailText label="Description" value={selected.item.description ?? "none"} />
-          <DetailText label="Why" value={selected.item.justification ?? "none"} />
-          <DetailRow label="Source phase" value={selected.item.sourcePhaseId ?? "none"} />
-          <DetailText
-            label="Evidence"
-            value={selected.item.evidence.map((evidence) => `${evidence.kind}: ${evidence.value}`).join("\n") || "none"}
-          />
-        </>
-      ) : (
-        <text fg={palette.muted}>No roadmap items.</text>
-      )}
-    </MasterDetail>
+    <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
+      <ListPanel
+        title={`Roadmaps (${groups.length})`}
+        rows={groupRows}
+        selectedIndex={groupIdx}
+        visibleRows={visibleRows}
+        active={state.level === 0}
+        width={22}
+      />
+      <ListPanel
+        title={`Items (${itemCount})`}
+        rows={itemRows}
+        selectedIndex={itemIdx}
+        visibleRows={visibleRows}
+        active={state.level === 1}
+        width={28}
+      />
+      <box
+        title="Detail"
+        border
+        borderColor={state.level === 2 ? palette.borderActive : palette.border}
+        backgroundColor={palette.panel}
+        style={{ flexGrow: 1, flexBasis: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+      >
+        <scrollbox focused style={{ flexGrow: 1 }}>
+          <WorkspaceDetail group={group} itemIdx={itemIdx} detailIdx={state.detailIdx} detailActive={state.level === 2} />
+        </scrollbox>
+      </box>
+    </box>
   );
 }
 
-function PlanView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
-  const plan = data.plans[selectedIndex];
-  const rows: Row[] = data.plans.map((item) => {
-    const counts = phaseCounts(item);
-    return {
-      key: item.id,
-      glyph: statusGlyph(item.status),
-      glyphColor: statusColor(item.status),
-      title: truncate(item.title, 18),
-      badge: { text: `${counts.done}/${item.phases.length}`, color: palette.muted },
-    };
-  });
+function WorkspaceDetail({
+  group,
+  itemIdx,
+  detailIdx,
+  detailActive,
+}: {
+  group: WorkspaceGroup;
+  itemIdx: number;
+  detailIdx: number;
+  detailActive: boolean;
+}) {
+  if (group.roadmapId === null) {
+    const plan = group.standalonePlans[itemIdx];
+    if (!plan) return <text fg={palette.muted}>No unlinked plans.</text>;
+    return <PlanDetail plan={plan} detailIdx={detailIdx} detailActive={detailActive} />;
+  }
+
+  const entry = group.items[itemIdx];
+  if (!entry) return <text fg={palette.muted}>No roadmap items.</text>;
 
   return (
-    <MasterDetail
-      listTitle={`Plans (${data.plans.length})`}
-      rows={rows}
-      selectedIndex={selectedIndex}
-      bodyHeight={bodyHeight}
-      detailTitle="Plan detail"
-    >
-      {plan ? (
-        <>
-          <text fg={palette.accent}>{plan.title}</text>
-          <DetailRow label="Status" value={statusLabel(plan.status)} color={statusColor(plan.status)} />
-          <DetailRow label="Priority" value={plan.priority ?? "none"} />
-          <text fg={palette.accent}>{progressBar(phaseCounts(plan).done, plan.phases.length, 12)}</text>
-          <DetailRow label="Source" value={plan.sourceRoadmapId ?? "standalone"} />
-          <text fg={palette.muted}>{"Phases"}</text>
-          {plan.phases.map((phase) => (
-            <text key={phase.id}>
-              <span fg={statusColor(phase.status)}>{`  ${statusGlyph(phase.status)} `}</span>
-              <span fg={palette.text}>{phase.title}</span>
-              <span fg={palette.faint}>{`  ${statusLabel(phase.status)}`}</span>
-            </text>
-          ))}
-        </>
+    <>
+      <text>
+        <span fg={statusColor(entry.item.status)}>{`${statusGlyph(entry.item.status)} `}</span>
+        <span fg={palette.accent}>{entry.item.title}</span>
+      </text>
+      <DetailRow label="Status" value={statusLabel(entry.item.status)} color={statusColor(entry.item.status)} />
+      <DetailText label="Description" value={entry.item.description ?? "none"} />
+      <DetailText label="Why" value={entry.item.justification ?? "none"} />
+      {entry.linkedPlans.length === 0 ? (
+        <text fg={palette.muted}>{"No plan yet — create with `zenith roadmap create-plan`."}</text>
       ) : (
-        <text fg={palette.muted}>No plans recorded.</text>
+        entry.linkedPlans.map((plan) => <PlanDetail key={plan.id} plan={plan} detailIdx={detailIdx} detailActive={detailActive} />)
       )}
-    </MasterDetail>
+    </>
+  );
+}
+
+function PlanDetail({ plan, detailIdx, detailActive }: { plan: Plan; detailIdx: number; detailActive: boolean }) {
+  const done = plan.phases.filter((phase) => phase.status === "done").length;
+  return (
+    <>
+      <text fg={palette.text}> </text>
+      <text>
+        <span fg={palette.accentAlt}>{"▶ "}</span>
+        <span fg={palette.text}>{plan.title}</span>
+        <span fg={palette.faint}>{`  ${statusLabel(plan.status)}`}</span>
+      </text>
+      <text fg={palette.accent}>{progressBar(done, plan.phases.length, 12)}</text>
+      {plan.phases.map((phase, index) => {
+        const selected = detailActive && index === detailIdx;
+        return (
+          <text key={phase.id} {...(selected ? { bg: palette.highlight } : {})}>
+            <span fg={statusColor(phase.status)}>{`  ${statusGlyph(phase.status)} `}</span>
+            <span fg={selected ? palette.accent : palette.text}>{phase.title}</span>
+            <span fg={palette.faint}>{`  ${statusLabel(phase.status)}`}</span>
+          </text>
+        );
+      })}
+    </>
   );
 }
 
@@ -693,11 +811,15 @@ function ListPanel({
   rows,
   selectedIndex,
   visibleRows,
+  active = true,
+  width = 32,
 }: {
   title: string;
   rows: Row[];
   selectedIndex: number;
   visibleRows: number;
+  active?: boolean;
+  width?: number;
 }) {
   const maxStart = Math.max(0, rows.length - visibleRows);
   const desired = selectedIndex - Math.floor(visibleRows / 2);
@@ -710,9 +832,9 @@ function ListPanel({
     <box
       title={title}
       border
-      borderColor={palette.borderActive}
+      borderColor={active ? palette.borderActive : palette.border}
       backgroundColor={palette.panel}
-      style={{ width: 32, flexShrink: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+      style={{ width, flexShrink: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
     >
       {rows.length === 0 ? <text fg={palette.muted}>Nothing here.</text> : null}
       {hiddenBefore > 0 ? <text fg={palette.faint}>{`↑ ${hiddenBefore} more`}</text> : null}
@@ -781,8 +903,6 @@ function initialSelection(): SelectionState {
 }
 
 function selectionCount(section: SectionId, data: DashboardData): number {
-  if (section === "roadmap") return roadmapEntries(data).length;
-  if (section === "plan") return data.plans.length;
   if (section === "spikes") return data.spikes.length;
   if (section === "findings") return data.findings.length;
   if (section === "sessions") return data.sessions.length;
@@ -811,19 +931,81 @@ function stepSection(active: SectionId, delta: number): SectionId {
   return sections[(index + delta + sections.length) % sections.length]!.id;
 }
 
-type RoadmapEntry = { roadmap: Roadmap; item: Roadmap["items"][number] };
-
-function roadmapEntries(data: DashboardData): RoadmapEntry[] {
-  return data.roadmaps.flatMap((roadmap) => roadmap.items.map((item) => ({ roadmap, item })));
+function groupItemCount(group: WorkspaceGroup | undefined): number {
+  if (!group) return 0;
+  return group.items.length + group.standalonePlans.length;
 }
 
-function phaseCounts(plan: Plan): { done: number; inProgress: number; todo: number } {
-  return plan.phases.reduce(
-    (counts, phase) => ({
-      done: counts.done + (phase.status === "done" ? 1 : 0),
-      inProgress: counts.inProgress + (phase.status === "in_progress" ? 1 : 0),
-      todo: counts.todo + (phase.status === "todo" ? 1 : 0),
-    }),
-    { done: 0, inProgress: 0, todo: 0 },
-  );
+function selectedItemPlans(group: WorkspaceGroup | undefined, itemIdx: number): Plan[] {
+  if (!group) return [];
+  if (itemIdx < group.items.length) {
+    return group.items[itemIdx]?.linkedPlans ?? [];
+  }
+  const standalone = group.standalonePlans[itemIdx - group.items.length];
+  return standalone ? [standalone] : [];
+}
+
+function detailPhaseCount(group: WorkspaceGroup | undefined, itemIdx: number): number {
+  return selectedItemPlans(group, itemIdx).reduce((total, plan) => total + plan.phases.length, 0);
+}
+
+function workspaceItemRows(group: WorkspaceGroup): Row[] {
+  if (group.roadmapId === null) {
+    return group.standalonePlans.map((plan) => ({
+      key: plan.id,
+      glyph: statusGlyph(plan.status),
+      glyphColor: statusColor(plan.status),
+      title: truncate(plan.title, 20),
+      badge: {
+        text: `${plan.phases.filter((phase) => phase.status === "done").length}/${plan.phases.length}`,
+        color: palette.muted,
+      },
+    }));
+  }
+
+  return group.items.map((entry) => ({
+    key: entry.item.id,
+    glyph: statusGlyph(entry.item.status),
+    glyphColor: statusColor(entry.item.status),
+    title: truncate(entry.item.title, 22),
+    ...(entry.phaseProgress.total > 0
+      ? { badge: { text: `${entry.phaseProgress.done}/${entry.phaseProgress.total}`, color: palette.muted } }
+      : {}),
+  }));
+}
+
+function moveWorkspace(state: WorkspaceState, workspace: RoadmapWorkspace, delta: number): WorkspaceState {
+  const groups = workspace.groups;
+  if (state.level === 0) {
+    const groupIdx = clamp(state.groupIdx + delta, groups.length);
+    return { ...state, groupIdx, itemIdx: 0, detailIdx: 0 };
+  }
+  if (state.level === 1) {
+    const itemIdx = clamp(state.itemIdx + delta, groupItemCount(groups[state.groupIdx]));
+    return { ...state, itemIdx, detailIdx: 0 };
+  }
+  const detailIdx = clamp(state.detailIdx + delta, detailPhaseCount(groups[state.groupIdx], state.itemIdx));
+  return { ...state, detailIdx };
+}
+
+function stepWorkspaceLevel(state: WorkspaceState, workspace: RoadmapWorkspace, delta: number): WorkspaceState {
+  const groups = workspace.groups;
+  if (delta > 0) {
+    if (state.level === 0 && groupItemCount(groups[state.groupIdx]) === 0) return state;
+    if (state.level === 1 && detailPhaseCount(groups[state.groupIdx], state.itemIdx) === 0) return state;
+  }
+  const level = Math.max(0, Math.min(2, state.level + delta)) as 0 | 1 | 2;
+  return { ...state, level };
+}
+
+function clampWorkspace(state: WorkspaceState, workspace: RoadmapWorkspace): WorkspaceState {
+  const groups = workspace.groups;
+  const groupIdx = clamp(state.groupIdx, groups.length);
+  const group = groups[groupIdx];
+  const itemIdx = clamp(state.itemIdx, groupItemCount(group));
+  const detailIdx = clamp(state.detailIdx, detailPhaseCount(group, itemIdx));
+  let level = state.level;
+  if (groupItemCount(group) === 0) level = 0;
+  else if (detailPhaseCount(group, itemIdx) === 0 && level > 1) level = 1;
+  return { groupIdx, itemIdx, detailIdx, level };
 }

@@ -1,8 +1,10 @@
-import { basename, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 export type GitSummary = {
   isGitRepo: boolean;
   rootPath: string;
+  worktreeRoot: string;
+  repoRoot: string;
   branch?: string;
   repositoryUrl?: string;
   headCommit?: string;
@@ -15,26 +17,33 @@ export class GitAdapter {
     const rootPath = await this.gitText(["rev-parse", "--show-toplevel"], cwd);
 
     if (!rootPath) {
+      const fallback = resolve(cwd);
       return {
         isGitRepo: false,
-        rootPath: resolve(cwd),
+        rootPath: fallback,
+        worktreeRoot: fallback,
+        repoRoot: fallback,
         changedFiles: [],
         dirty: false,
       };
     }
 
-    const [branch, repositoryUrl, headCommit, status] = await Promise.all([
+    const [branch, repositoryUrl, headCommit, status, commonDir] = await Promise.all([
       this.gitText(["rev-parse", "--abbrev-ref", "HEAD"], rootPath),
       this.gitText(["config", "--get", "remote.origin.url"], rootPath),
       this.gitText(["rev-parse", "HEAD"], rootPath),
       this.gitText(["status", "--porcelain=v1"], rootPath, { preserveWhitespace: true }),
+      this.gitText(["rev-parse", "--path-format=absolute", "--git-common-dir"], rootPath),
     ]);
 
     const changedFiles = parseChangedFiles(status ?? "");
+    const repoRoot = commonDir ? dirname(commonDir) : rootPath;
 
     return {
       isGitRepo: true,
-      rootPath,
+      rootPath: repoRoot,
+      worktreeRoot: rootPath,
+      repoRoot,
       ...(branch && branch !== "HEAD" ? { branch } : {}),
       ...(repositoryUrl ? { repositoryUrl } : {}),
       ...(headCommit ? { headCommit } : {}),

@@ -682,4 +682,91 @@ describe("cli json commands", () => {
     expect(result.exitCode).toBe(0);
     expect((result.json as any).data).toHaveLength(1);
   });
+
+  test("parallel roadmaps each keep an active plan and focus resolves which to implement", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+
+    const roadmapA = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Roadmap Alpha", items: [{ title: "Alpha Item", status: "in_progress" }] },
+    });
+    const roadmapAId = (roadmapA.json as any).data.id as string;
+
+    const roadmapB = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Roadmap Beta", items: [{ title: "Beta Item", status: "in_progress" }] },
+    });
+    const roadmapBId = (roadmapB.json as any).data.id as string;
+
+    const planA = await runDecode(["roadmap", "create-plan", roadmapAId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemTitle: "Alpha Item", phases: [{ title: "Alpha Phase", status: "in_progress" }] },
+    });
+    expect(planA.exitCode).toBe(0);
+
+    // A second active plan for a different roadmap is allowed.
+    const planB = await runDecode(["roadmap", "create-plan", roadmapBId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemTitle: "Beta Item", phases: [{ title: "Beta Phase", status: "in_progress" }] },
+    });
+    expect(planB.exitCode).toBe(0);
+
+    // Without focus, plan next is ambiguous.
+    const ambiguous = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    expect((ambiguous.json as any).data.recommendation).toContain("Set roadmap focus");
+
+    // Binding the worktree to Roadmap Alpha resolves the active plan.
+    const setFocus = await runDecode(["focus", "set", roadmapAId, "--json"], { cwd, decodeHome });
+    expect(setFocus.exitCode).toBe(0);
+    expect((setFocus.json as any).data.focus.roadmapId).toBe(roadmapAId);
+
+    const focused = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    expect((focused.json as any).data.recommendation).toBe("Alpha Phase");
+
+    const show = await runDecode(["focus", "show", "--json"], { cwd, decodeHome });
+    expect((show.json as any).data.focus.roadmapId).toBe(roadmapAId);
+    expect((show.json as any).data.activePlan.title).toContain("Alpha");
+
+    // Clearing focus restores ambiguity.
+    const cleared = await runDecode(["focus", "clear", "--json"], { cwd, decodeHome });
+    expect((cleared.json as any).data.focus).toBeNull();
+    const ambiguousAgain = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    expect((ambiguousAgain.json as any).data.recommendation).toContain("Set roadmap focus");
+  });
+
+  test("roadmap workspace lists groups with linked plans and rollups", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Workspace Roadmap", items: [{ title: "WS Item", status: "in_progress" }] },
+    });
+    const roadmapId = (roadmap.json as any).data.id as string;
+
+    await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemTitle: "WS Item", phases: [{ title: "WS Phase", status: "done" }] },
+    });
+
+    const workspace = await runDecode(["roadmap", "workspace", "--json"], { cwd, decodeHome });
+    expect(workspace.exitCode).toBe(0);
+    const group = (workspace.json as any).data.groups.find((g: any) => g.roadmapId === roadmapId);
+    expect(group.title).toBe("Workspace Roadmap");
+    const item = group.items.find((entry: any) => entry.item.title === "WS Item");
+    expect(item.linkedPlans).toHaveLength(1);
+    expect(item.phaseProgress).toEqual({ done: 1, total: 1 });
+  });
 });

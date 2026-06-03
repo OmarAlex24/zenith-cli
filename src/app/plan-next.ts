@@ -1,4 +1,5 @@
 import type { Finding, NextStep, Plan, PlanPhase, Roadmap, Session } from "../domain/schemas";
+import type { FocusCandidate } from "./focus";
 
 export type PlanNextResult = NextStep;
 
@@ -6,12 +7,15 @@ export type PlanNextResult = NextStep;
 // IMPORTANT: never call a clock (Date.now(), new Date()) inside computeNext — options.now is the injection point.
 export type ComputeNextOptions = { now?: string; staleAfterDays?: number; top?: number };
 
+export type FocusState = { ambiguous: boolean; candidates: FocusCandidate[] };
+
 export function computeNext(
   activePlan: Plan | null,
   recentSessions: Session[],
   openFindings: Array<Pick<Finding, "id" | "severity" | "title">>,
   recentRoadmaps: Roadmap[] = [],
   options: ComputeNextOptions = {},
+  focus?: FocusState,
 ): PlanNextResult {
   const blockingFinding = openFindings.find((finding) => finding.severity === "critical" || finding.severity === "high");
   if (blockingFinding) {
@@ -19,6 +23,15 @@ export function computeNext(
       recommendation: `Review finding: ${blockingFinding.title}`,
       reason: "Open high-severity finding should be handled before advancing the plan.",
       evidence: [blockingFinding.id],
+    };
+  }
+
+  if (!activePlan && focus?.ambiguous) {
+    const titles = focus.candidates.map((candidate) => candidate.roadmapTitle).join(", ");
+    return {
+      recommendation: "Set roadmap focus for this worktree: zenith focus set <roadmap-id>",
+      reason: `Multiple roadmaps have an active plan (${titles}); bind this worktree to one roadmap to continue.`,
+      evidence: focus.candidates.map((candidate) => candidate.roadmapId).filter((id) => id.length > 0),
     };
   }
 

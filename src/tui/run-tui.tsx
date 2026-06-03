@@ -35,11 +35,12 @@ async function loadDashboardData(app: ReturnType<typeof createZenithApp>["app"])
   const brief = registered ? await app.showBrief() : null;
   const plans = registered ? await app.listPlans() : [];
   const roadmaps = registered ? await app.listRoadmaps() : [];
+  const workspace = registered ? await app.roadmapWorkspace() : { groups: [] };
   const spikes = registered ? await app.listSpikes() : [];
   const findings = registered ? await app.listFindings() : [];
   const sessions = registered ? await app.listSessions() : [];
   const decisions = registered ? await app.listDecisions() : [];
   const context = await app.compactContext();
   const timeline = registered ? await app.timeline({ limit: 50 }) : [];
-  return { status, brief, plans, roadmaps, spikes, findings, sessions, decisions, context, timeline };
+  return { status, brief, plans, roadmaps, workspace, spikes, findings, sessions, decisions, context, timeline };
 }

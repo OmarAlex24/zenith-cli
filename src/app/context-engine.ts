@@ -27,6 +27,7 @@ import {
 import { GitAdapter } from "../integrations/git/git-adapter";
 import type { ZenithRepository } from "../storage/repository";
 import { computeNext, findCurrentPhase } from "./plan-next";
+import { resolveActivePlan } from "./focus";
 
 export type ContextOptions = {
   phaseId?: string;
@@ -130,7 +131,6 @@ export class ContextEngine {
       };
     }
 
-    const activePlan = this.repository.getActivePlan(project.id);
     const currentBrief = this.repository.getCurrentProjectBrief(project.id);
     const recentRoadmaps = this.repository.listRoadmaps(project.id, 5);
     const openSpikes = this.repository.listOpenSpikes(project.id);
@@ -138,6 +138,17 @@ export class ContextEngine {
     const recentDecisions = this.repository.listDecisions(project.id, 5);
     const openFindings = this.repository.listOpenFindings(project.id).map(toFindingSummary);
     const selectedPhase = options.phaseId ? this.resolvePhase(project, options.phaseId) : null;
+
+    const worktreeKey = git.worktreeRoot ?? git.rootPath;
+    const allRoadmaps = this.repository.listRoadmaps(project.id);
+    const activePlans = this.repository.listActivePlans(project.id);
+    const focusRow = this.repository.getFocus(project.id, worktreeKey);
+    const resolution = resolveActivePlan({
+      roadmaps: allRoadmaps,
+      activePlans,
+      focusRoadmapId: focusRow?.roadmapId ?? null,
+    });
+    const activePlan = resolution.activePlan;
 
     return {
       project,
@@ -152,7 +163,10 @@ export class ContextEngine {
       recentSessions,
       recentDecisions,
       openFindings,
-      next: computeNext(activePlan, recentSessions, openFindings, recentRoadmaps),
+      next: computeNext(activePlan, recentSessions, openFindings, recentRoadmaps, {}, {
+        ambiguous: resolution.ambiguous,
+        candidates: resolution.candidates,
+      }),
     };
   }
 

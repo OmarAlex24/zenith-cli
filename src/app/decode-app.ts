@@ -44,6 +44,8 @@ import type { FindingListStatus } from "../storage/repository";
 import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
 import { validatePhaseDependencies } from "./plan-graph";
+import { resolveActivePlan, type FocusCandidate, type FocusResolution } from "./focus";
+import { buildRoadmapWorkspace, type RoadmapWorkspace } from "./roadmap-workspace";
 
 export type ProjectDetection = {
   project: Project | null;
@@ -69,7 +71,20 @@ export type ProjectStatus = {
     title: string;
     relatedFiles: string[];
   }>;
+  focus: FocusInfo | null;
+  focusAmbiguous: boolean;
   next: PlanNextResult;
+};
+
+export type FocusInfo = { roadmapId: string; roadmapTitle: string; branch: string | null };
+
+export type FocusStatus = {
+  worktreeKey: string;
+  branch: string | null;
+  focus: { roadmapId: string; roadmapTitle: string } | null;
+  ambiguous: boolean;
+  candidates: FocusCandidate[];
+  activePlan: { id: string; title: string } | null;
 };
 
 export type { PlanNextResult } from "./plan-next";
@@ -88,8 +103,9 @@ export class ZenithApp {
   async registerProject(): Promise<ProjectDetection> {
     const git = await this.git.inspect(this.cwd);
     const project = this.repository.registerProject({
-      name: this.git.projectNameFromPath(git.rootPath),
-      rootPath: git.rootPath,
+      name: this.git.projectNameFromPath(git.repoRoot),
+      rootPath: git.repoRoot,
+      worktreeRoot: git.worktreeRoot,
       ...(git.repositoryUrl ? { repositoryUrl: git.repositoryUrl } : {}),
       ...(git.branch ? { branch: git.branch } : {}),
     });
@@ -117,6 +133,8 @@ export class ZenithApp {
         recentSessions: [],
         recentDecisions: [],
         openFindings: [],
+        focus: null,
+        focusAmbiguous: false,
         next: {
           recommendation: "Run zenith init",
           reason: "Project is not registered in Zenith yet.",
@@ -125,14 +143,19 @@ export class ZenithApp {
       };
     }
 
-    const activePlan = this.repository.getActivePlan(detection.project.id);
     const currentBrief = this.repository.getCurrentProjectBrief(detection.project.id);
     const recentRoadmaps = this.repository.listRoadmaps(detection.project.id, 5);
     const openSpikes = this.repository.listOpenSpikes(detection.project.id);
     const recentSessions = this.repository.listRecentSessions(detection.project.id, 5);
     const recentDecisions = this.repository.listDecisions(detection.project.id, 5);
     const openFindings = this.repository.listOpenFindings(detection.project.id);
-    const next = computeNext(activePlan, recentSessions, openFindings, recentRoadmaps);
+
+    const { resolution, focus } = this.resolveFocus(detection.project.id, detection.git.worktreeRoot);
+    const activePlan = resolution.activePlan;
+    const next = computeNext(activePlan, recentSessions, openFindings, recentRoadmaps, {}, {
+      ambiguous: resolution.ambiguous,
+      candidates: resolution.candidates,
+    });
 
     return {
       ...detection,
@@ -150,8 +173,87 @@ export class ZenithApp {
         title: finding.title,
         relatedFiles: finding.relatedFiles,
       })),
+      focus,
+      focusAmbiguous: resolution.ambiguous,
       next,
     };
+  }
+
+  private resolveFocus(
+    projectId: string,
+    worktreeKey: string,
+  ): { resolution: FocusResolution; focus: FocusInfo | null } {
+    const roadmaps = this.repository.listRoadmaps(projectId);
+    const activePlans = this.repository.listActivePlans(projectId);
+    const focusRow = this.repository.getFocus(projectId, worktreeKey);
+    const resolution = resolveActivePlan({
+      roadmaps,
+      activePlans,
+      focusRoadmapId: focusRow?.roadmapId ?? null,
+    });
+
+    let focus: FocusInfo | null = null;
+    if (focusRow) {
+      const roadmap = roadmaps.find((entry) => entry.id === focusRow.roadmapId);
+      focus = {
+        roadmapId: focusRow.roadmapId,
+        roadmapTitle: roadmap?.title ?? focusRow.roadmapId,
+        branch: focusRow.branch ?? null,
+      };
+    }
+
+    return { resolution, focus };
+  }
+
+  async roadmapWorkspace(): Promise<RoadmapWorkspace> {
+    const project = await this.requireProject();
+    const roadmaps = this.repository.listRoadmaps(project.id);
+    const plans = this.repository.listPlans(project.id);
+    const git = await this.git.inspect(this.cwd);
+    const focusRow = this.repository.getFocus(project.id, git.worktreeRoot);
+    return buildRoadmapWorkspace(roadmaps, plans, focusRow?.roadmapId ?? null);
+  }
+
+  async focusStatus(): Promise<FocusStatus> {
+    const project = await this.requireProject();
+    const git = await this.git.inspect(this.cwd);
+    const roadmaps = this.repository.listRoadmaps(project.id);
+    const activePlans = this.repository.listActivePlans(project.id);
+    const focusRow = this.repository.getFocus(project.id, git.worktreeRoot);
+    const resolution = resolveActivePlan({
+      roadmaps,
+      activePlans,
+      focusRoadmapId: focusRow?.roadmapId ?? null,
+    });
+    const roadmap = focusRow ? roadmaps.find((entry) => entry.id === focusRow.roadmapId) : undefined;
+
+    return {
+      worktreeKey: git.worktreeRoot,
+      branch: git.branch ?? null,
+      focus: focusRow ? { roadmapId: focusRow.roadmapId, roadmapTitle: roadmap?.title ?? focusRow.roadmapId } : null,
+      ambiguous: resolution.ambiguous,
+      candidates: resolution.candidates,
+      activePlan: resolution.activePlan ? { id: resolution.activePlan.id, title: resolution.activePlan.title } : null,
+    };
+  }
+
+  async setFocus(roadmapId: string): Promise<FocusStatus> {
+    const project = await this.requireProject();
+    const git = await this.git.inspect(this.cwd);
+    this.repository.setFocus({
+      projectId: project.id,
+      worktreeKey: git.worktreeRoot,
+      roadmapId,
+      ...(git.branch ? { branch: git.branch } : {}),
+    });
+    return this.focusStatus();
+  }
+
+  async clearFocus(): Promise<FocusStatus> {
+    const project = await this.requireProject();
+    const git = await this.git.inspect(this.cwd);
+    this.repository.clearFocus(project.id, git.worktreeRoot);
+    return this.focusStatus();
   }
 
   async setBrief(rawInput: unknown): Promise<ProjectBrief> {
@@ -284,7 +386,7 @@ export class ZenithApp {
     });
 
     if (input.status === "active") {
-      this.assertNoOtherActivePlan(project.id);
+      this.assertNoOtherActivePlan(project.id, { sourceRoadmapId: roadmap.id });
     }
 
     const sourceEvidence = normalizeEvidence({
@@ -388,7 +490,7 @@ export class ZenithApp {
     const input = CreatePlanInputSchema.parse(rawInput);
 
     if (input.status === "active") {
-      this.assertNoOtherActivePlan(project.id);
+      this.assertNoOtherActivePlan(project.id, { sourceRoadmapId: null });
     }
 
     return this.repository.createPlan({
@@ -433,7 +535,7 @@ export class ZenithApp {
     }
 
     if (input.status === "active") {
-      this.assertNoOtherActivePlan(project.id, plan.id);
+      this.assertNoOtherActivePlan(project.id, { sourceRoadmapId: plan.sourceRoadmapId ?? null, planId: plan.id });
     }
 
     return this.repository.updatePlan(planId, {
@@ -481,11 +583,15 @@ export class ZenithApp {
 
   async nextPlanStep(): Promise<PlanNextResult> {
     const project = await this.requireProject();
-    const activePlan = this.repository.getActivePlan(project.id);
+    const git = await this.git.inspect(this.cwd);
     const recentSessions = this.repository.listRecentSessions(project.id, 5);
     const openFindings = this.repository.listOpenFindings(project.id);
     const recentRoadmaps = this.repository.listRoadmaps(project.id, 5);
-    return computeNext(activePlan, recentSessions, openFindings, recentRoadmaps);
+    const { resolution } = this.resolveFocus(project.id, git.worktreeRoot);
+    return computeNext(resolution.activePlan, recentSessions, openFindings, recentRoadmaps, {}, {
+      ambiguous: resolution.ambiguous,
+      candidates: resolution.candidates,
+    });
   }
 
   async getContext(options: ContextOptions = {}): Promise<ContextSnapshot> {
@@ -793,17 +899,25 @@ export class ZenithApp {
     return detection.project;
   }
 
-  private assertNoOtherActivePlan(projectId: string, planId?: string): void {
+  private assertNoOtherActivePlan(
+    projectId: string,
+    scope: { sourceRoadmapId: string | null; planId?: string },
+  ): void {
     const activePlan = this.repository
       .listPlans(projectId)
-      .find((candidate) => candidate.status === "active" && candidate.id !== planId);
+      .find(
+        (candidate) =>
+          candidate.status === "active" &&
+          candidate.id !== scope.planId &&
+          (candidate.sourceRoadmapId ?? null) === scope.sourceRoadmapId,
+      );
 
     if (!activePlan) {
       return;
     }
 
     throw new ZenithError(
-      "Active plan already exists. Pause, complete, or archive it before activating another plan.",
+      "Active plan already exists for this roadmap. Pause, complete, or archive it before activating another plan.",
       {
         code: "active_plan_exists",
         details: {

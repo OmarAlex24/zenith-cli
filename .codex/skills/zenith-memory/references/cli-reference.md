@@ -21,11 +21,18 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith roadmap create --json --input -`
 - `zenith roadmap list --json`
 - `zenith roadmap show <roadmap-id> --json`
+- `zenith roadmap workspace --json` — hierarchical view: roadmaps, items, linked plans, phase rollups, and worktree focus
 - `zenith roadmap update <roadmap-id> --json --input -`
 - `zenith roadmap add-item <roadmap-id> --json --input -`
 - `zenith roadmap update-item <roadmap-id> --json --input -`
 - `zenith roadmap import-plan <plan-id> --json --input -`
 - `zenith roadmap create-plan <roadmap-id> --json --input -`
+
+## Roadmap Focus
+
+- `zenith focus show --json` — current worktree focus, active plan, and ambiguity status
+- `zenith focus set <roadmap-id> --json` — bind the current worktree/branch to a roadmap
+- `zenith focus clear --json` — remove the focus binding for the current worktree
 
 Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan. Roadmap items use `todo / in_progress / done / deferred`; plan phases use `todo / in_progress / done / blocked`. Legacy `pending`/`planned`/`completed` inputs are still accepted and normalized.
 
@@ -41,6 +48,8 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 `plan update-phase` JSON input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. When all remaining `todo` phases are gated by unmet dependencies, `plan next` returns a recommendation prefixed `Blocked by dependency:` with a `blockedBy` array.
 
 `plan next` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
+
+When multiple roadmaps have active plans and the current worktree has no focus binding, `plan next` returns a recommendation to `Set roadmap focus for this worktree: zenith focus set <roadmap-id>`. Use `zenith focus set` to bind the worktree before `plan next` can recommend a phase.
 
 ## Context
 

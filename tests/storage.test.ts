@@ -612,6 +612,102 @@ describe("sqlite repository", () => {
     db.close();
     expect(existsSync(join(decodeHome, "decode.db"))).toBe(true);
   });
+
+  test("multiple active plans are allowed when they belong to different roadmaps", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const roadmapA = repo.createRoadmap({
+      projectId: project.id,
+      title: "Roadmap A",
+      status: "active",
+      items: [{ title: "A1", status: "in_progress", evidence: [] }],
+    });
+    const roadmapB = repo.createRoadmap({
+      projectId: project.id,
+      title: "Roadmap B",
+      status: "active",
+      items: [{ title: "B1", status: "in_progress", evidence: [] }],
+    });
+
+    repo.createPlan({
+      projectId: project.id,
+      title: "Plan A",
+      status: "active",
+      sourceRoadmapId: roadmapA.id,
+      sourceRoadmapItemId: roadmapA.items[0]!.id,
+      phases: [{ title: "Phase A1", status: "todo", acceptanceCriteria: [], evidence: [] }],
+    });
+
+    expect(() =>
+      repo.createPlan({
+        projectId: project.id,
+        title: "Plan B",
+        status: "active",
+        sourceRoadmapId: roadmapB.id,
+        sourceRoadmapItemId: roadmapB.items[0]!.id,
+        phases: [{ title: "Phase B1", status: "todo", acceptanceCriteria: [], evidence: [] }],
+      }),
+    ).not.toThrow();
+
+    const activePlans = repo.listActivePlans(project.id);
+    expect(activePlans).toHaveLength(2);
+    repo.close();
+  });
+
+  test("focus CRUD binds a worktree to a roadmap and clears it", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const roadmap = repo.createRoadmap({
+      projectId: project.id,
+      title: "Focused Roadmap",
+      status: "active",
+      items: [{ title: "Item 1", status: "todo", evidence: [] }],
+    });
+
+    expect(repo.getFocus(project.id, "/work/meridian")).toBeNull();
+
+    const focus = repo.setFocus({
+      projectId: project.id,
+      worktreeKey: "/work/meridian",
+      roadmapId: roadmap.id,
+      branch: "main",
+    });
+    expect(focus.roadmapId).toBe(roadmap.id);
+    expect(focus.branch).toBe("main");
+
+    const fetched = repo.getFocus(project.id, "/work/meridian");
+    expect(fetched).not.toBeNull();
+    expect(fetched!.roadmapId).toBe(roadmap.id);
+
+    const cleared = repo.clearFocus(project.id, "/work/meridian");
+    expect(cleared).toBe(true);
+    expect(repo.getFocus(project.id, "/work/meridian")).toBeNull();
+
+    const clearAgain = repo.clearFocus(project.id, "/work/meridian");
+    expect(clearAgain).toBe(false);
+    repo.close();
+  });
+
+  test("setFocus rejects a nonexistent roadmap", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    expect(() =>
+      repo.setFocus({ projectId: project.id, worktreeKey: "/work/meridian", roadmapId: "roadmap_bogus" }),
+    ).toThrow("Roadmap not found");
+    repo.close();
+  });
 });
 
 function restoreEnv(key: "HOME" | "ZENITH_HOME" | "DECODE_HOME", value: string | undefined): void {

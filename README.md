@@ -31,7 +31,7 @@ bun run zenith --help
 bun run zenith project detect --json
 ```
 
-Running `bun run zenith` with no arguments launches the read-only OpenTUI workspace for project status, roadmap, plan, findings, sessions, decisions, spikes, and compact context. Use number keys or left/right to switch tabs, up/down to move through list views, `enter` for detail, `backspace` to return, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
+Running `bun run zenith` with no arguments launches the read-only OpenTUI workspace. Use `↑`/`↓` to navigate within the current region, `enter` to move focus forward (sidebar → content, and between columns inside the Roadmap workspace), `backspace` (or `←`) to move focus backward, number keys `1–8` to jump directly to a section, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
 
 Register the current project when needed:
 
@@ -80,7 +80,7 @@ Storage home precedence:
 
 When Zenith uses the legacy `~/.decode` home, it keeps the legacy database name `decode.db`. All other homes use `zenith.db`.
 
-SQLite enforces core integrity such as foreign keys, status guards, active-plan uniqueness, and source links for roadmap-derived plans. See [`docs/storage-policy.md`](docs/storage-policy.md) for the normalization policy behind embedded JSON arrays.
+SQLite enforces core integrity such as foreign keys, status guards, active-plan per-roadmap uniqueness (one active plan per roadmap, plus one standalone), worktree-to-roadmap focus bindings, and source links for roadmap-derived plans. See [`docs/storage-policy.md`](docs/storage-policy.md) for the normalization policy behind embedded JSON arrays.
 
 ## Memory Types
 
@@ -136,11 +136,20 @@ bun run zenith brief set --json --input -
 bun run zenith brief show --json
 bun run zenith roadmap create --json --input -
 bun run zenith roadmap list --json
+bun run zenith roadmap workspace --json
 bun run zenith roadmap add-item <roadmap-id> --json --input -
 bun run zenith roadmap update-item <roadmap-id> --json --input -
 bun run zenith roadmap create-plan <roadmap-id> --json --input -
 bun run zenith spike create --json --input -
 bun run zenith spike conclude <spike-id> --json --input -
+```
+
+Roadmap focus (bind a worktree/branch to the roadmap it is implementing):
+
+```bash
+bun run zenith focus show --json
+bun run zenith focus set <roadmap-id> --json
+bun run zenith focus clear --json
 ```
 
 Operational memory:
@@ -225,6 +234,8 @@ zenith spike conclude <spike-id> --json --input -
 Use `roadmap create-plan` when product direction needs to become executable work. The payload must identify exactly one roadmap item by `itemId` or `itemTitle`; optional `phases` can expand the item into a real implementation plan. Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence.
 
 `plan next` treats roadmap items with `in_progress` or `planned` status as actionable. Items marked `deferred` are intentionally parked; Zenith will recommend reviewing or reactivating deferred work instead of creating a plan from it automatically. To resume deferred work, update that roadmap item back to `planned` or `in_progress` with a justification.
+
+When a project has multiple roadmaps with active plans, `plan next` may return an ambiguity recommendation (`Set roadmap focus for this worktree: zenith focus set <roadmap-id>`). Use `zenith focus set <roadmap-id>` to bind the current worktree to one roadmap so the agent knows which plan to implement. `zenith focus show --json` reports the current binding and any ambiguity. Multiple roadmaps can coexist, each with its own active plan.
 
 When inserting intermediate roadmap work between existing MVPs, use `position`, `afterItemId`, or `afterItemTitle` instead of renaming later MVPs. Targeted insertions require `justification` so the sequence change remains auditable:
 
