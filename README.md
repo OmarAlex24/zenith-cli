@@ -116,13 +116,18 @@ bun run zenith plan next --json
 bun run zenith phase show <phase-id> --json
 ```
 
+`plan update-phase` input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. `plan next` skips phases whose dependencies are not yet `done` and returns a recommendation prefixed `Blocked by dependency:` (with a `blockedBy` array) when all remaining todo phases are gated.
+
 Context:
 
 ```bash
 bun run zenith context get --json
 bun run zenith context compact --json
 bun run zenith resume --json
+bun run zenith timeline --json
 ```
+
+`zenith timeline` is a read-only activity log; accepts `--limit <n>`.
 
 Long-running memory:
 
@@ -149,6 +154,11 @@ bun run zenith finding list --status all --json
 bun run zenith finding show <finding-id> --json
 bun run zenith finding update <finding-id> --json --input -
 bun run zenith finding close <finding-id> --json
+```
+
+`finding record` and `finding update` JSON input accept optional `relatedPlanId` and `relatedPhaseId` to link a finding to an active plan or phase.
+
+```bash
 bun run zenith session start --json --input -
 bun run zenith session list --json
 bun run zenith session show <session-id> --json
@@ -170,7 +180,10 @@ Use Zenith as the source of truth before planning or continuing work:
 ```bash
 zenith context compact --json
 zenith plan next --json
+zenith timeline --json
 ```
+
+`zenith timeline` shows recent project activity (read-only event log); accepts `--limit <n>`.
 
 When working from this source checkout and the `zenith` binary is not on `PATH`, use `bun run zenith ...` for the same commands.
 
@@ -248,11 +261,15 @@ zenith session capture <session-id> --json --input -
 zenith session end <session-id> --json --input -
 ```
 
+`finding record` and `finding update` JSON input accept optional `relatedPlanId` and `relatedPhaseId` to link a finding to an active plan or phase.
+
 Phase progress is recorded with evidence:
 
 ```bash
 zenith plan update-phase <plan-id> --json --input -
 ```
+
+`plan update-phase` input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. `plan next` skips phases whose dependencies are not yet `done` and returns a recommendation prefixed `Blocked by dependency:` (with a `blockedBy` array) when all remaining todo phases are gated.
 
 Use `decode` only as a legacy alias when `zenith` is not available.
 

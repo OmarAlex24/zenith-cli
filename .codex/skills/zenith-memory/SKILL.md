@@ -30,6 +30,8 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Prefer `zenith ...`; use `bun run zenith ...` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
+- Use `zenith timeline --json` (with optional `--limit <n>`) for a read-only view of recent project activity.
+- Phase prerequisites are expressed with `dependsOn` (array of phase ids) via `plan update-phase`; when all remaining phases are gated, `plan next` reports `Blocked by dependency`.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow

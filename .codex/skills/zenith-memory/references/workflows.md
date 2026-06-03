@@ -148,6 +148,25 @@ Payload:
 }
 ```
 
+## Sequence Phases With Dependencies
+
+To declare that a phase must not start until another phase is done, set `dependsOn` via `plan update-phase`:
+
+```bash
+zenith plan update-phase plan_id --json --input -
+```
+
+Payload:
+
+```json
+{
+  "phaseId": "phase_x",
+  "dependsOn": ["phase_y"]
+}
+```
+
+`plan next` skips phases whose `dependsOn` prerequisites are not yet `done`. When all remaining `todo` phases are gated, `plan next` returns a recommendation prefixed `Blocked by dependency:` and includes a `blockedBy` array listing the blocking phase ids.
+
 ## Update Plan Metadata
 
 ```bash
@@ -206,9 +225,13 @@ Payload:
   "severity": "high",
   "title": "Missing retry around sync",
   "description": "A transient failure can drop pending progress.",
-  "relatedFiles": ["src/sync.ts"]
+  "relatedFiles": ["src/sync.ts"],
+  "relatedPlanId": "plan_id",
+  "relatedPhaseId": "phase_id"
 }
 ```
+
+Both `relatedPlanId` and `relatedPhaseId` are optional; include them to link the finding to the active plan or phase. `finding update` accepts the same optional fields.
 
 Close a finding after the issue is handled:
 

@@ -38,6 +38,8 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 - `zenith plan update-phase <plan-id> --json --input -`
 - `zenith plan next --json`
 
+`plan update-phase` JSON input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. When all remaining `todo` phases are gated by unmet dependencies, `plan next` returns a recommendation prefixed `Blocked by dependency:` with a `blockedBy` array.
+
 `plan next` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
 
 ## Context
@@ -46,6 +48,7 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 - `zenith context compact --json`
 - `zenith resume --json`
 - `zenith phase show <phase-id> --json`
+- `zenith timeline --json` — read-only activity log; accepts `--limit <n>`
 
 ## Decisions
 
@@ -62,6 +65,8 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 - `zenith finding show <finding-id> --json`
 - `zenith finding update <finding-id> --json --input -`
 - `zenith finding close <finding-id> --json`
+
+`finding record` and `finding update` JSON input accept optional `relatedPlanId` and `relatedPhaseId` to link a finding to an active plan or phase.
 
 ## Spikes
 

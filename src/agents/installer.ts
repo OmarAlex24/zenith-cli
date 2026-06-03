@@ -100,6 +100,8 @@ Use the zenith-memory skill at ${skillPath} when:
 - recording technical decisions
 - recording and closing findings
 - starting, capturing, ending, or summarizing a coding session
+- viewing recent project activity (\`zenith timeline --json\`)
+- sequencing plan phases with dependencies (\`dependsOn\` via \`plan update-phase\`; \`plan next\` reports \`Blocked by dependency\` when gated)
 
 Before planning:
 - Run \`zenith context compact --json\`.
