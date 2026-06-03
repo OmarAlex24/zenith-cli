@@ -85,6 +85,8 @@ type FindingRow = {
   related_files_json: string;
   created_at: string;
   closed_at: string | null;
+  related_plan_id: string | null;
+  related_phase_id: string | null;
 };
 
 type SessionRow = {
@@ -254,6 +256,8 @@ export type UpdateFindingPatch = {
   title?: string;
   description?: string;
   relatedFiles?: string[];
+  relatedPlanId?: string;
+  relatedPhaseId?: string;
 };
 
 export type UpdateSessionPatch = {
@@ -940,9 +944,10 @@ export class ZenithRepository {
           `
           INSERT INTO findings (
             id, project_id, type, severity, title, description,
-            status, related_files_json, created_at, closed_at
+            status, related_files_json, created_at, closed_at,
+            related_plan_id, related_phase_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL)
+          VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL, ?, ?)
         `,
         )
         .run(
@@ -954,6 +959,8 @@ export class ZenithRepository {
           input.description,
           JSON.stringify(input.relatedFiles),
           timestamp,
+          input.relatedPlanId ?? null,
+          input.relatedPhaseId ?? null,
         );
 
       this.recordEvent(input.projectId, "finding.recorded", "finding", id, {
@@ -1006,7 +1013,8 @@ export class ZenithRepository {
         .query(
           `
           UPDATE findings
-          SET type = ?, severity = ?, title = ?, description = ?, related_files_json = ?
+          SET type = ?, severity = ?, title = ?, description = ?, related_files_json = ?,
+              related_plan_id = ?, related_phase_id = ?
           WHERE id = ?
         `,
         )
@@ -1016,6 +1024,8 @@ export class ZenithRepository {
           patch.title ?? finding.title,
           patch.description ?? finding.description,
           JSON.stringify(patch.relatedFiles ?? finding.relatedFiles),
+          patch.relatedPlanId !== undefined ? patch.relatedPlanId : (finding.relatedPlanId ?? null),
+          patch.relatedPhaseId !== undefined ? patch.relatedPhaseId : (finding.relatedPhaseId ?? null),
           findingId,
         );
 
@@ -1421,6 +1431,8 @@ function mapFinding(row: FindingRow): Finding {
     relatedFiles: parseJsonArray<string>(row.related_files_json),
     createdAt: row.created_at,
     ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
+    ...(row.related_plan_id === null ? {} : { relatedPlanId: row.related_plan_id }),
+    ...(row.related_phase_id === null ? {} : { relatedPhaseId: row.related_phase_id }),
   });
 }
 

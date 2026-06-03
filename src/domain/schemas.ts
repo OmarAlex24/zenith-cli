@@ -152,6 +152,8 @@ export const FindingSchema = z.object({
   relatedFiles: z.array(z.string().min(1)).default([]),
   createdAt: z.string().min(1),
   closedAt: z.string().min(1).optional(),
+  relatedPlanId: z.string().min(1).optional(),
+  relatedPhaseId: z.string().min(1).optional(),
 });
 
 export const SessionSchema = z.object({
@@ -182,6 +184,7 @@ export const FindingSummarySchema = FindingSchema.pick({
   severity: true,
   title: true,
   relatedFiles: true,
+  relatedPlanId: true,
 });
 
 export const NextStepSchema = z.object({
@@ -538,6 +541,8 @@ export const RecordFindingInputSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1),
   relatedFiles: z.array(z.string().min(1)).default([]),
+  relatedPlanId: z.string().min(1).optional(),
+  relatedPhaseId: z.string().min(1).optional(),
 });
 
 export const UpdateFindingInputSchema = z
@@ -547,6 +552,8 @@ export const UpdateFindingInputSchema = z
     title: z.string().min(1).optional(),
     description: z.string().min(1).optional(),
     relatedFiles: z.array(z.string().min(1)).optional(),
+    relatedPlanId: z.string().min(1).optional(),
+    relatedPhaseId: z.string().min(1).optional(),
   })
   .refine(
     (value) =>
@@ -554,11 +561,23 @@ export const UpdateFindingInputSchema = z
       value.severity !== undefined ||
       value.title !== undefined ||
       value.description !== undefined ||
-      value.relatedFiles !== undefined,
+      value.relatedFiles !== undefined ||
+      value.relatedPlanId !== undefined ||
+      value.relatedPhaseId !== undefined,
     {
       message: "Provide at least one finding update",
     },
   );
+
+export const EventSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  type: z.string().min(1),
+  entityType: z.string().min(1),
+  entityId: z.string().min(1),
+  payload: z.unknown(),
+  createdAt: z.string().min(1),
+});
 
 export const StartSessionInputSchema = z.object({
   summary: z.string().min(1).optional(),

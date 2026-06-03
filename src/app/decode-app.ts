@@ -530,6 +530,35 @@ export class ZenithApp {
     const project = await this.requireProject();
     const input = RecordFindingInputSchema.parse(rawInput);
 
+    if (input.relatedPlanId) {
+      const plan = this.repository.getPlanById(input.relatedPlanId);
+      if (!plan || plan.projectId !== project.id) {
+        throw new ZenithError(`Plan not found: ${input.relatedPlanId}`, {
+          code: "plan_not_found",
+          details: { planId: input.relatedPlanId },
+        });
+      }
+    }
+
+    if (input.relatedPhaseId) {
+      const result = this.repository.getPlanByPhaseId(input.relatedPhaseId);
+      if (!result || result.plan.projectId !== project.id) {
+        throw new ZenithError(`Phase not found: ${input.relatedPhaseId}`, {
+          code: "phase_not_found",
+          details: { phaseId: input.relatedPhaseId },
+        });
+      }
+      if (input.relatedPlanId && result.plan.id !== input.relatedPlanId) {
+        throw new ZenithError(
+          `Phase ${input.relatedPhaseId} does not belong to plan ${input.relatedPlanId}`,
+          {
+            code: "phase_not_in_plan",
+            details: { planId: input.relatedPlanId, phaseId: input.relatedPhaseId },
+          },
+        );
+      }
+    }
+
     return this.repository.recordFinding({
       projectId: project.id,
       type: input.type,
@@ -537,6 +566,8 @@ export class ZenithApp {
       title: input.title,
       description: input.description,
       relatedFiles: input.relatedFiles,
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      ...(input.relatedPhaseId ? { relatedPhaseId: input.relatedPhaseId } : {}),
     });
   }
 
@@ -555,12 +586,43 @@ export class ZenithApp {
     this.requireProjectFinding(findingId, project.id);
     const input = UpdateFindingInputSchema.parse(rawInput);
 
+    if (input.relatedPlanId) {
+      const plan = this.repository.getPlanById(input.relatedPlanId);
+      if (!plan || plan.projectId !== project.id) {
+        throw new ZenithError(`Plan not found: ${input.relatedPlanId}`, {
+          code: "plan_not_found",
+          details: { planId: input.relatedPlanId },
+        });
+      }
+    }
+
+    if (input.relatedPhaseId) {
+      const result = this.repository.getPlanByPhaseId(input.relatedPhaseId);
+      if (!result || result.plan.projectId !== project.id) {
+        throw new ZenithError(`Phase not found: ${input.relatedPhaseId}`, {
+          code: "phase_not_found",
+          details: { phaseId: input.relatedPhaseId },
+        });
+      }
+      if (input.relatedPlanId && result.plan.id !== input.relatedPlanId) {
+        throw new ZenithError(
+          `Phase ${input.relatedPhaseId} does not belong to plan ${input.relatedPlanId}`,
+          {
+            code: "phase_not_in_plan",
+            details: { planId: input.relatedPlanId, phaseId: input.relatedPhaseId },
+          },
+        );
+      }
+    }
+
     return this.repository.updateFinding(findingId, {
       ...(input.type ? { type: input.type } : {}),
       ...(input.severity ? { severity: input.severity } : {}),
       ...(input.title ? { title: input.title } : {}),
       ...(input.description ? { description: input.description } : {}),
       ...(input.relatedFiles !== undefined ? { relatedFiles: input.relatedFiles } : {}),
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      ...(input.relatedPhaseId ? { relatedPhaseId: input.relatedPhaseId } : {}),
     });
   }
 

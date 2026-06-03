@@ -389,6 +389,64 @@ describe("cli json commands", () => {
     expect((allList.json as any).data[0].id).toBe(findingId);
   });
 
+  test("finding record with relatedPlanId links plan and show returns it", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const createdPlan = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Linked Plan",
+        phases: [{ title: "Phase One" }],
+      },
+    });
+    expect(createdPlan.exitCode).toBe(0);
+    const planId = (createdPlan.json as any).data.id;
+
+    const recorded = await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        type: "risk",
+        severity: "medium",
+        title: "Finding linked to plan",
+        description: "This finding is linked to a specific plan.",
+        relatedPlanId: planId,
+      },
+    });
+    expect(recorded.exitCode).toBe(0);
+    expect((recorded.json as any).data.relatedPlanId).toBe(planId);
+
+    const findingId = (recorded.json as any).data.id;
+    const shown = await runDecode(["finding", "show", findingId, "--json"], { cwd, decodeHome });
+    expect(shown.exitCode).toBe(0);
+    expect((shown.json as any).data.relatedPlanId).toBe(planId);
+  });
+
+  test("finding record with non-existent relatedPlanId returns plan_not_found error", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const recorded = await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        type: "bug",
+        severity: "low",
+        title: "Bad link",
+        description: "References a non-existent plan.",
+        relatedPlanId: "plan_nonexistent_xyz",
+      },
+    });
+    expect(recorded.exitCode).toBe(1);
+    expect((recorded.json as any).errors[0].code).toBe("plan_not_found");
+  });
+
   test("session start capture end and summarize emit stable json", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();

@@ -186,6 +186,81 @@ describe("sqlite repository", () => {
     repo.close();
   });
 
+  test("v6 migration adds related_plan_id and related_phase_id columns to findings", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(findings)")
+      .all()
+      .map((col) => col.name);
+
+    expect(columns).toContain("related_plan_id");
+    expect(columns).toContain("related_phase_id");
+    db.close();
+  });
+
+  test("recordFinding with relatedPlanId and relatedPhaseId round-trips correctly", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Linked plan",
+      status: "active",
+      phases: [{ title: "Phase Alpha", status: "todo", acceptanceCriteria: [], evidence: [] }],
+    });
+    const phaseId = plan.phases[0]!.id;
+
+    const linkedFinding = repo.recordFinding({
+      projectId: project.id,
+      type: "risk",
+      severity: "medium",
+      title: "Finding linked to plan",
+      description: "This finding is linked to a plan and phase.",
+      relatedFiles: [],
+      relatedPlanId: plan.id,
+      relatedPhaseId: phaseId,
+    });
+
+    const fetched = repo.getFindingById(linkedFinding.id);
+    expect(fetched?.relatedPlanId).toBe(plan.id);
+    expect(fetched?.relatedPhaseId).toBe(phaseId);
+    repo.close();
+  });
+
+  test("recordFinding without relatedPlanId/relatedPhaseId reads back without those fields", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+
+    const finding = repo.recordFinding({
+      projectId: project.id,
+      type: "bug",
+      severity: "low",
+      title: "Unlinked finding",
+      description: "No plan or phase link.",
+      relatedFiles: [],
+    });
+
+    const fetched = repo.getFindingById(finding.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched?.relatedPlanId).toBeUndefined();
+    expect(fetched?.relatedPhaseId).toBeUndefined();
+    repo.close();
+  });
+
   test("starts, captures, and ends sessions", () => {
     const root = makeTempDir();
     tempDirs.push(root);

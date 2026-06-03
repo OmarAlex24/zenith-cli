@@ -383,8 +383,9 @@ function appendOpenFindings(lines: string[], findings: FindingSummary[]): void {
 
   for (const finding of findings.slice(0, 5)) {
     const files = finding.relatedFiles.length > 0 ? ` files: ${finding.relatedFiles.join(", ")}` : "";
+    const planSuffix = finding.relatedPlanId ? ` (plan: ${finding.relatedPlanId})` : "";
     const prefix = isBlockingSeverity(finding.severity) ? "blocking " : "";
-    lines.push(`- ${prefix}${finding.severity} ${finding.type}: ${truncate(`${finding.title}${files}`, 180)}`);
+    lines.push(`- ${prefix}${finding.severity} ${finding.type}: ${truncate(`${finding.title}${files}${planSuffix}`, 180)}`);
   }
 }
 
@@ -449,6 +450,7 @@ function toFindingSummary(finding: FindingSummary): FindingSummary {
     severity: finding.severity,
     title: finding.title,
     relatedFiles: finding.relatedFiles,
+    ...(finding.relatedPlanId ? { relatedPlanId: finding.relatedPlanId } : {}),
   };
 }
 

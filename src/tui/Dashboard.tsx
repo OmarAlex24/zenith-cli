@@ -489,6 +489,8 @@ function FindingsView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
           <DetailText label="Files" value={finding.relatedFiles.join("\n") || "none"} />
           <DetailRow label="Created" value={truncate(finding.createdAt, 24)} />
           <DetailRow label="Closed" value={finding.closedAt ?? "open"} />
+          {finding.relatedPlanId && <DetailRow label="Plan" value={finding.relatedPlanId} />}
+          {finding.relatedPhaseId && <DetailRow label="Phase" value={finding.relatedPhaseId} />}
         </>
       ) : (
         <text fg={palette.muted}>No findings.</text>

@@ -200,6 +200,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 5,
     sql: "",
   },
+  {
+    version: 6,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -251,6 +255,8 @@ export function runMigrations(db: Database): void {
         runRoadmapItemJustificationMigration(db);
       } else if (migration.version === 5) {
         runStatusVocabularyMigration(db);
+      } else if (migration.version === 6) {
+        runFindingLinksMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -272,6 +278,15 @@ function runIntegrityHardeningMigration(db: Database): void {
 
   for (const statement of INTEGRITY_HARDENING_STATEMENTS) {
     db.run(statement);
+  }
+}
+
+function runFindingLinksMigration(db: Database): void {
+  if (!tableHasColumn(db, "findings", "related_plan_id")) {
+    db.run("ALTER TABLE findings ADD COLUMN related_plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL");
+  }
+  if (!tableHasColumn(db, "findings", "related_phase_id")) {
+    db.run("ALTER TABLE findings ADD COLUMN related_phase_id TEXT REFERENCES plan_phases(id) ON DELETE SET NULL");
   }
 }
 
