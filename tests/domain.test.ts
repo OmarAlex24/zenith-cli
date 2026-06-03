@@ -10,7 +10,20 @@ describe("domain schemas and json envelope", () => {
     });
 
     expect(parsed.status).toBe("active");
-    expect(parsed.phases[0]?.status).toBe("pending");
+    expect(parsed.phases[0]?.status).toBe("todo");
+  });
+
+  test("normalizes legacy phase and roadmap item statuses", () => {
+    const parsed = CreatePlanInputSchema.parse({
+      title: "Legacy v1",
+      phases: [
+        { title: "A", status: "pending" },
+        { title: "B", status: "completed" },
+      ],
+    });
+
+    expect(parsed.phases[0]?.status).toBe("todo");
+    expect(parsed.phases[1]?.status).toBe("done");
   });
 
   test("wraps success output in the stable envelope", () => {

@@ -300,7 +300,7 @@ export class ZenithApp {
         {
           title: item.title,
           ...(item.description ? { description: item.description } : {}),
-          status: "pending" as const,
+          status: "todo" as const,
           acceptanceCriteria: [],
           evidence: [sourceEvidence, ...item.evidence],
         },

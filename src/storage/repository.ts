@@ -1471,7 +1471,7 @@ function resolveRoadmapInsertPosition(items: RoadmapItem[], input: AddRoadmapIte
 }
 
 function phaseStatusToRoadmapItemStatus(status: PlanPhase["status"]): RoadmapItemStatus {
-  if (status === "completed") {
+  if (status === "done") {
     return "done";
   }
 
@@ -1483,7 +1483,7 @@ function phaseStatusToRoadmapItemStatus(status: PlanPhase["status"]): RoadmapIte
     return "deferred";
   }
 
-  return "planned";
+  return "todo";
 }
 
 export { ZenithRepository as DecodeRepository };

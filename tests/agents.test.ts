@@ -40,9 +40,11 @@ describe("agent installer", () => {
     expect(cliReference).toContain("zenith finding update <finding-id> --json --input -");
     expect(cliReference).toContain("zenith session start --json --input -");
     expect(cliReference).toContain("zenith session show <session-id> --json");
+    expect(cliReference).toContain("deferred");
     expect(cliReference).toContain("bun run zenith");
     expect(workflows).toContain("Continue With Minimal Prompt");
     expect(workflows).toContain("Insert Intermediate Roadmap Work");
+    expect(workflows).toContain("Defer Roadmap Work");
     expect(workflows).toContain("Targeted insertions");
     expect(workflows).toContain("Use that phase as the implementation target");
     expect(workflows).toContain("zenith session end session_id --json --input -");

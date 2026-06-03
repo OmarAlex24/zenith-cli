@@ -195,6 +195,7 @@ function renderCompactMarkdown(snapshot: ContextSnapshot): string {
   appendRoadmaps(lines, snapshot.recentRoadmaps);
   appendOpenSpikes(lines, snapshot.openSpikes);
   appendPhaseDetails(lines, focusPhaseDetail(snapshot));
+  appendLatestSession(lines, snapshot.recentSessions);
   appendOpenFindings(lines, snapshot.openFindings);
   return lines.join("\n");
 }
@@ -204,16 +205,7 @@ function renderResumeMarkdown(snapshot: ContextSnapshot): string {
   appendRoadmaps(lines, snapshot.recentRoadmaps);
   appendOpenSpikes(lines, snapshot.openSpikes);
   appendPhaseDetails(lines, focusPhaseDetail(snapshot));
-  lines.push("", "## Latest session");
-  const latest = snapshot.recentSessions[0];
-  if (latest) {
-    lines.push(`- ${truncate(latest.summary ?? latest.id, 180)}`);
-    if (latest.nextSteps.length > 0) {
-      lines.push(`- Session next: ${truncate(latest.nextSteps[0]!, 180)}`);
-    }
-  } else {
-    lines.push("- No sessions recorded.");
-  }
+  appendLatestSession(lines, snapshot.recentSessions);
   appendRecentDecisions(lines, snapshot.recentDecisions);
   appendOpenFindings(lines, snapshot.openFindings);
   return lines.join("\n");
@@ -234,6 +226,7 @@ function renderBaseMarkdown(context: ContextParts, title: string): string[] {
     `- Root: ${context.git.rootPath}`,
     `- Registered: ${context.registered ? "yes" : "no"}`,
     `- Git: ${formatGit(context.git)}`,
+    `- Working tree: ${context.git.dirty ? "dirty" : "clean"}`,
     `- Changed files: ${formatList(context.git.changedFiles, 8)}`,
     `- Brief: ${truncate(brief, 180)}`,
     "",
@@ -256,18 +249,34 @@ function appendRoadmaps(lines: string[], roadmaps: Roadmap[]): void {
   }
 
   for (const roadmap of roadmaps.slice(0, 5)) {
-    const visibleItems = visibleRoadmapItems(roadmap).map((item) => {
-      const justification = item.justification ? ` why: ${item.justification}` : "";
-      return `${item.status}: ${item.title}${justification}`;
-    });
-    const suffix = visibleItems.length > 0 ? ` Items: ${visibleItems.join("; ")}` : "";
-    lines.push(`- ${roadmap.status}: ${truncate(`${roadmap.title}.${suffix}`, 220)}`);
+    lines.push(`- ${roadmap.status}: ${truncate(roadmap.title, 180)}`);
+    lines.push(`  - actionable: ${formatRoadmapItems(actionableRoadmapItems(roadmap), 3)}`);
+    const deferred = deferredRoadmapItems(roadmap);
+    if (deferred.length > 0) {
+      lines.push(`  - deferred backlog: ${formatRoadmapItems(deferred, 3)}`);
+    }
   }
 }
 
-function visibleRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
-  const activeItems = roadmap.items.filter((item) => item.status === "in_progress" || item.status === "planned" || item.status === "deferred");
-  return (activeItems.length > 0 ? activeItems : roadmap.items).slice(0, 3);
+function actionableRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
+  return roadmap.items.filter((item) => item.status === "in_progress" || item.status === "todo");
+}
+
+function deferredRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
+  return roadmap.items.filter((item) => item.status === "deferred");
+}
+
+function formatRoadmapItems(items: Roadmap["items"], max: number): string {
+  if (items.length === 0) {
+    return "none";
+  }
+
+  const visible = items.slice(0, max).map((item) => {
+    const justification = item.justification ? ` why: ${item.justification}` : "";
+    return `${item.status}: ${item.title}${justification}`;
+  });
+  const suffix = items.length > max ? `; and ${items.length - max} more` : "";
+  return truncate(`${visible.join("; ")}${suffix}`, 220);
 }
 
 function appendOpenSpikes(lines: string[], spikes: Spike[]): void {
@@ -339,6 +348,20 @@ function appendRecentSessions(lines: string[], sessions: Session[]): void {
   }
 }
 
+function appendLatestSession(lines: string[], sessions: Session[]): void {
+  lines.push("", "## Latest session");
+  const latest = sessions[0];
+  if (!latest) {
+    lines.push("- No sessions recorded.");
+    return;
+  }
+
+  lines.push(`- ${truncate(latest.summary ?? latest.id, 180)}`);
+  if (latest.nextSteps.length > 0) {
+    lines.push(`- Session next: ${truncate(latest.nextSteps[0]!, 180)}`);
+  }
+}
+
 function appendRecentDecisions(lines: string[], decisions: Decision[]): void {
   lines.push("", "## Recent decisions");
   if (decisions.length === 0) {
@@ -360,8 +383,13 @@ function appendOpenFindings(lines: string[], findings: FindingSummary[]): void {
 
   for (const finding of findings.slice(0, 5)) {
     const files = finding.relatedFiles.length > 0 ? ` files: ${finding.relatedFiles.join(", ")}` : "";
-    lines.push(`- ${finding.severity} ${finding.type}: ${truncate(`${finding.title}${files}`, 180)}`);
+    const prefix = isBlockingSeverity(finding.severity) ? "blocking " : "";
+    lines.push(`- ${prefix}${finding.severity} ${finding.type}: ${truncate(`${finding.title}${files}`, 180)}`);
   }
+}
+
+function isBlockingSeverity(severity: string): boolean {
+  return severity === "critical" || severity === "high";
 }
 
 function toProjectSummary(project: Project): ProjectSummary {

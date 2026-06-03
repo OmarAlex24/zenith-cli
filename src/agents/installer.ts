@@ -106,6 +106,7 @@ Before planning:
 - Run \`zenith plan next --json\`.
 - If \`plan next\` returns a \`phaseId\`, run \`zenith phase show <phase-id> --json\`.
 - If \`plan next\` recommends a roadmap item and no active plan exists, use \`zenith roadmap create-plan <roadmap-id> --json --input -\`.
+- If \`plan next\` recommends deferred roadmap work, reactivate the item before creating an executable plan.
 
 Prefer \`zenith ... --json\` and \`--input -\` for machine-readable commands.
 Use \`plan\` only for executable phased work. Use \`brief\`, \`roadmap\`, or \`spike\` for non-executable memory.
@@ -143,6 +144,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - If the user's request conflicts with \`plan next\`, report the conflict and ask for confirmation before implementing.
 - Always inspect the target phase with \`zenith phase show <phase-id> --json\` when a phase id is available.
 - When \`plan next\` recommends a roadmap item and no active plan exists, use \`zenith roadmap create-plan <roadmap-id> --json --input -\` to preserve source links.
+- Deferred roadmap items are parked backlog; reactivate them with \`roadmap update-item\` before creating executable plans.
 - Use \`plan\` only for executable phased work; use \`brief\`, \`roadmap\`, or \`spike\` for non-executable memory.
 - Prefer \`zenith ...\`; use \`bun run zenith ...\` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
@@ -226,6 +228,8 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 - \`zenith roadmap import-plan <plan-id> --json --input -\`
 - \`zenith roadmap create-plan <roadmap-id> --json --input -\`
 
+Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \`plan next\`; \`deferred\` is parked backlog and must be reactivated before creating an executable plan. Roadmap items use \`todo / in_progress / done / deferred\`; plan phases use \`todo / in_progress / done / blocked\`. Legacy \`pending\`/\`planned\`/\`completed\` inputs are still accepted and normalized.
+
 ## Plans
 
 - \`zenith plan create --json --input -\`
@@ -234,6 +238,8 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 - \`zenith plan update <plan-id> --json --input -\`
 - \`zenith plan update-phase <plan-id> --json --input -\`
 - \`zenith plan next --json\`
+
+\`plan next\` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
 
 ## Context
 
@@ -345,7 +351,7 @@ Payload:
   "phases": [
     {
       "title": "Foundation",
-      "status": "pending",
+      "status": "todo",
       "acceptanceCriteria": ["Command compiles", "Tests pass"]
     }
   ]
@@ -378,6 +384,8 @@ Payload:
 
 Created plans preserve \`sourceRoadmapId\`, \`sourceRoadmapItemId\`, and source evidence. Use \`itemTitle\` instead of \`itemId\` only when the title is unique.
 
+Do not create a plan from a \`deferred\` roadmap item. \`plan next\` treats \`in_progress\` and \`todo\` roadmap items as actionable; if only deferred items remain, reactivate one with \`roadmap update-item\` before creating a plan.
+
 ## Insert Intermediate Roadmap Work
 
 Use this when new prerequisite work belongs between existing MVPs. Do not rename later MVPs to make room; insert the new item after the completed/current item and explain why.
@@ -399,6 +407,26 @@ Payload:
 
 Targeted insertions with \`position\`, \`afterItemId\`, or \`afterItemTitle\` require \`justification\`.
 
+## Defer Roadmap Work
+
+Use this when future roadmap work should stay visible but should not become the next executable plan automatically.
+
+\`\`\`bash
+zenith roadmap update-item roadmap_id --json --input -
+\`\`\`
+
+Payload:
+
+\`\`\`json
+{
+  "itemTitle": "MVP 5 - PR Review Skill",
+  "status": "deferred",
+  "justification": "Core TUI and context behavior should be stronger before review skills."
+}
+\`\`\`
+
+Deferred items are parked, not abandoned. To resume one, update it back to \`todo\` or \`in_progress\` with a new justification.
+
 ## Update A Phase
 
 \`\`\`bash
@@ -410,7 +438,7 @@ Payload:
 \`\`\`json
 {
   "phaseTitle": "Foundation",
-  "status": "completed",
+  "status": "done",
   "evidence": [
     {
       "kind": "note",
@@ -455,7 +483,7 @@ Evidence payload:
 \`\`\`json
 {
   "phaseId": "phase_id",
-  "status": "completed",
+  "status": "done",
   "evidence": [
     { "kind": "command", "value": "bun x tsc --noEmit passed" },
     { "kind": "command", "value": "bun test passed" },

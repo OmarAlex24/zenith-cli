@@ -129,6 +129,11 @@ describe("context engine", () => {
           status: "in_progress",
           justification: "Hardening was inserted before review skills.",
         },
+        {
+          title: "MVP 5 - PR Review Skill",
+          status: "deferred",
+          justification: "Core foundations should be stronger before review skills.",
+        },
       ],
     });
     await services.app.summarizeSession({
@@ -143,7 +148,39 @@ describe("context engine", () => {
     expect(next.reason).toContain("active roadmap");
     expect(next.evidence).toEqual([roadmap.id, roadmap.items[1]!.id]);
     expect(compact.next.recommendation).toBe(next.recommendation);
+    expect(compact.markdown).toContain("actionable: in_progress: MVP 4.5 - Product And Architecture Hardening");
+    expect(compact.markdown).toContain("deferred backlog: deferred: MVP 5 - PR Review Skill");
     expect(compact.markdown).toContain("why: Hardening was inserted before review skills.");
+    services.close();
+  });
+
+  test("plan next asks to review deferred roadmap work instead of executing it", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+    const services = createZenithApp({ cwd, zenithHome });
+
+    await services.app.registerProject();
+    const roadmap = await services.app.createRoadmap({
+      title: "Zenith CLI Product Roadmap",
+      items: [
+        { title: "MVP 4.75 - Operational Memory Polish", status: "done" },
+        {
+          title: "MVP 5 - PR Review Skill",
+          status: "deferred",
+          justification: "Core TUI and context should be stronger first.",
+        },
+      ],
+    });
+
+    const next = await services.app.nextPlanStep();
+    const compact = await services.app.compactContext();
+
+    expect(next.recommendation).toBe("Review deferred roadmap work: MVP 5 - PR Review Skill");
+    expect(next.reason).toContain("reactivate");
+    expect(next.evidence).toEqual([roadmap.id, roadmap.items[1]!.id]);
+    expect(compact.markdown).toContain("actionable: none");
+    expect(compact.markdown).toContain("deferred backlog: deferred: MVP 5 - PR Review Skill");
     services.close();
   });
 

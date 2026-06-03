@@ -196,6 +196,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 4,
     sql: "",
   },
+  {
+    version: 5,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -245,6 +249,8 @@ export function runMigrations(db: Database): void {
         runIntegrityHardeningMigration(db);
       } else if (migration.version === 4) {
         runRoadmapItemJustificationMigration(db);
+      } else if (migration.version === 5) {
+        runStatusVocabularyMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -274,6 +280,48 @@ function runRoadmapItemJustificationMigration(db: Database): void {
     db.run("ALTER TABLE roadmap_items ADD COLUMN justification TEXT");
   }
 }
+
+function runStatusVocabularyMigration(db: Database): void {
+  db.run("DROP TRIGGER IF EXISTS trg_plan_phases_status_insert");
+  db.run("DROP TRIGGER IF EXISTS trg_plan_phases_status_update");
+  db.run("DROP TRIGGER IF EXISTS trg_roadmap_items_status_insert");
+  db.run("DROP TRIGGER IF EXISTS trg_roadmap_items_status_update");
+
+  db.run("UPDATE plan_phases SET status = 'todo' WHERE status = 'pending'");
+  db.run("UPDATE plan_phases SET status = 'done' WHERE status = 'completed'");
+  db.run("UPDATE roadmap_items SET status = 'todo' WHERE status = 'planned'");
+
+  for (const statement of STATUS_VOCABULARY_TRIGGERS) {
+    db.run(statement);
+  }
+}
+
+const STATUS_VOCABULARY_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
+    BEFORE INSERT ON plan_phases
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plan_phases.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_update
+    BEFORE UPDATE OF status ON plan_phases
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plan_phases.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_insert
+    BEFORE INSERT ON roadmap_items
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_update
+    BEFORE UPDATE OF status ON roadmap_items
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
+    END`,
+];
 
 function tableHasColumn(db: Database, tableName: string, columnName: string): boolean {
   return db
@@ -318,13 +366,13 @@ const INTEGRITY_HARDENING_STATEMENTS = [
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
     BEFORE INSERT ON plan_phases
-    WHEN NEW.status NOT IN ('pending', 'in_progress', 'completed', 'blocked')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_update
     BEFORE UPDATE OF status ON plan_phases
-    WHEN NEW.status NOT IN ('pending', 'in_progress', 'completed', 'blocked')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
@@ -366,13 +414,13 @@ const INTEGRITY_HARDENING_STATEMENTS = [
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_insert
     BEFORE INSERT ON roadmap_items
-    WHEN NEW.status NOT IN ('planned', 'in_progress', 'done', 'deferred')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
     BEGIN
       SELECT RAISE(ABORT, 'invalid roadmap_items.status');
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_update
     BEFORE UPDATE OF status ON roadmap_items
-    WHEN NEW.status NOT IN ('planned', 'in_progress', 'done', 'deferred')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
     BEGIN
       SELECT RAISE(ABORT, 'invalid roadmap_items.status');
     END`,

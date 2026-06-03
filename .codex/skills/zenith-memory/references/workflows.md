@@ -51,7 +51,7 @@ Payload:
   "phases": [
     {
       "title": "Foundation",
-      "status": "pending",
+      "status": "todo",
       "acceptanceCriteria": ["Command compiles", "Tests pass"]
     }
   ]
@@ -84,6 +84,8 @@ Payload:
 
 Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence. Use `itemTitle` instead of `itemId` only when the title is unique.
 
+Do not create a plan from a `deferred` roadmap item. `plan next` treats `in_progress` and `todo` roadmap items as actionable; if only deferred items remain, reactivate one with `roadmap update-item` before creating a plan.
+
 ## Insert Intermediate Roadmap Work
 
 Use this when new prerequisite work belongs between existing MVPs. Do not rename later MVPs to make room; insert the new item after the completed/current item and explain why.
@@ -105,6 +107,26 @@ Payload:
 
 Targeted insertions with `position`, `afterItemId`, or `afterItemTitle` require `justification`.
 
+## Defer Roadmap Work
+
+Use this when future roadmap work should stay visible but should not become the next executable plan automatically.
+
+```bash
+zenith roadmap update-item roadmap_id --json --input -
+```
+
+Payload:
+
+```json
+{
+  "itemTitle": "MVP 5 - PR Review Skill",
+  "status": "deferred",
+  "justification": "Core TUI and context behavior should be stronger before review skills."
+}
+```
+
+Deferred items are parked, not abandoned. To resume one, update it back to `todo` or `in_progress` with a new justification.
+
 ## Update A Phase
 
 ```bash
@@ -116,7 +138,7 @@ Payload:
 ```json
 {
   "phaseTitle": "Foundation",
-  "status": "completed",
+  "status": "done",
   "evidence": [
     {
       "kind": "note",
@@ -161,7 +183,7 @@ Evidence payload:
 ```json
 {
   "phaseId": "phase_id",
-  "status": "completed",
+  "status": "done",
   "evidence": [
     { "kind": "command", "value": "bun x tsc --noEmit passed" },
     { "kind": "command", "value": "bun test passed" },

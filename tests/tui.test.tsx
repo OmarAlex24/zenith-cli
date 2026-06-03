@@ -5,105 +5,132 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
-import type { CompactContext, Finding, Plan, Roadmap, Spike } from "../src/domain/schemas";
+import type { CompactContext, Decision, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
 
 describe("OpenTUI dashboard", () => {
-  test("renders memory tabs, supports navigation, and handles resize", async () => {
+  test("renders sidebar shell, sections, and master-detail navigation", async () => {
     const data = makeDashboardData();
 
-    const setup = await testRender(<Dashboard initialData={data} />, { width: 110, height: 30 });
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
     await setup.flush();
-    const frame = setup.captureCharFrame();
+    const home = setup.captureCharFrame();
 
-    expect(frame).toContain("Zenith CLI");
-    expect(frame).toContain("Meridian");
-    expect(frame).toContain("Foundation");
-    expect(frame).toContain("1 Overview");
-
-    await act(async () => {
-      setup.mockInput.pressKey("2");
-    });
-    await setup.flush();
-    const roadmapsFrame = setup.captureCharFrame();
-    expect(roadmapsFrame).toContain("Product Roadmap");
-    expect(roadmapsFrame).toContain("Product And Architecture Hardening");
-    expect(roadmapsFrame).toContain("Hardening before review skills");
-    expect(roadmapsFrame).toContain("active");
+    expect(home).toContain("ZENITH");
+    expect(home).toContain("Meridian");
+    expect(home).toContain("main");
+    expect(home).toContain("PULSE");
+    expect(home).toContain("Roadmap");
+    expect(home).toContain("Findings");
+    expect(home).toContain("Next action");
+    expect(home).toContain("NEXT");
 
     await act(async () => {
       setup.mockInput.pressKey("3");
     });
     await setup.flush();
-    const planFrame = setup.captureCharFrame();
-    expect(planFrame).toContain("Executable Plans");
-    expect(planFrame).toContain("Documented acceptance");
-    expect(planFrame).toContain("roadmap_1");
+    await act(async () => {
+      setup.mockInput.pressArrow("down");
+    });
+    await setup.flush();
+    const roadmap = setup.captureCharFrame();
+    expect(roadmap).toContain("Roadmap items");
+    expect(roadmap).toContain("Item detail");
+    expect(roadmap).toContain("Product And Architecture Hardening");
+    expect(roadmap).toContain("in progress");
+    expect(roadmap).toContain("Why");
 
     await act(async () => {
       setup.mockInput.pressKey("4");
     });
     await setup.flush();
-    const spikesFrame = setup.captureCharFrame();
-    expect(spikesFrame).toContain("SQLite storage spike");
-    expect(spikesFrame).toContain("Which local store");
-
-    await act(async () => {
-      setup.mockInput.pressKey("5");
-    });
-    await setup.flush();
-    const decisionsFrame = setup.captureCharFrame();
-    expect(decisionsFrame).toContain("Rename product");
-    expect(decisionsFrame).toContain("Use Zenith CLI");
+    const plan = setup.captureCharFrame();
+    expect(plan).toContain("Plans");
+    expect(plan).toContain("Zenith MVP");
+    expect(plan).toContain("Phases");
+    expect(plan).toContain("Foundation");
 
     await act(async () => {
       setup.mockInput.pressKey("6");
     });
     await setup.flush();
-    const findingsFrame = setup.captureCharFrame();
-    expect(findingsFrame).toContain("Open Findings");
-    expect(findingsFrame).toContain("Missing session close");
-    expect(findingsFrame).toContain("high");
-    expect(findingsFrame).toContain("bug");
-    expect(findingsFrame).toContain("Sessions must be closed");
-    expect(findingsFrame).toContain("src/cli/program.ts");
+    const findings = setup.captureCharFrame();
+    expect(findings).toContain("Findings");
+    expect(findings).toContain("HIGH");
+    expect(findings).toContain("Missing session close");
+    expect(findings).toContain("Finding detail");
+    expect(findings).toContain("Description");
+    expect(findings).toContain("src/cli/program.ts");
 
     await act(async () => {
       setup.mockInput.pressKey("7");
     });
     await setup.flush();
-    const sessionsFrame = setup.captureCharFrame();
-    expect(sessionsFrame).toContain("Recent Sessions");
-    expect(sessionsFrame).toContain("Finished context work");
+    const sessions = setup.captureCharFrame();
+    expect(sessions).toContain("Sessions");
+    expect(sessions).toContain("Finished context work");
 
     await act(async () => {
       setup.mockInput.pressKey("8");
     });
     await setup.flush();
-    const contextFrame = setup.captureCharFrame();
-    expect(contextFrame).toContain("Zenith Compact Context");
+    const decisions = setup.captureCharFrame();
+    expect(decisions).toContain("Decisions");
+    expect(decisions).toContain("Rename product");
+    expect(decisions).toContain("Use Zenith CLI");
+
+    await act(async () => {
+      setup.mockInput.pressKey("2");
+    });
+    await setup.flush();
+    const brief = setup.captureCharFrame();
+    expect(brief).toContain("Project Brief");
+    expect(brief).toContain("Meridian Brief");
+
+    await act(async () => {
+      setup.mockInput.pressKey("9");
+    });
+    await setup.flush();
+    const context = setup.captureCharFrame();
+    expect(context).toContain("Compact Context");
+    expect(context).toContain("Zenith Compact Context");
 
     act(() => {
       setup.resize(70, 20);
     });
     await setup.flush();
-    expect(setup.captureCharFrame()).toContain("Zenith CLI");
+    expect(setup.captureCharFrame()).toContain("ZENITH");
+
     act(() => {
       setup.renderer.destroy();
     });
   });
 
-  test("reload refreshes dashboard data without leaving the active tab", async () => {
-    const initialData = makeDashboardData();
+  test("selection moves within a list and reload refreshes data", async () => {
+    const initialData = makeDashboardData({
+      findings: [
+        makeFinding(),
+        {
+          ...makeFinding(),
+          id: "finding_2",
+          severity: "low",
+          title: "Second selectable finding",
+          description: "Selection should move to this item.",
+          relatedFiles: ["src/tui/Dashboard.tsx"],
+        },
+      ],
+    });
     const refreshedData = makeDashboardData({
-      finding: {
-        ...makeFinding(),
-        id: "finding_2",
-        severity: "medium",
-        type: "docs_gap",
-        title: "Dashboard docs missing",
-        description: "README should explain source TUI and headless compiled output.",
-        relatedFiles: ["README.md"],
-      },
+      findings: [
+        {
+          ...makeFinding(),
+          id: "finding_3",
+          severity: "medium",
+          type: "docs_gap",
+          title: "Dashboard docs missing",
+          description: "README should explain the redesigned TUI.",
+          relatedFiles: ["README.md"],
+        },
+      ],
       projectName: "Atlas",
     });
     let reloadCount = 0;
@@ -116,7 +143,7 @@ describe("OpenTUI dashboard", () => {
           return refreshedData;
         }}
       />,
-      { width: 96, height: 26 },
+      { width: 110, height: 30 },
     );
     await setup.flush();
 
@@ -124,28 +151,23 @@ describe("OpenTUI dashboard", () => {
       setup.mockInput.pressKey("6");
     });
     await setup.flush();
-    expect(setup.captureCharFrame()).toContain("Missing session close");
+
+    await act(async () => {
+      setup.mockInput.pressArrow("down");
+    });
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("Second selectable finding");
 
     await act(async () => {
       setup.mockInput.pressKey("r");
     });
     await setup.flush();
-    const refreshedFrame = setup.captureCharFrame();
+    const refreshed = setup.captureCharFrame();
 
     expect(reloadCount).toBe(1);
-    expect(refreshedFrame).toContain("Open Findings");
-    expect(refreshedFrame).toContain("Dashboard docs missing");
-    expect(refreshedFrame).toContain("docs_gap");
-    expect(refreshedFrame).toContain("README.md");
-
-    act(() => {
-      setup.resize(50, 16);
-    });
-    await setup.flush();
-    const compactFrame = setup.captureCharFrame();
-    expect(compactFrame).toContain("Zenith");
-    expect(compactFrame).toContain("CLI");
-    expect(compactFrame).toContain("Open Findings");
+    expect(refreshed).toContain("Dashboard docs missing");
+    expect(refreshed).toContain("README.md");
+    expect(refreshed).toContain("Atlas");
 
     act(() => {
       setup.renderer.destroy();
@@ -153,20 +175,25 @@ describe("OpenTUI dashboard", () => {
   });
 });
 
-function makeDashboardData(options: { finding?: Finding; projectName?: string } = {}): DashboardData {
-  const finding = options.finding ?? makeFinding();
-  const status = makeStatus({
-    finding,
-    ...(options.projectName ? { projectName: options.projectName } : {}),
-  });
-  const plans = [status.activePlan!];
-  const roadmaps = status.recentRoadmaps;
-  const findings = [finding];
-  const context = makeContext(status);
-  return { status, plans, roadmaps, findings, context };
+function makeDashboardData(
+  options: { findings?: Finding[]; projectName?: string } = {},
+): DashboardData {
+  const findings = options.findings ?? [makeFinding()];
+  const status = makeStatus({ findings, ...(options.projectName ? { projectName: options.projectName } : {}) });
+  return {
+    status,
+    brief: makeBrief(),
+    plans: [status.activePlan!],
+    roadmaps: status.recentRoadmaps,
+    spikes: [makeSpike()],
+    findings,
+    sessions: status.recentSessions,
+    decisions: status.recentDecisions,
+    context: makeContext(status),
+  };
 }
 
-function makeStatus(options: { finding: Finding; projectName?: string }): ProjectStatus {
+function makeStatus(options: { findings: Finding[]; projectName?: string }): ProjectStatus {
   const projectName = options.projectName ?? "Meridian";
   const activePlan: Plan = {
     id: "plan_1",
@@ -180,7 +207,7 @@ function makeStatus(options: { finding: Finding; projectName?: string }): Projec
         id: "phase_1",
         title: "Foundation",
         description: "Documented acceptance details.",
-        status: "pending",
+        status: "todo",
         acceptanceCriteria: ["Documented acceptance"],
         evidence: [],
       },
@@ -189,7 +216,7 @@ function makeStatus(options: { finding: Finding; projectName?: string }): Projec
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
 
-  const status: ProjectStatus = {
+  return {
     project: {
       id: "proj_1",
       name: projectName,
@@ -197,34 +224,11 @@ function makeStatus(options: { finding: Finding; projectName?: string }): Projec
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     },
-    git: {
-      isGitRepo: true,
-      rootPath: "/work/meridian",
-      branch: "main",
-      changedFiles: [],
-      dirty: false,
-    },
+    git: { isGitRepo: true, rootPath: "/work/meridian", branch: "main", changedFiles: [], dirty: false },
     registered: true,
     activePlan,
-    currentPhase: {
-      id: "phase_1",
-      title: "Foundation",
-      description: "Documented acceptance details.",
-      status: "pending",
-      acceptanceCriteria: ["Documented acceptance"],
-      evidence: [],
-    },
-    currentBrief: {
-      id: "brief_1",
-      projectId: "proj_1",
-      version: 1,
-      title: "Meridian Brief",
-      summary: "Local-first memory for projects.",
-      body: "Meridian uses Zenith for durable project memory.",
-      status: "current",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    },
+    currentPhase: activePlan.phases[0]!,
+    currentBrief: makeBrief(),
     recentRoadmaps: [makeRoadmap()],
     openSpikes: [makeSpike()],
     recentSessions: [
@@ -253,25 +257,35 @@ function makeStatus(options: { finding: Finding; projectName?: string }): Projec
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    openFindings: [
-      {
-        id: options.finding.id,
-        type: options.finding.type,
-        severity: options.finding.severity,
-        title: options.finding.title,
-        relatedFiles: options.finding.relatedFiles,
-      },
-    ],
+    openFindings: options.findings.map((finding) => ({
+      id: finding.id,
+      type: finding.type,
+      severity: finding.severity,
+      title: finding.title,
+      relatedFiles: finding.relatedFiles,
+    })),
     next: {
       recommendation: "Foundation",
-      reason: "First pending phase in the active plan.",
+      reason: "First todo phase in the active plan.",
       planId: "plan_1",
       phaseId: "phase_1",
       evidence: ["Zenith MVP"],
     },
   };
+}
 
-  return status;
+function makeBrief(): ProjectBrief {
+  return {
+    id: "brief_1",
+    projectId: "proj_1",
+    version: 1,
+    title: "Meridian Brief",
+    summary: "Local-first memory for projects.",
+    body: "# Intent\nMeridian uses Zenith for durable project memory.",
+    status: "current",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
 }
 
 function makeFinding(): Finding {
@@ -295,13 +309,7 @@ function makeRoadmap(): Roadmap {
     title: "Zenith CLI Product Roadmap",
     status: "active",
     items: [
-      {
-        id: "rmi_1",
-        roadmapId: "roadmap_1",
-        title: "Product Roadmap",
-        status: "done",
-        evidence: [],
-      },
+      { id: "rmi_1", roadmapId: "roadmap_1", title: "Product Roadmap", status: "done", evidence: [] },
       {
         id: "rmi_2",
         roadmapId: "roadmap_1",
@@ -333,11 +341,7 @@ function makeSpike(): Spike {
 
 function makeContext(status: ProjectStatus): CompactContext {
   return {
-    project: {
-      id: "proj_1",
-      name: "Meridian",
-      rootPath: "/work/meridian",
-    },
+    project: { id: "proj_1", name: "Meridian", rootPath: "/work/meridian" },
     git: status.git,
     currentBrief: {
       id: "brief_1",
@@ -348,33 +352,14 @@ function makeContext(status: ProjectStatus): CompactContext {
       updatedAt: "2026-01-01T00:00:00.000Z",
     },
     recentRoadmaps: [
-      {
-        id: "roadmap_1",
-        title: "Zenith CLI Product Roadmap",
-        status: "active",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
+      { id: "roadmap_1", title: "Zenith CLI Product Roadmap", status: "active", updatedAt: "2026-01-01T00:00:00.000Z" },
     ],
     openSpikes: [
-      {
-        id: "spike_1",
-        title: "SQLite storage spike",
-        question: "Which local store should Zenith use?",
-        status: "open",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
+      { id: "spike_1", title: "SQLite storage spike", question: "Which local store should Zenith use?", status: "open", updatedAt: "2026-01-01T00:00:00.000Z" },
     ],
-    activePlan: {
-      id: "plan_1",
-      title: "Zenith MVP",
-      status: "active",
-    },
+    activePlan: { id: "plan_1", title: "Zenith MVP", status: "active" },
     currentPhase: status.currentPhase,
-    selectedPhase: {
-      planId: "plan_1",
-      planTitle: "Zenith MVP",
-      phase: status.currentPhase!,
-    },
+    selectedPhase: { planId: "plan_1", planTitle: "Zenith MVP", phase: status.currentPhase! },
     recentSessions: [
       {
         id: "sess_1",
@@ -387,22 +372,9 @@ function makeContext(status: ProjectStatus): CompactContext {
         nextSteps: ["Continue hardening"],
       },
     ],
-    recentDecisions: [
-      {
-        id: "dec_1",
-        title: "Rename product",
-        relatedPlanIds: ["plan_1"],
-        createdAt: "2026-01-01T00:00:00.000Z",
-      },
-    ],
+    recentDecisions: [{ id: "dec_1", title: "Rename product", relatedPlanIds: ["plan_1"], createdAt: "2026-01-01T00:00:00.000Z" }],
     openFindings: [
-      {
-        id: "finding_1",
-        type: "bug",
-        severity: "high",
-        title: "Missing session close",
-        relatedFiles: ["src/cli/program.ts"],
-      },
+      { id: "finding_1", type: "bug", severity: "high", title: "Missing session close", relatedFiles: ["src/cli/program.ts"] },
     ],
     next: status.next,
     markdown:

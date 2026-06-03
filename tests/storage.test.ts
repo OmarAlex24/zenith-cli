@@ -243,7 +243,7 @@ describe("sqlite repository", () => {
 
     expect(plan.phases).toHaveLength(2);
     expect(next.recommendation).toBe("DB schema");
-    expect(next.reason).toContain("First pending phase");
+    expect(next.reason).toContain("First todo phase");
     services.close();
   });
 
@@ -261,11 +261,11 @@ describe("sqlite repository", () => {
 
     const updated = await services.app.updatePhase(plan.id, {
       phaseTitle: "Phase 1",
-      status: "completed",
+      status: "done",
       evidence: [{ kind: "note", value: "Tests pass" }],
     });
 
-    expect(updated.phases[0]?.status).toBe("completed");
+    expect(updated.phases[0]?.status).toBe("done");
     expect(updated.phases[0]?.evidence[0]?.value).toBe("Tests pass");
     services.close();
   });
@@ -319,7 +319,7 @@ describe("sqlite repository", () => {
     });
     const added = repo.addRoadmapItem(roadmap.id, {
       title: "MVP 4.75 - Operational Memory Polish",
-      status: "planned",
+      status: "todo",
       justification: "Memory must be reliable before review skills.",
       evidence: [],
       afterItemId: roadmap.items[0]!.id,
@@ -350,7 +350,7 @@ describe("sqlite repository", () => {
       projectId: project.id,
       title: "Active plan",
       status: "active",
-      phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+      phases: [{ title: "Phase 1", status: "todo", acceptanceCriteria: [], evidence: [] }],
     });
 
     expect(() =>
@@ -358,7 +358,7 @@ describe("sqlite repository", () => {
         projectId: project.id,
         title: "Competing active plan",
         status: "active",
-        phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+        phases: [{ title: "Phase 1", status: "todo", acceptanceCriteria: [], evidence: [] }],
       }),
     ).toThrow();
     expect(() =>
@@ -387,7 +387,7 @@ describe("sqlite repository", () => {
       projectId: project.id,
       title: "Paused implementation plan",
       status: "paused",
-      phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+      phases: [{ title: "Phase 1", status: "todo", acceptanceCriteria: [], evidence: [] }],
     });
 
     expect(() =>
@@ -397,7 +397,7 @@ describe("sqlite repository", () => {
         status: "paused",
         sourceRoadmapId: "roadmap_missing",
         sourceRoadmapItemId: "rmi_missing",
-        phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+        phases: [{ title: "Phase 1", status: "todo", acceptanceCriteria: [], evidence: [] }],
       }),
     ).toThrow();
 

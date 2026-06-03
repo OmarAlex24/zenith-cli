@@ -1,15 +1,38 @@
 /** @jsxImportSource @opentui/react */
 
-import { useState } from "react";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { useState, type ReactNode } from "react";
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import type { ProjectStatus } from "../app/decode-app";
-import type { CompactContext, Finding, Plan, Roadmap } from "../domain/schemas";
+import type {
+  CompactContext,
+  Decision,
+  Finding,
+  Plan,
+  ProjectBrief,
+  Roadmap,
+  Session,
+  Spike,
+} from "../domain/schemas";
+import {
+  palette,
+  progressBar,
+  severityBadge,
+  statusColor,
+  statusGlyph,
+  statusLabel,
+  findingTypeLabel,
+  truncate,
+} from "./theme";
 
 export type DashboardData = {
   status: ProjectStatus;
+  brief: ProjectBrief | null;
   plans: Plan[];
   roadmaps: Roadmap[];
+  spikes: Spike[];
   findings: Finding[];
+  sessions: Session[];
+  decisions: Decision[];
   context: CompactContext;
 };
 
@@ -18,555 +41,701 @@ export type DashboardProps = {
   reload?: () => Promise<DashboardData>;
 };
 
-const palette = {
-  bg: "#111318",
-  panel: "#191d24",
-  border: "#3a4150",
-  text: "#d7dce5",
-  muted: "#8d96a8",
-  accent: "#8bd5ca",
-  warning: "#f5a97f",
-  danger: "#ed8796",
-  success: "#a6da95",
-};
-
-const tabs = [
-  { id: "overview", label: "1 Overview" },
-  { id: "roadmaps", label: "2 Roadmaps" },
-  { id: "plan", label: "3 Plan" },
-  { id: "spikes", label: "4 Spikes" },
-  { id: "decisions", label: "5 Decisions" },
-  { id: "findings", label: "6 Findings" },
-  { id: "sessions", label: "7 Sessions" },
-  { id: "context", label: "8 Context" },
+const sections = [
+  { id: "home", label: "Home" },
+  { id: "brief", label: "Brief" },
+  { id: "roadmap", label: "Roadmap" },
+  { id: "plan", label: "Plan" },
+  { id: "spikes", label: "Spikes" },
+  { id: "findings", label: "Findings" },
+  { id: "sessions", label: "Sessions" },
+  { id: "decisions", label: "Decisions" },
+  { id: "context", label: "Context" },
 ] as const;
 
-type TabId = (typeof tabs)[number]["id"];
+type SectionId = (typeof sections)[number]["id"];
+type SelectionState = Record<SectionId, number>;
+
+type Row = {
+  key: string;
+  glyph: string;
+  glyphColor: string;
+  title: string;
+  titleColor?: string;
+  badge?: { text: string; color: string };
+};
 
 export function Dashboard({ initialData, reload }: DashboardProps) {
   const [data, setData] = useState<DashboardData>(initialData);
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeSection, setActiveSection] = useState<SectionId>("home");
+  const [selectionBySection, setSelectionBySection] = useState<SelectionState>(initialSelection);
   const [refreshing, setRefreshing] = useState(false);
   const renderer = useRenderer();
+  const { height } = useTerminalDimensions();
+
+  const count = selectionCount(activeSection, data);
+  const selectedIndex = clamp(selectionBySection[activeSection] ?? 0, count);
+
+  const goToSection = (section: SectionId) => setActiveSection(section);
 
   useKeyboard((key) => {
-    const keyToken = key.name || key.raw || key.sequence;
+    const token = key.name || key.raw || key.sequence;
 
-    if (key.name === "escape" || key.name === "q") {
+    if (key.name === "q" || key.name === "escape") {
       renderer.destroy();
+      return;
     }
 
     if (key.name === "right" || key.name === "tab") {
-      setActiveTab(nextTab(activeTab));
+      goToSection(stepSection(activeSection, 1));
+      return;
     }
-
     if (key.name === "left") {
-      setActiveTab(previousTab(activeTab));
+      goToSection(stepSection(activeSection, -1));
+      return;
     }
 
-    const selectedByNumber = tabByNumber(keyToken);
-    if (selectedByNumber) {
-      setActiveTab(selectedByNumber);
+    if (key.name === "up" || key.name === "k") {
+      setSelectionBySection((prev) => ({ ...prev, [activeSection]: clamp(selectedIndex - 1, count) }));
+      return;
+    }
+    if (key.name === "down" || key.name === "j") {
+      setSelectionBySection((prev) => ({ ...prev, [activeSection]: clamp(selectedIndex + 1, count) }));
+      return;
+    }
+
+    const numbered = sectionByNumber(token);
+    if (numbered) {
+      goToSection(numbered);
+      return;
     }
 
     if (key.name === "r" && reload && !refreshing) {
       setRefreshing(true);
       void reload()
-        .then(setData)
+        .then((next) => {
+          setData(next);
+          setSelectionBySection((prev) => clampAll(prev, next));
+        })
         .finally(() => setRefreshing(false));
     }
   });
 
+  const bodyHeight = Math.max(6, height - 6);
+
+  return (
+    <box style={{ width: "100%", height: "100%", flexDirection: "column", backgroundColor: palette.bg, padding: 1 }}>
+      <Header status={data.status} refreshing={refreshing} />
+      <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
+        <Sidebar data={data} activeSection={activeSection} />
+        <box style={{ flexDirection: "column", flexGrow: 1 }}>
+          <Main data={data} section={activeSection} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />
+        </box>
+      </box>
+      <Footer status={data.status} />
+    </box>
+  );
+}
+
+function Header({ status, refreshing }: { status: ProjectStatus; refreshing: boolean }) {
+  const project = status.project?.name ?? "unregistered";
+  const branch = status.git.branch ?? "no-branch";
+  const dirty = status.git.dirty ? "●dirty" : "clean";
+  return (
+    <box style={{ flexDirection: "row", justifyContent: "space-between", height: 1 }}>
+      <text>
+        <span fg={palette.accent}>ZENITH</span>
+        <span fg={palette.faint}>  ·  local project memory</span>
+      </text>
+      <text>
+        <span fg={palette.text}>{truncate(project, 22)}</span>
+        <span fg={palette.faint}>{" · "}</span>
+        <span fg={palette.accentAlt}>{truncate(branch, 18)}</span>
+        <span fg={palette.faint}>{" · "}</span>
+        <span fg={status.git.dirty ? palette.warning : palette.success}>{dirty}</span>
+        {refreshing ? <span fg={palette.muted}>{"  refreshing…"}</span> : null}
+      </text>
+    </box>
+  );
+}
+
+function Sidebar({ data, activeSection }: { data: DashboardData; activeSection: SectionId }) {
+  const plan = data.status.activePlan;
+  const phaseTotal = plan?.phases.length ?? 0;
+  const phaseDone = plan?.phases.filter((phase) => phase.status === "done").length ?? 0;
+
   return (
     <box
-      style={{
-        width: "100%",
-        height: "100%",
-        flexDirection: "column",
-        backgroundColor: palette.bg,
-        padding: 1,
-        gap: 1,
-      }}
+      border
+      borderColor={palette.border}
+      backgroundColor={palette.panel}
+      style={{ width: 18, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
     >
-      <Header refreshing={refreshing} />
-      <TabBar activeTab={activeTab} />
-      {renderTab(activeTab, data)}
+      {sections.map((section) => {
+        const active = section.id === activeSection;
+        const badge = sidebarBadge(section.id, data);
+        return (
+          <text key={section.id}>
+            <span fg={active ? palette.accent : palette.faint}>{active ? "▸ " : "  "}</span>
+            <span fg={active ? palette.accent : palette.text}>{section.label}</span>
+            {badge ? <span fg={badge.color}>{` ${badge.text}`}</span> : null}
+          </text>
+        );
+      })}
+      <text fg={palette.faint}>{"────────────"}</text>
+      <text fg={palette.muted}>PULSE</text>
+      <text>
+        <span fg={palette.faint}>plan </span>
+        <span fg={palette.accent}>{plan ? progressBar(phaseDone, phaseTotal, 6) : "none"}</span>
+      </text>
+      <text>
+        <span fg={palette.faint}>find </span>
+        <span fg={data.findings.length > 0 ? palette.danger : palette.success}>{`${data.findings.length} open`}</span>
+      </text>
+      <text>
+        <span fg={palette.faint}>spike </span>
+        <span fg={palette.text}>{`${data.spikes.length}`}</span>
+      </text>
+      <text>
+        <span fg={palette.faint}>sess </span>
+        <span fg={palette.text}>{`${data.sessions.length}`}</span>
+      </text>
     </box>
   );
 }
 
-function Header({ refreshing }: { refreshing: boolean }) {
+function Footer({ status }: { status: ProjectStatus }) {
   return (
-    <box style={{ flexDirection: "row", justifyContent: "space-between", height: 2 }}>
-      <text fg={palette.accent}>Zenith CLI</text>
-      <text fg={palette.muted}>{refreshing ? "refreshing..." : "1-8 tabs  arrows/tab switch  r refresh  q/esc quit"}</text>
+    <box style={{ flexDirection: "column", height: 2 }}>
+      <text>
+        <span fg={palette.accent}>▶ NEXT  </span>
+        <span fg={palette.text}>{truncate(status.next.recommendation ?? "nothing pending", 60)}</span>
+        <span fg={palette.faint}>{`  — ${truncate(status.next.reason, 50)}`}</span>
+      </text>
+      <text fg={palette.faint}>1-9 section · ←→ switch · ↑↓ select · r refresh · q quit</text>
     </box>
   );
 }
 
-function TabBar({ activeTab }: { activeTab: TabId }) {
-  return (
-    <box style={{ flexDirection: "row", gap: 1, height: 2 }}>
-      {tabs.map((tab) => (
-        <text key={tab.id} fg={tab.id === activeTab ? palette.accent : palette.muted}>
-          {tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `}
-        </text>
-      ))}
-    </box>
-  );
+function Main({
+  data,
+  section,
+  selectedIndex,
+  bodyHeight,
+}: {
+  data: DashboardData;
+  section: SectionId;
+  selectedIndex: number;
+  bodyHeight: number;
+}) {
+  if (section === "home") return <HomeView data={data} bodyHeight={bodyHeight} />;
+  if (section === "brief") return <BriefView data={data} />;
+  if (section === "context") return <ContextView data={data} />;
+  if (section === "roadmap") return <RoadmapView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
+  if (section === "plan") return <PlanView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
+  if (section === "spikes") return <SpikesView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
+  if (section === "findings") return <FindingsView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
+  if (section === "sessions") return <SessionsView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
+  return <DecisionsView data={data} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />;
 }
 
-function renderTab(activeTab: TabId, data: DashboardData) {
-  if (activeTab === "roadmaps") {
-    return <RoadmapsView data={data} />;
-  }
-
-  if (activeTab === "plan") {
-    return <PlanView data={data} />;
-  }
-
-  if (activeTab === "spikes") {
-    return <SpikesView data={data} />;
-  }
-
-  if (activeTab === "decisions") {
-    return <DecisionsView data={data} />;
-  }
-
-  if (activeTab === "findings") {
-    return <FindingsView data={data} />;
-  }
-
-  if (activeTab === "sessions") {
-    return <SessionsView data={data} />;
-  }
-
-  if (activeTab === "context") {
-    return <ContextView data={data} />;
-  }
-
-  return <OverviewView data={data} />;
-}
-
-function OverviewView({ data }: { data: DashboardData }) {
+function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: number }) {
   const { status } = data;
-  const phaseRows = status.activePlan?.phases.slice(0, 8) ?? [];
-  const decisions = status.recentDecisions.slice(0, 4);
-  const openSpikes = status.openSpikes.slice(0, 4);
-  const openFindings = status.openFindings.slice(0, 4);
+  const plan = status.activePlan;
+  const phaseTotal = plan?.phases.length ?? 0;
+  const phaseDone = plan?.phases.filter((phase) => phase.status === "done").length ?? 0;
+  const showHero = bodyHeight >= 12;
 
   return (
-    <box style={{ flexDirection: "column", gap: 1, flexGrow: 1 }}>
-      <box style={{ flexDirection: "row", gap: 1, flexGrow: 1 }}>
-        <box
-          title="Project"
-          border
-          borderColor={palette.border}
-          backgroundColor={palette.panel}
-          style={{ width: 34, flexDirection: "column", padding: 1, gap: 1 }}
-        >
-          <Labeled label="Name" value={status.project?.name ?? "unregistered"} />
-          <Labeled label="Branch" value={status.git.branch ?? "none"} />
-          <Labeled label="Git" value={status.git.isGitRepo ? "yes" : "no"} />
-          <Labeled label="Dirty" value={status.git.dirty ? "yes" : "no"} />
-          <Labeled label="Brief" value={status.currentBrief?.summary ?? "none"} />
-          <text fg={palette.muted}>{truncateMiddle(status.git.rootPath, 30)}</text>
+    <box style={{ flexDirection: "column", flexGrow: 1, gap: 1 }}>
+      {showHero ? (
+        <box border borderColor={palette.border} backgroundColor={palette.panel} style={{ paddingLeft: 1, paddingRight: 1 }}>
+          <ascii-font text="ZENITH" font="tiny" />
         </box>
+      ) : null}
 
-        <box
-          title="Active Plan"
-          border
-          borderColor={palette.border}
-          backgroundColor={palette.panel}
-          style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-        >
-          <text fg={palette.text}>{status.activePlan?.title ?? "No active plan"}</text>
-          <text fg={palette.muted}>{truncate(status.next.reason, 92)}</text>
-          <text fg={palette.accent}>Next: {status.next.recommendation ?? "none"}</text>
+      <Panel title="Next action" grow={false}>
+        <text fg={palette.accent}>{status.next.recommendation ?? "nothing pending"}</text>
+        <text fg={palette.muted}>{status.next.reason}</text>
+      </Panel>
 
-          <box style={{ flexDirection: "column", gap: 0, flexGrow: 1 }}>
-            {phaseRows.length === 0 ? (
-              <text fg={palette.muted}>No phases to show.</text>
+      <box style={{ flexDirection: "row", gap: 1, flexGrow: 1 }}>
+        <Panel title="Active plan">
+          <text fg={palette.text}>{truncate(plan?.title ?? "no active plan", 40)}</text>
+          {plan ? <text fg={palette.accent}>{progressBar(phaseDone, phaseTotal, 10)}</text> : null}
+          {plan
+            ? plan.phases.slice(0, 5).map((phase) => (
+                <text key={phase.id}>
+                  <span fg={statusColor(phase.status)}>{`${statusGlyph(phase.status)} `}</span>
+                  <span fg={palette.text}>{truncate(phase.title, 34)}</span>
+                </text>
+              ))
+            : null}
+        </Panel>
+
+        <box style={{ flexDirection: "column", flexGrow: 1, gap: 1 }}>
+          <Panel title={`Findings (${status.openFindings.length})`}>
+            {status.openFindings.length === 0 ? (
+              <text fg={palette.muted}>none open</text>
             ) : (
-              phaseRows.map((phase) => (
-                <text key={phase.id} fg={phaseColor(phase.status)}>
-                  {statusGlyph(phase.status)} {truncate(phase.title, 72)}
+              status.openFindings.slice(0, 3).map((finding) => (
+                <text key={finding.id}>
+                  <span fg={severityBadge(finding.severity).color}>{`${severityBadge(finding.severity).label} `}</span>
+                  <span fg={palette.text}>{truncate(finding.title, 30)}</span>
                 </text>
               ))
             )}
-          </box>
-        </box>
-      </box>
-
-      <box style={{ flexDirection: "row", gap: 1, height: 10 }}>
-        <box
-          title="Open Spikes"
-          border
-          borderColor={palette.border}
-          backgroundColor={palette.panel}
-          style={{ flexGrow: 1, flexDirection: "column", padding: 1 }}
-        >
-          {openSpikes.length === 0 ? (
-            <text fg={palette.muted}>No open spikes.</text>
-          ) : (
-            openSpikes.map((spike) => (
-              <text key={spike.id} fg={palette.text}>
-                {truncate(spike.title, 56)}
-              </text>
-            ))
-          )}
-        </box>
-
-        <box
-          title="Findings"
-          border
-          borderColor={palette.border}
-          backgroundColor={palette.panel}
-          style={{ flexGrow: 1, flexDirection: "column", padding: 1 }}
-        >
-          {openFindings.length === 0 ? (
-            <text fg={palette.muted}>No open findings.</text>
-          ) : (
-            openFindings.map((finding) => (
-              <text key={finding.id} fg={severityColor(finding.severity)}>
-                {finding.severity} {truncate(finding.title, 48)}
-              </text>
-            ))
-          )}
-        </box>
-
-        <box
-          title="Decisions"
-          border
-          borderColor={palette.border}
-          backgroundColor={palette.panel}
-          style={{ flexGrow: 1, flexDirection: "column", padding: 1 }}
-        >
-          {decisions.length === 0 ? (
-            <text fg={palette.muted}>No decisions recorded.</text>
-          ) : (
-            decisions.map((decision) => (
-              <text key={decision.id} fg={palette.text}>
-                {truncate(decision.title, 42)}
-              </text>
-            ))
-          )}
+          </Panel>
+          <Panel title={`Spikes (${data.spikes.length})`}>
+            {data.spikes.length === 0 ? (
+              <text fg={palette.muted}>none</text>
+            ) : (
+              data.spikes.slice(0, 3).map((spike) => (
+                <text key={spike.id} fg={palette.text}>
+                  {truncate(spike.title, 36)}
+                </text>
+              ))
+            )}
+          </Panel>
         </box>
       </box>
     </box>
   );
 }
 
-function RoadmapsView({ data }: { data: DashboardData }) {
-  const activeRoadmap = data.roadmaps.find((roadmap) => roadmap.status === "active");
-  const nextRoadmapItem = activeRoadmap?.items.find((item) => item.status === "in_progress") ??
-    activeRoadmap?.items.find((item) => item.status === "planned") ??
-    activeRoadmap?.items.find((item) => item.status === "deferred");
-
+function BriefView({ data }: { data: DashboardData }) {
+  const brief = data.brief;
   return (
-    <box
-      title="Roadmaps"
-      border
-      borderColor={palette.border}
-      backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-    >
-      <text fg={palette.accent}>Next roadmap target: {nextRoadmapItem ? truncate(nextRoadmapItem.title, 92) : "none"}</text>
-      {data.roadmaps.length === 0 ? (
-        <text fg={palette.muted}>No roadmaps recorded.</text>
+    <Panel title="Project Brief">
+      {brief ? (
+        <scrollbox focused style={{ flexGrow: 1 }}>
+          <text fg={palette.accent}>{truncate(brief.title, 90)}</text>
+          <text fg={palette.muted}>{`v${brief.version} · ${statusLabel(brief.status)} · ${truncate(brief.updatedAt, 24)}`}</text>
+          <text fg={palette.text}> </text>
+          <text fg={palette.text}>{brief.summary}</text>
+          <text fg={palette.text}> </text>
+          {brief.body.split("\n").map((line, index) => (
+            <text key={index} fg={line.startsWith("#") ? palette.accent : palette.text}>
+              {line.length > 0 ? line : " "}
+            </text>
+          ))}
+        </scrollbox>
       ) : (
-        data.roadmaps.slice(0, 5).flatMap((roadmap) => [
-          <text key={`${roadmap.id}-title`} fg={roadmap.status === "active" ? palette.accent : palette.text}>
-            {statusGlyph(roadmap.status)} {truncate(roadmap.title, 96)}
-          </text>,
-          <text key={`${roadmap.id}-items`} fg={palette.muted}>
-            {roadmap.status} / items {roadmap.items.length} / source {roadmap.sourcePlanId ?? "none"}
-          </text>,
-          ...visibleRoadmapItems(roadmap).flatMap((item) => [
-            <text key={`${roadmap.id}-${item.id}`} fg={item.status === "in_progress" ? palette.accent : palette.text}>
-              {"  "}
-              {statusGlyph(item.status)} {truncate(item.title, 94)}
-            </text>,
-            ...(item.justification
-              ? [
-                  <text key={`${roadmap.id}-${item.id}-justification`} fg={palette.muted}>
-                    {"    "}
-                    why - {truncate(item.justification, 100)}
-                  </text>,
-                ]
-              : []),
-          ]),
-        ])
+        <text fg={palette.muted}>No brief recorded. Use `zenith brief set` to define project intent.</text>
       )}
-    </box>
-  );
-}
-
-function PlanView({ data }: { data: DashboardData }) {
-  const phase = data.context.selectedPhase?.phase ?? data.status.currentPhase;
-  const planTitle = data.context.selectedPhase?.planTitle ?? data.status.activePlan?.title ?? "none";
-
-  return (
-    <box
-      title="Executable Plans"
-      border
-      borderColor={palette.border}
-      backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-    >
-      {phase ? (
-        <>
-          <text fg={palette.accent}>Current: {phase.title}</text>
-          <text fg={palette.muted}>Plan: {truncate(planTitle, 96)}</text>
-          <text fg={phaseColor(phase.status)}>Status: {phase.status}</text>
-          <text fg={palette.text}>Description: {truncate(phase.description ?? "No description.", 140)}</text>
-          <text fg={palette.muted}>
-            Acceptance: {phase.acceptanceCriteria.length > 0 ? truncate(phase.acceptanceCriteria.join(" / "), 128) : "none"}
-          </text>
-          <text fg={palette.muted}>
-            Evidence: {phase.evidence.length > 0 ? truncate(phase.evidence.map((item) => item.value).join(" / "), 128) : "none"}
-          </text>
-        </>
-      ) : (
-        <text fg={palette.muted}>No current phase.</text>
-      )}
-      {data.plans.length === 0 ? (
-        <text fg={palette.muted}>No plans recorded.</text>
-      ) : (
-        data.plans.slice(0, 10).map((plan) => {
-          const counts = phaseCounts(plan);
-          return (
-            <box key={plan.id} style={{ flexDirection: "column", height: 4 }}>
-              <text fg={plan.status === "active" ? palette.accent : palette.text}>
-                {statusGlyph(plan.status)} {truncate(plan.title, 86)}
-              </text>
-              <text fg={palette.muted}>
-                {plan.status} / {plan.priority ?? "no priority"} / phases {counts.completed} done, {counts.inProgress} work,{" "}
-                {counts.pending} todo
-              </text>
-              <text fg={palette.muted}>
-                source {plan.sourceRoadmapId ?? "none"} / item {plan.sourceRoadmapItemId ?? "none"}
-              </text>
-            </box>
-          );
-        })
-      )}
-    </box>
-  );
-}
-
-function SpikesView({ data }: { data: DashboardData }) {
-  const spikes = data.status.openSpikes;
-  return (
-    <box
-      title="Open Spikes"
-      border
-      borderColor={palette.border}
-      backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-    >
-      {spikes.length === 0 ? (
-        <text fg={palette.muted}>No open spikes.</text>
-      ) : (
-        spikes.slice(0, 10).flatMap((spike) => [
-          <text key={`${spike.id}-title`} fg={palette.accent}>
-            {truncate(spike.title, 100)}
-          </text>,
-          <text key={`${spike.id}-question`} fg={palette.text}>
-            question - {truncate(spike.question, 116)}
-          </text>,
-          <text key={`${spike.id}-hypothesis`} fg={palette.muted}>
-            hypothesis - {truncate(spike.hypothesis ?? "none", 116)}
-          </text>,
-        ])
-      )}
-    </box>
-  );
-}
-
-function DecisionsView({ data }: { data: DashboardData }) {
-  const decisions = data.status.recentDecisions;
-  const lines = decisions.slice(0, 5).flatMap((decision) => [
-    { key: `${decision.id}-title`, color: palette.accent, text: truncate(decision.title, 110) },
-    { key: `${decision.id}-decision`, color: palette.text, text: `decision - ${truncate(decision.decision, 120)}` },
-    { key: `${decision.id}-context`, color: palette.muted, text: `context - ${truncate(decision.context, 120)}` },
-    { key: `${decision.id}-consequences`, color: palette.muted, text: `consequences - ${truncate(decision.consequences ?? "none", 120)}` },
-    { key: `${decision.id}-space`, color: palette.muted, text: "" },
-  ]);
-
-  return (
-    <box
-      title="Recent Decisions"
-      border
-      borderColor={palette.border}
-      backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-    >
-      {decisions.length === 0 ? (
-        <text fg={palette.muted}>No decisions recorded.</text>
-      ) : (
-        lines.map((line) => (
-          <text key={line.key} fg={line.color}>
-            {line.text}
-          </text>
-        ))
-      )}
-    </box>
-  );
-}
-
-function FindingsView({ data }: { data: DashboardData }) {
-  const findings = data.findings;
-
-  return (
-    <box
-      title="Open Findings"
-      border
-      borderColor={palette.border}
-      backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-    >
-      {findings.length === 0 ? (
-        <text fg={palette.muted}>No open findings.</text>
-      ) : (
-        findings.slice(0, 5).flatMap((finding) => [
-          <text key={`${finding.id}-title`} fg={severityColor(finding.severity)}>
-            {finding.severity} {finding.type} - {truncate(finding.title, 92)}
-          </text>,
-          <text key={`${finding.id}-description`} fg={palette.text}>
-            description - {truncate(finding.description, 116)}
-          </text>,
-          <text key={`${finding.id}-files`} fg={palette.muted}>
-            files - {finding.relatedFiles.length > 0 ? truncate(finding.relatedFiles.join(", "), 116) : "none"}
-          </text>,
-          <text key={`${finding.id}-meta`} fg={palette.muted}>
-            {finding.status} / {finding.id}
-          </text>,
-        ])
-      )}
-    </box>
-  );
-}
-
-function SessionsView({ data }: { data: DashboardData }) {
-  const sessions = data.status.recentSessions;
-
-  return (
-    <box
-      title="Recent Sessions"
-      border
-      borderColor={palette.border}
-      backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
-    >
-      {sessions.length === 0 ? (
-        <text fg={palette.muted}>No sessions recorded.</text>
-      ) : (
-        sessions.slice(0, 8).flatMap((session) => [
-          <text key={`${session.id}-summary`} fg={session.endedAt ? palette.text : palette.accent}>
-            {session.endedAt ? "closed" : "open"} {truncate(session.summary ?? session.id, 108)}
-          </text>,
-          <text key={`${session.id}-meta`} fg={palette.muted}>
-            {session.branch ?? "no branch"} / files {session.changedFiles.length} / plan {session.relatedPlanId ?? "none"}
-          </text>,
-          <text key={`${session.id}-next`} fg={palette.muted}>
-            next - {truncate(session.nextSteps[0] ?? "none", 116)}
-          </text>,
-        ])
-      )}
-    </box>
+    </Panel>
   );
 }
 
 function ContextView({ data }: { data: DashboardData }) {
-  const lines = data.context.markdown.split("\n").filter((line) => line.trim().length > 0);
+  const lines = data.context.markdown.split("\n");
+  return (
+    <Panel title="Compact Context">
+      <scrollbox focused style={{ flexGrow: 1 }}>
+        {lines.map((line, index) => (
+          <text key={index} fg={line.startsWith("#") ? palette.accent : palette.text}>
+            {line.length > 0 ? line : " "}
+          </text>
+        ))}
+      </scrollbox>
+    </Panel>
+  );
+}
+
+function RoadmapView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
+  const entries = roadmapEntries(data);
+  const selected = entries[selectedIndex];
+  const rows: Row[] = entries.map((entry) => ({
+    key: entry.item.id,
+    glyph: statusGlyph(entry.item.status),
+    glyphColor: statusColor(entry.item.status),
+    title: truncate(entry.item.title, 24),
+  }));
+
+  return (
+    <MasterDetail
+      listTitle={`Roadmap items (${entries.length})`}
+      rows={rows}
+      selectedIndex={selectedIndex}
+      bodyHeight={bodyHeight}
+      detailTitle="Item detail"
+    >
+      {selected ? (
+        <>
+          <text fg={palette.accent}>{selected.item.title}</text>
+          <DetailRow label="Status" value={statusLabel(selected.item.status)} color={statusColor(selected.item.status)} />
+          <DetailRow label="Roadmap" value={selected.roadmap.title} />
+          <DetailText label="Description" value={selected.item.description ?? "none"} />
+          <DetailText label="Why" value={selected.item.justification ?? "none"} />
+          <DetailRow label="Source phase" value={selected.item.sourcePhaseId ?? "none"} />
+          <DetailText
+            label="Evidence"
+            value={selected.item.evidence.map((evidence) => `${evidence.kind}: ${evidence.value}`).join("\n") || "none"}
+          />
+        </>
+      ) : (
+        <text fg={palette.muted}>No roadmap items.</text>
+      )}
+    </MasterDetail>
+  );
+}
+
+function PlanView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
+  const plan = data.plans[selectedIndex];
+  const rows: Row[] = data.plans.map((item) => {
+    const counts = phaseCounts(item);
+    return {
+      key: item.id,
+      glyph: statusGlyph(item.status),
+      glyphColor: statusColor(item.status),
+      title: truncate(item.title, 18),
+      badge: { text: `${counts.done}/${item.phases.length}`, color: palette.muted },
+    };
+  });
+
+  return (
+    <MasterDetail
+      listTitle={`Plans (${data.plans.length})`}
+      rows={rows}
+      selectedIndex={selectedIndex}
+      bodyHeight={bodyHeight}
+      detailTitle="Plan detail"
+    >
+      {plan ? (
+        <>
+          <text fg={palette.accent}>{plan.title}</text>
+          <DetailRow label="Status" value={statusLabel(plan.status)} color={statusColor(plan.status)} />
+          <DetailRow label="Priority" value={plan.priority ?? "none"} />
+          <text fg={palette.accent}>{progressBar(phaseCounts(plan).done, plan.phases.length, 12)}</text>
+          <DetailRow label="Source" value={plan.sourceRoadmapId ?? "standalone"} />
+          <text fg={palette.muted}>{"Phases"}</text>
+          {plan.phases.map((phase) => (
+            <text key={phase.id}>
+              <span fg={statusColor(phase.status)}>{`  ${statusGlyph(phase.status)} `}</span>
+              <span fg={palette.text}>{phase.title}</span>
+              <span fg={palette.faint}>{`  ${statusLabel(phase.status)}`}</span>
+            </text>
+          ))}
+        </>
+      ) : (
+        <text fg={palette.muted}>No plans recorded.</text>
+      )}
+    </MasterDetail>
+  );
+}
+
+function SpikesView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
+  const spike = data.spikes[selectedIndex];
+  const rows: Row[] = data.spikes.map((item) => ({
+    key: item.id,
+    glyph: statusGlyph(item.status),
+    glyphColor: statusColor(item.status),
+    title: truncate(item.title, 24),
+  }));
+
+  return (
+    <MasterDetail
+      listTitle={`Spikes (${data.spikes.length})`}
+      rows={rows}
+      selectedIndex={selectedIndex}
+      bodyHeight={bodyHeight}
+      detailTitle="Spike detail"
+    >
+      {spike ? (
+        <>
+          <text fg={palette.accent}>{spike.title}</text>
+          <DetailRow label="Status" value={statusLabel(spike.status)} color={statusColor(spike.status)} />
+          <DetailText label="Question" value={spike.question} />
+          <DetailText label="Hypothesis" value={spike.hypothesis ?? "none"} />
+          <DetailText label="Options" value={spike.options.join("\n") || "none"} />
+          <DetailText label="Result" value={spike.result ?? "open"} />
+          <DetailText label="Recommendation" value={spike.recommendation ?? "none"} />
+        </>
+      ) : (
+        <text fg={palette.muted}>No spikes recorded.</text>
+      )}
+    </MasterDetail>
+  );
+}
+
+function FindingsView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
+  const finding = data.findings[selectedIndex];
+  const rows: Row[] = data.findings.map((item) => ({
+    key: item.id,
+    glyph: statusGlyph(item.status),
+    glyphColor: statusColor(item.status),
+    title: truncate(item.title, 18),
+    badge: { text: severityBadge(item.severity).label, color: severityBadge(item.severity).color },
+  }));
+
+  return (
+    <MasterDetail
+      listTitle={`Findings (${data.findings.length})`}
+      rows={rows}
+      selectedIndex={selectedIndex}
+      bodyHeight={bodyHeight}
+      detailTitle="Finding detail"
+    >
+      {finding ? (
+        <>
+          <text>
+            <span fg={severityBadge(finding.severity).color}>{`${severityBadge(finding.severity).label} `}</span>
+            <span fg={palette.accent}>{finding.title}</span>
+          </text>
+          <DetailRow label="Type" value={findingTypeLabel(finding.type)} />
+          <DetailRow label="Severity" value={finding.severity} color={severityBadge(finding.severity).color} />
+          <DetailRow label="Status" value={statusLabel(finding.status)} color={statusColor(finding.status)} />
+          <DetailText label="Description" value={finding.description} />
+          <DetailText label="Files" value={finding.relatedFiles.join("\n") || "none"} />
+          <DetailRow label="Created" value={truncate(finding.createdAt, 24)} />
+          <DetailRow label="Closed" value={finding.closedAt ?? "open"} />
+        </>
+      ) : (
+        <text fg={palette.muted}>No findings.</text>
+      )}
+    </MasterDetail>
+  );
+}
+
+function SessionsView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
+  const session = data.sessions[selectedIndex];
+  const rows: Row[] = data.sessions.map((item) => ({
+    key: item.id,
+    glyph: item.endedAt ? "✓" : "◐",
+    glyphColor: item.endedAt ? palette.success : palette.accent,
+    title: truncate(item.summary ?? item.id, 22),
+  }));
+
+  return (
+    <MasterDetail
+      listTitle={`Sessions (${data.sessions.length})`}
+      rows={rows}
+      selectedIndex={selectedIndex}
+      bodyHeight={bodyHeight}
+      detailTitle="Session detail"
+    >
+      {session ? (
+        <>
+          <text fg={palette.accent}>{session.endedAt ? "closed" : "open"} · {truncate(session.id, 40)}</text>
+          <DetailRow label="Started" value={truncate(session.startedAt, 24)} />
+          <DetailRow label="Ended" value={session.endedAt ?? "open"} />
+          <DetailRow label="Branch" value={session.branch ?? "none"} />
+          <DetailText label="Summary" value={session.summary ?? "none"} />
+          <DetailText label="Changed files" value={session.changedFiles.join("\n") || "none"} />
+          <DetailText label="Next steps" value={session.nextSteps.join("\n") || "none"} />
+          <DetailRow label="Plan" value={session.relatedPlanId ?? "none"} />
+        </>
+      ) : (
+        <text fg={palette.muted}>No sessions recorded.</text>
+      )}
+    </MasterDetail>
+  );
+}
+
+function DecisionsView({ data, selectedIndex, bodyHeight }: SectionViewProps) {
+  const decision = data.decisions[selectedIndex];
+  const rows: Row[] = data.decisions.map((item) => ({
+    key: item.id,
+    glyph: "◇",
+    glyphColor: palette.accentAlt,
+    title: truncate(item.title, 24),
+  }));
+
+  return (
+    <MasterDetail
+      listTitle={`Decisions (${data.decisions.length})`}
+      rows={rows}
+      selectedIndex={selectedIndex}
+      bodyHeight={bodyHeight}
+      detailTitle="Decision detail"
+    >
+      {decision ? (
+        <>
+          <text fg={palette.accent}>{decision.title}</text>
+          <DetailText label="Context" value={decision.context} />
+          <DetailText label="Decision" value={decision.decision} />
+          <DetailText label="Consequences" value={decision.consequences ?? "none"} />
+          <DetailText label="Alternatives" value={decision.alternatives.join("\n") || "none"} />
+          <DetailRow label="Created" value={truncate(decision.createdAt, 24)} />
+        </>
+      ) : (
+        <text fg={palette.muted}>No decisions recorded.</text>
+      )}
+    </MasterDetail>
+  );
+}
+
+type SectionViewProps = { data: DashboardData; selectedIndex: number; bodyHeight: number };
+
+function MasterDetail({
+  listTitle,
+  rows,
+  selectedIndex,
+  bodyHeight,
+  detailTitle,
+  children,
+}: {
+  listTitle: string;
+  rows: Row[];
+  selectedIndex: number;
+  bodyHeight: number;
+  detailTitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
+      <ListPanel title={listTitle} rows={rows} selectedIndex={selectedIndex} visibleRows={Math.max(3, bodyHeight - 2)} />
+      <box
+        title={detailTitle}
+        border
+        borderColor={palette.border}
+        backgroundColor={palette.panel}
+        style={{ flexGrow: 1, flexBasis: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+      >
+        <scrollbox focused style={{ flexGrow: 1 }}>
+          {children}
+        </scrollbox>
+      </box>
+    </box>
+  );
+}
+
+function ListPanel({
+  title,
+  rows,
+  selectedIndex,
+  visibleRows,
+}: {
+  title: string;
+  rows: Row[];
+  selectedIndex: number;
+  visibleRows: number;
+}) {
+  const maxStart = Math.max(0, rows.length - visibleRows);
+  const desired = selectedIndex - Math.floor(visibleRows / 2);
+  const windowStart = Math.max(0, Math.min(desired, maxStart));
+  const slice = rows.slice(windowStart, windowStart + visibleRows);
+  const hiddenBefore = windowStart;
+  const hiddenAfter = Math.max(0, rows.length - (windowStart + visibleRows));
 
   return (
     <box
-      title="Compact Context"
+      title={title}
+      border
+      borderColor={palette.borderActive}
+      backgroundColor={palette.panel}
+      style={{ width: 32, flexShrink: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+    >
+      {rows.length === 0 ? <text fg={palette.muted}>Nothing here.</text> : null}
+      {hiddenBefore > 0 ? <text fg={palette.faint}>{`↑ ${hiddenBefore} more`}</text> : null}
+      {slice.map((row, index) => {
+        const idx = windowStart + index;
+        const selected = idx === selectedIndex;
+        return (
+          <text key={row.key} {...(selected ? { bg: palette.highlight } : {})}>
+            <span fg={selected ? palette.accent : row.glyphColor}>{`${selected ? "▸" : " "}${row.glyph} `}</span>
+            <span fg={selected ? palette.accent : (row.titleColor ?? palette.text)}>{row.title}</span>
+            {row.badge ? <span fg={row.badge.color}>{`  ${row.badge.text}`}</span> : null}
+          </text>
+        );
+      })}
+      {hiddenAfter > 0 ? <text fg={palette.faint}>{`↓ ${hiddenAfter} more`}</text> : null}
+    </box>
+  );
+}
+
+function Panel({ title, children, grow = true }: { title: string; children: ReactNode; grow?: boolean }) {
+  return (
+    <box
+      title={title}
       border
       borderColor={palette.border}
       backgroundColor={palette.panel}
-      style={{ flexGrow: 1, flexDirection: "column", padding: 1 }}
+      style={{ flexGrow: grow ? 1 : 0, flexBasis: grow ? 0 : undefined, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
     >
-      {lines.slice(0, 18).map((line, index) => (
-        <text key={`${index}-${line}`} fg={line.startsWith("#") ? palette.accent : palette.text}>
-          {truncate(line, 128)}
+      {children}
+    </box>
+  );
+}
+
+function DetailRow({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <text>
+      <span fg={palette.faint}>{`${label}: `}</span>
+      <span fg={color ?? palette.text}>{value}</span>
+    </text>
+  );
+}
+
+function DetailText({ label, value }: { label: string; value: string }) {
+  const lines = value.split("\n");
+  return (
+    <>
+      <text fg={palette.faint}>{`${label}:`}</text>
+      {lines.map((line, index) => (
+        <text key={index} fg={palette.text}>
+          {`  ${line}`}
         </text>
       ))}
-    </box>
+    </>
   );
 }
 
-function Labeled({ label, value }: { label: string; value: string }) {
-  return (
-    <box style={{ flexDirection: "column", height: 2 }}>
-      <text fg={palette.muted}>{label}</text>
-      <text fg={palette.text}>{truncate(value, 30)}</text>
-    </box>
-  );
+function sidebarBadge(section: SectionId, data: DashboardData): { text: string; color: string } | null {
+  if (section === "findings" && data.findings.length > 0) {
+    return { text: `${data.findings.length}`, color: palette.danger };
+  }
+  return null;
 }
 
-function statusGlyph(status: string): string {
-  if (status === "completed") return "done";
-  if (status === "in_progress") return "work";
-  if (status === "blocked") return "block";
-  if (status === "active") return "live";
-  if (status === "paused") return "hold";
-  if (status === "archived") return "arch";
-  return "todo";
+function initialSelection(): SelectionState {
+  return Object.fromEntries(sections.map((section) => [section.id, 0])) as SelectionState;
 }
 
-function phaseColor(status: string): string {
-  if (status === "completed") return palette.success;
-  if (status === "in_progress") return palette.accent;
-  if (status === "blocked") return palette.danger;
-  return palette.warning;
+function selectionCount(section: SectionId, data: DashboardData): number {
+  if (section === "roadmap") return roadmapEntries(data).length;
+  if (section === "plan") return data.plans.length;
+  if (section === "spikes") return data.spikes.length;
+  if (section === "findings") return data.findings.length;
+  if (section === "sessions") return data.sessions.length;
+  if (section === "decisions") return data.decisions.length;
+  return 0;
 }
 
-function severityColor(severity: string): string {
-  if (severity === "critical" || severity === "high") return palette.danger;
-  if (severity === "medium") return palette.warning;
-  return palette.success;
+function clampAll(selection: SelectionState, data: DashboardData): SelectionState {
+  return Object.fromEntries(
+    sections.map((section) => [section.id, clamp(selection[section.id] ?? 0, selectionCount(section.id, data))]),
+  ) as SelectionState;
 }
 
-function tabByNumber(keyName: string): TabId | null {
-  const index = Number(keyName) - 1;
-  return tabs[index]?.id ?? null;
+function clamp(index: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.min(Math.max(index, 0), count - 1);
 }
 
-function nextTab(activeTab: TabId): TabId {
-  const index = tabs.findIndex((tab) => tab.id === activeTab);
-  return tabs[(index + 1) % tabs.length]!.id;
+function sectionByNumber(token: string): SectionId | null {
+  const index = Number(token) - 1;
+  return sections[index]?.id ?? null;
 }
 
-function previousTab(activeTab: TabId): TabId {
-  const index = tabs.findIndex((tab) => tab.id === activeTab);
-  return tabs[(index - 1 + tabs.length) % tabs.length]!.id;
+function stepSection(active: SectionId, delta: number): SectionId {
+  const index = sections.findIndex((section) => section.id === active);
+  return sections[(index + delta + sections.length) % sections.length]!.id;
 }
 
-function phaseCounts(plan: Plan): { completed: number; inProgress: number; pending: number } {
+type RoadmapEntry = { roadmap: Roadmap; item: Roadmap["items"][number] };
+
+function roadmapEntries(data: DashboardData): RoadmapEntry[] {
+  return data.roadmaps.flatMap((roadmap) => roadmap.items.map((item) => ({ roadmap, item })));
+}
+
+function phaseCounts(plan: Plan): { done: number; inProgress: number; todo: number } {
   return plan.phases.reduce(
     (counts, phase) => ({
-      completed: counts.completed + (phase.status === "completed" ? 1 : 0),
+      done: counts.done + (phase.status === "done" ? 1 : 0),
       inProgress: counts.inProgress + (phase.status === "in_progress" ? 1 : 0),
-      pending: counts.pending + (phase.status === "pending" ? 1 : 0),
+      todo: counts.todo + (phase.status === "todo" ? 1 : 0),
     }),
-    { completed: 0, inProgress: 0, pending: 0 },
+    { done: 0, inProgress: 0, todo: 0 },
   );
-}
-
-function visibleRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
-  const activeItems = roadmap.items.filter((item) => item.status === "in_progress" || item.status === "planned" || item.status === "deferred");
-  return (activeItems.length > 0 ? activeItems : roadmap.items).slice(0, 4);
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, Math.max(0, max - 3))}...` : value;
-}
-
-function truncateMiddle(value: string, max: number): string {
-  if (value.length <= max) return value;
-  const half = Math.floor((max - 3) / 2);
-  return `${value.slice(0, half)}...${value.slice(value.length - half)}`;
 }

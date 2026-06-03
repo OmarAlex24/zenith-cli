@@ -217,6 +217,15 @@ describe("cli json commands", () => {
         afterItemTitle: "MVP 4.5 - Product And Architecture Hardening",
       },
     });
+    const deferred = await runDecode(["roadmap", "update-item", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        itemTitle: "MVP 5 - PR Review Skill",
+        status: "deferred",
+        justification: "Core foundations should be stronger before review skills.",
+      },
+    });
 
     const createdPlan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
@@ -251,6 +260,9 @@ describe("cli json commands", () => {
     );
     expect(missingJustification.exitCode).toBe(1);
     expect((missingJustification.json as any).errors[0].message).toContain("Provide justification");
+    expect(deferred.exitCode).toBe(0);
+    expect((deferred.json as any).data.items[2].status).toBe("deferred");
+    expect((deferred.json as any).data.items[2].justification).toBe("Core foundations should be stronger before review skills.");
     expect(createdPlan.exitCode).toBe(0);
     expect((createdPlan.json as any).data.sourceRoadmapId).toBe(roadmapId);
     expect((createdPlan.json as any).data.sourceRoadmapItemId).toBe(itemId);

@@ -27,6 +27,8 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith roadmap import-plan <plan-id> --json --input -`
 - `zenith roadmap create-plan <roadmap-id> --json --input -`
 
+Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan. Roadmap items use `todo / in_progress / done / deferred`; plan phases use `todo / in_progress / done / blocked`. Legacy `pending`/`planned`/`completed` inputs are still accepted and normalized.
+
 ## Plans
 
 - `zenith plan create --json --input -`
@@ -35,6 +37,8 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith plan update <plan-id> --json --input -`
 - `zenith plan update-phase <plan-id> --json --input -`
 - `zenith plan next --json`
+
+`plan next` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
 
 ## Context
 

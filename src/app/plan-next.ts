@@ -39,11 +39,11 @@ export function computeNext(
     };
   }
 
-  const pending = activePlan?.phases.find((phase) => phase.status === "pending");
+  const pending = activePlan?.phases.find((phase) => phase.status === "todo");
   if (activePlan && pending) {
     return {
       recommendation: pending.title,
-      reason: "First pending phase in the active plan.",
+      reason: "First todo phase in the active plan.",
       planId: activePlan.id,
       phaseId: pending.id,
       evidence: [activePlan.title],
@@ -57,6 +57,15 @@ export function computeNext(
         recommendation: `Create plan from roadmap: ${roadmapTarget.item.title}`,
         reason: "No active plan exists; active roadmap has the next product direction.",
         evidence: [roadmapTarget.roadmap.id, roadmapTarget.item.id],
+      };
+    }
+
+    const deferredTarget = findDeferredRoadmapTarget(recentRoadmaps);
+    if (deferredTarget) {
+      return {
+        recommendation: `Review deferred roadmap work: ${deferredTarget.item.title}`,
+        reason: "No active plan exists and active roadmap work is deferred; reactivate a roadmap item before creating a plan.",
+        evidence: [deferredTarget.roadmap.id, deferredTarget.item.id],
       };
     }
 
@@ -88,7 +97,7 @@ export function computeNext(
 
 function findRoadmapTarget(roadmaps: Roadmap[]): { roadmap: Roadmap; item: Roadmap["items"][number] } | null {
   const activeRoadmaps = roadmaps.filter((roadmap) => roadmap.status === "active");
-  const statuses: Array<Roadmap["items"][number]["status"]> = ["in_progress", "planned", "deferred"];
+  const statuses: Array<Roadmap["items"][number]["status"]> = ["in_progress", "todo"];
 
   for (const status of statuses) {
     for (const roadmap of activeRoadmaps) {
@@ -102,11 +111,24 @@ function findRoadmapTarget(roadmaps: Roadmap[]): { roadmap: Roadmap; item: Roadm
   return null;
 }
 
+function findDeferredRoadmapTarget(roadmaps: Roadmap[]): { roadmap: Roadmap; item: Roadmap["items"][number] } | null {
+  const activeRoadmaps = roadmaps.filter((roadmap) => roadmap.status === "active");
+
+  for (const roadmap of activeRoadmaps) {
+    const item = roadmap.items.find((candidate) => candidate.status === "deferred");
+    if (item) {
+      return { roadmap, item };
+    }
+  }
+
+  return null;
+}
+
 export function findCurrentPhase(plan: Plan | null): PlanPhase | null {
   return (
     plan?.phases.find((phase) => phase.status === "in_progress") ??
     plan?.phases.find((phase) => phase.status === "blocked") ??
-    plan?.phases.find((phase) => phase.status === "pending") ??
+    plan?.phases.find((phase) => phase.status === "todo") ??
     null
   );
 }

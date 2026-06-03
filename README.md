@@ -31,7 +31,7 @@ bun run zenith --help
 bun run zenith project detect --json
 ```
 
-Running `bun run zenith` with no arguments launches the read-only OpenTUI dashboard for project status, roadmap, plan, findings, sessions, decisions, spikes, and compact context. JSON commands remain available by passing command arguments.
+Running `bun run zenith` with no arguments launches the read-only OpenTUI workspace for project status, roadmap, plan, findings, sessions, decisions, spikes, and compact context. Use number keys or left/right to switch tabs, up/down to move through list views, `enter` for detail, `backspace` to return, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
 
 Register the current project when needed:
 
@@ -211,6 +211,8 @@ zenith spike conclude <spike-id> --json --input -
 
 Use `roadmap create-plan` when product direction needs to become executable work. The payload must identify exactly one roadmap item by `itemId` or `itemTitle`; optional `phases` can expand the item into a real implementation plan. Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence.
 
+`plan next` treats roadmap items with `in_progress` or `planned` status as actionable. Items marked `deferred` are intentionally parked; Zenith will recommend reviewing or reactivating deferred work instead of creating a plan from it automatically. To resume deferred work, update that roadmap item back to `planned` or `in_progress` with a justification.
+
 When inserting intermediate roadmap work between existing MVPs, use `position`, `afterItemId`, or `afterItemTitle` instead of renaming later MVPs. Targeted insertions require `justification` so the sequence change remains auditable:
 
 ```json
@@ -218,6 +220,16 @@ When inserting intermediate roadmap work between existing MVPs, use `position`, 
   "title": "MVP 4.75 - Operational Memory Polish",
   "afterItemTitle": "MVP 4.5 - Product And Architecture Hardening",
   "justification": "Memory operations should be reliable and auditable before building review/delegation skills on top."
+}
+```
+
+Use `deferred` to postpone future roadmap work without renaming or deleting it:
+
+```json
+{
+  "itemTitle": "MVP 5 - PR Review Skill",
+  "status": "deferred",
+  "justification": "Core TUI and context behavior should be stronger before review skills."
 }
 ```
 
@@ -252,6 +264,7 @@ Run the local verification suite:
 bun run typecheck
 bun test
 bun run build
+bun run compile
 ```
 
 Run the same commands through the convenience CI script:

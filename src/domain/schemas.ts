@@ -11,11 +11,24 @@ export const ProjectSchema = z.object({
 });
 
 export const PlanStatusSchema = z.enum(["active", "completed", "paused", "archived"]);
-export const PhaseStatusSchema = z.enum(["pending", "in_progress", "completed", "blocked"]);
 export const BriefStatusSchema = z.enum(["current", "archived"]);
 export const RoadmapStatusSchema = z.enum(["active", "paused", "completed", "archived"]);
-export const RoadmapItemStatusSchema = z.enum(["planned", "in_progress", "done", "deferred"]);
 export const SpikeStatusSchema = z.enum(["open", "concluded", "abandoned"]);
+
+const PHASE_STATUS_ALIASES: Record<string, string> = { pending: "todo", completed: "done" };
+const ROADMAP_ITEM_STATUS_ALIASES: Record<string, string> = { planned: "todo", completed: "done" };
+
+const aliasPreprocessor = (aliases: Record<string, string>) => (value: unknown) =>
+  typeof value === "string" && value in aliases ? aliases[value] : value;
+
+export const PhaseStatusSchema = z.preprocess(
+  aliasPreprocessor(PHASE_STATUS_ALIASES),
+  z.enum(["todo", "in_progress", "done", "blocked"]),
+);
+export const RoadmapItemStatusSchema = z.preprocess(
+  aliasPreprocessor(ROADMAP_ITEM_STATUS_ALIASES),
+  z.enum(["todo", "in_progress", "done", "deferred"]),
+);
 
 export const EvidenceSchema = z.object({
   id: z.string().min(1).optional(),
@@ -301,7 +314,7 @@ export const CreatePlanInputSchema = z.object({
       z.object({
         title: z.string().min(1),
         description: z.string().optional(),
-        status: PhaseStatusSchema.default("pending"),
+        status: PhaseStatusSchema.default("todo"),
         acceptanceCriteria: z.array(z.string().min(1)).default([]),
         evidence: z.array(EvidenceSchema).default([]),
       }),
@@ -378,7 +391,7 @@ export const CreateRoadmapInputSchema = z.object({
         title: z.string().min(1),
         description: z.string().optional(),
         justification: z.string().min(1).optional(),
-        status: RoadmapItemStatusSchema.default("planned"),
+        status: RoadmapItemStatusSchema.default("todo"),
         evidence: z.array(EvidenceSchema).default([]),
       }),
     )
@@ -390,7 +403,7 @@ export const AddRoadmapItemInputSchema = z
     title: z.string().min(1),
     description: z.string().optional(),
     justification: z.string().min(1).optional(),
-    status: RoadmapItemStatusSchema.default("planned"),
+    status: RoadmapItemStatusSchema.default("todo"),
     evidence: z.array(EvidenceSchema).default([]),
     position: z.number().int().nonnegative().optional(),
     afterItemId: z.string().min(1).optional(),
@@ -471,7 +484,7 @@ export const CreatePlanFromRoadmapInputSchema = z
         z.object({
           title: z.string().min(1),
           description: z.string().optional(),
-          status: PhaseStatusSchema.default("pending"),
+          status: PhaseStatusSchema.default("todo"),
           acceptanceCriteria: z.array(z.string().min(1)).default([]),
           evidence: z.array(EvidenceSchema).default([]),
         }),
