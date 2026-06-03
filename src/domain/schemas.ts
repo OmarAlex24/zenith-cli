@@ -82,6 +82,7 @@ export const RoadmapItemSchema = z.object({
   roadmapId: z.string().min(1),
   title: z.string().min(1),
   description: z.string().optional(),
+  justification: z.string().min(1).optional(),
   status: RoadmapItemStatusSchema,
   evidence: z.array(StoredEvidenceSchema).default([]),
   sourcePhaseId: z.string().min(1).optional(),
@@ -164,8 +165,10 @@ export const GitContextSchema = z.object({
 
 export const FindingSummarySchema = FindingSchema.pick({
   id: true,
+  type: true,
   severity: true,
   title: true,
+  relatedFiles: true,
 });
 
 export const NextStepSchema = z.object({
@@ -374,6 +377,7 @@ export const CreateRoadmapInputSchema = z.object({
       z.object({
         title: z.string().min(1),
         description: z.string().optional(),
+        justification: z.string().min(1).optional(),
         status: RoadmapItemStatusSchema.default("planned"),
         evidence: z.array(EvidenceSchema).default([]),
       }),
@@ -385,6 +389,7 @@ export const AddRoadmapItemInputSchema = z
   .object({
     title: z.string().min(1),
     description: z.string().optional(),
+    justification: z.string().min(1).optional(),
     status: RoadmapItemStatusSchema.default("planned"),
     evidence: z.array(EvidenceSchema).default([]),
     position: z.number().int().nonnegative().optional(),
@@ -397,6 +402,14 @@ export const AddRoadmapItemInputSchema = z
         .length <= 1,
     {
       message: "Provide only one insertion target",
+    },
+  )
+  .refine(
+    (value) =>
+      ![value.position !== undefined, value.afterItemId !== undefined, value.afterItemTitle !== undefined].some(Boolean) ||
+      value.justification !== undefined,
+    {
+      message: "Provide justification when inserting a roadmap item at a specific position",
     },
   );
 
@@ -419,6 +432,7 @@ export const UpdateRoadmapItemInputSchema = z
     itemTitle: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
     description: z.string().optional(),
+    justification: z.string().min(1).optional(),
     status: RoadmapItemStatusSchema.optional(),
     evidence: z.array(EvidenceSchema).optional(),
   })
@@ -429,6 +443,7 @@ export const UpdateRoadmapItemInputSchema = z
     (value) =>
       value.title !== undefined ||
       value.description !== undefined ||
+      value.justification !== undefined ||
       value.status !== undefined ||
       value.evidence !== undefined,
     {
@@ -511,6 +526,26 @@ export const RecordFindingInputSchema = z.object({
   description: z.string().min(1),
   relatedFiles: z.array(z.string().min(1)).default([]),
 });
+
+export const UpdateFindingInputSchema = z
+  .object({
+    type: FindingTypeSchema.optional(),
+    severity: FindingSeveritySchema.optional(),
+    title: z.string().min(1).optional(),
+    description: z.string().min(1).optional(),
+    relatedFiles: z.array(z.string().min(1)).optional(),
+  })
+  .refine(
+    (value) =>
+      value.type !== undefined ||
+      value.severity !== undefined ||
+      value.title !== undefined ||
+      value.description !== undefined ||
+      value.relatedFiles !== undefined,
+    {
+      message: "Provide at least one finding update",
+    },
+  );
 
 export const StartSessionInputSchema = z.object({
   summary: z.string().min(1).optional(),
@@ -596,6 +631,7 @@ export type RecordSpikeInput = z.infer<typeof RecordSpikeInputSchema>;
 export type ConcludeSpikeInput = z.infer<typeof ConcludeSpikeInputSchema>;
 export type SessionSummaryInput = z.infer<typeof SessionSummaryInputSchema>;
 export type RecordFindingInput = z.infer<typeof RecordFindingInputSchema>;
+export type UpdateFindingInput = z.infer<typeof UpdateFindingInputSchema>;
 export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
 export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;

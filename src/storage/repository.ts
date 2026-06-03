@@ -130,6 +130,7 @@ type RoadmapItemRow = {
   position: number;
   title: string;
   description: string | null;
+  justification: string | null;
   status: RoadmapItemStatus;
   evidence_json: string;
   source_phase_id: string | null;
@@ -219,6 +220,7 @@ export type UpdateRoadmapPatch = {
 export type UpdateRoadmapItemPatch = {
   title?: string;
   description?: string;
+  justification?: string;
   status?: RoadmapItemStatus;
   evidence?: Evidence[];
 };
@@ -243,6 +245,16 @@ export type ConcludeSpikePatch = {
 };
 
 export type InsertFindingInput = Omit<Finding, "id" | "createdAt" | "closedAt" | "status">;
+
+export type FindingListStatus = Finding["status"] | "all";
+
+export type UpdateFindingPatch = {
+  type?: Finding["type"];
+  severity?: Finding["severity"];
+  title?: string;
+  description?: string;
+  relatedFiles?: string[];
+};
 
 export type UpdateSessionPatch = {
   endedAt?: string;
@@ -486,9 +498,9 @@ export class ZenithRepository {
           `
           INSERT INTO roadmap_items (
             id, roadmap_id, position, title, description, status,
-            evidence_json, source_phase_id, created_at, updated_at
+            justification, evidence_json, source_phase_id, created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -498,6 +510,7 @@ export class ZenithRepository {
           input.title,
           input.description ?? null,
           input.status,
+          input.justification ?? null,
           JSON.stringify(input.evidence),
           input.sourcePhaseId ?? null,
           timestamp,
@@ -570,13 +583,14 @@ export class ZenithRepository {
         .query(
           `
           UPDATE roadmap_items
-          SET title = ?, description = ?, status = ?, evidence_json = ?, updated_at = ?
+          SET title = ?, description = ?, justification = ?, status = ?, evidence_json = ?, updated_at = ?
           WHERE id = ?
         `,
         )
         .run(
           patch.title ?? item.title,
           patch.description ?? item.description ?? null,
+          patch.justification ?? item.justification ?? null,
           patch.status ?? item.status,
           JSON.stringify(nextEvidence),
           timestamp,
@@ -956,7 +970,14 @@ export class ZenithRepository {
     return finding;
   }
 
-  listFindings(projectId: string, status: Finding["status"] = "open"): Finding[] {
+  listFindings(projectId: string, status: FindingListStatus = "open"): Finding[] {
+    if (status === "all") {
+      return this.db
+        .query<FindingRow, [string]>("SELECT * FROM findings WHERE project_id = ? ORDER BY created_at DESC")
+        .all(projectId)
+        .map(mapFinding);
+    }
+
     return this.db
       .query<FindingRow, [string, Finding["status"]]>(
         "SELECT * FROM findings WHERE project_id = ? AND status = ? ORDER BY created_at DESC",
@@ -972,6 +993,36 @@ export class ZenithRepository {
   getFindingById(findingId: string): Finding | null {
     const row = this.db.query<FindingRow, [string]>("SELECT * FROM findings WHERE id = ?").get(findingId);
     return row ? mapFinding(row) : null;
+  }
+
+  updateFinding(findingId: string, patch: UpdateFindingPatch): Finding {
+    const finding = this.getFindingById(findingId);
+    if (!finding) {
+      throw new Error(`Finding not found: ${findingId}`);
+    }
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          UPDATE findings
+          SET type = ?, severity = ?, title = ?, description = ?, related_files_json = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          patch.type ?? finding.type,
+          patch.severity ?? finding.severity,
+          patch.title ?? finding.title,
+          patch.description ?? finding.description,
+          JSON.stringify(patch.relatedFiles ?? finding.relatedFiles),
+          findingId,
+        );
+
+      this.recordEvent(finding.projectId, "finding.updated", "finding", finding.id, patch);
+    })();
+
+    return this.getFindingById(findingId)!;
   }
 
   closeFinding(findingId: string): Finding {
@@ -1131,6 +1182,10 @@ export class ZenithRepository {
       .map(mapSession);
   }
 
+  listSessions(projectId: string, limit = 20): Session[] {
+    return this.listRecentSessions(projectId, limit);
+  }
+
   getSessionById(sessionId: string): Session | null {
     const row = this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
     return row ? mapSession(row) : null;
@@ -1232,9 +1287,9 @@ export class ZenithRepository {
           `
           INSERT INTO roadmap_items (
             id, roadmap_id, position, title, description, status,
-            evidence_json, source_phase_id, created_at, updated_at
+            justification, evidence_json, source_phase_id, created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -1244,6 +1299,7 @@ export class ZenithRepository {
           item.title,
           item.description ?? null,
           item.status,
+          item.justification ?? null,
           JSON.stringify(item.evidence),
           item.sourcePhaseId ?? null,
           timestamp,
@@ -1328,6 +1384,7 @@ function mapRoadmapItem(row: RoadmapItemRow): RoadmapItem {
     roadmapId: row.roadmap_id,
     title: row.title,
     ...(row.description === null ? {} : { description: row.description }),
+    ...(row.justification === null ? {} : { justification: row.justification }),
     status: row.status,
     evidence: parseJsonArray<RoadmapItem["evidence"][number]>(row.evidence_json),
     ...(row.source_phase_id === null ? {} : { sourcePhaseId: row.source_phase_id }),

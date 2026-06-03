@@ -52,7 +52,11 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 ## Findings
 
 - `zenith finding record --json --input -`
-- `zenith finding list --json`
+- `zenith finding list --status open --json`
+- `zenith finding list --status closed --json`
+- `zenith finding list --status all --json`
+- `zenith finding show <finding-id> --json`
+- `zenith finding update <finding-id> --json --input -`
 - `zenith finding close <finding-id> --json`
 
 ## Spikes
@@ -66,6 +70,8 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 ## Sessions
 
 - `zenith session start --json --input -`
+- `zenith session list --json`
+- `zenith session show <session-id> --json`
 - `zenith session capture <session-id> --json --input -`
 - `zenith session end <session-id> --json --input -`
 - `zenith session summarize --json --input -`

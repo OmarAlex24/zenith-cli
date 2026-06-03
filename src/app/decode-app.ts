@@ -20,6 +20,7 @@ import {
   SessionSummaryInputSchema,
   SetBriefInputSchema,
   StartSessionInputSchema,
+  UpdateFindingInputSchema,
   UpdatePhaseInputSchema,
   UpdatePlanInputSchema,
   UpdateRoadmapInputSchema,
@@ -38,6 +39,7 @@ import {
 import type { GitSummary } from "../integrations/git/git-adapter";
 import { GitAdapter } from "../integrations/git/git-adapter";
 import type { ZenithRepository } from "../storage/repository";
+import type { FindingListStatus } from "../storage/repository";
 import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
 
@@ -60,8 +62,10 @@ export type ProjectStatus = {
   recentDecisions: Decision[];
   openFindings: Array<{
     id: string;
+    type: string;
     severity: string;
     title: string;
+    relatedFiles: string[];
   }>;
   next: PlanNextResult;
 };
@@ -139,8 +143,10 @@ export class ZenithApp {
       recentDecisions,
       openFindings: openFindings.map((finding) => ({
         id: finding.id,
+        type: finding.type,
         severity: finding.severity,
         title: finding.title,
+        relatedFiles: finding.relatedFiles,
       })),
       next,
     };
@@ -181,6 +187,7 @@ export class ZenithApp {
       items: input.items.map((item) => ({
         title: item.title,
         ...(item.description ? { description: item.description } : {}),
+        ...(item.justification ? { justification: item.justification } : {}),
         status: item.status,
         evidence: item.evidence.map(normalizeEvidence),
       })),
@@ -224,6 +231,7 @@ export class ZenithApp {
     return this.repository.addRoadmapItem(roadmapId, {
       title: input.title,
       ...(input.description ? { description: input.description } : {}),
+      ...(input.justification ? { justification: input.justification } : {}),
       status: input.status,
       evidence: input.evidence.map(normalizeEvidence),
       ...(input.position !== undefined ? { position: input.position } : {}),
@@ -245,6 +253,7 @@ export class ZenithApp {
       {
         ...(input.title ? { title: input.title } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.justification !== undefined ? { justification: input.justification } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(input.evidence ? { evidence: input.evidence.map(normalizeEvidence) } : {}),
       },
@@ -531,21 +540,33 @@ export class ZenithApp {
     });
   }
 
-  async listFindings(): Promise<Finding[]> {
+  async listFindings(status: FindingListStatus = "open"): Promise<Finding[]> {
     const project = await this.requireProject();
-    return this.repository.listFindings(project.id, "open");
+    return this.repository.listFindings(project.id, status);
+  }
+
+  async showFinding(findingId: string): Promise<Finding> {
+    const project = await this.requireProject();
+    return this.requireProjectFinding(findingId, project.id);
+  }
+
+  async updateFinding(findingId: string, rawInput: unknown): Promise<Finding> {
+    const project = await this.requireProject();
+    this.requireProjectFinding(findingId, project.id);
+    const input = UpdateFindingInputSchema.parse(rawInput);
+
+    return this.repository.updateFinding(findingId, {
+      ...(input.type ? { type: input.type } : {}),
+      ...(input.severity ? { severity: input.severity } : {}),
+      ...(input.title ? { title: input.title } : {}),
+      ...(input.description ? { description: input.description } : {}),
+      ...(input.relatedFiles !== undefined ? { relatedFiles: input.relatedFiles } : {}),
+    });
   }
 
   async closeFinding(findingId: string): Promise<Finding> {
     const project = await this.requireProject();
-    const finding = this.repository.getFindingById(findingId);
-
-    if (!finding || finding.projectId !== project.id) {
-      throw new ZenithError(`Finding not found: ${findingId}`, {
-        code: "finding_not_found",
-        details: { findingId },
-      });
-    }
+    this.requireProjectFinding(findingId, project.id);
 
     return this.repository.closeFinding(findingId);
   }
@@ -565,6 +586,16 @@ export class ZenithApp {
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       nextSteps: input.nextSteps,
     });
+  }
+
+  async listSessions(): Promise<Session[]> {
+    const project = await this.requireProject();
+    return this.repository.listSessions(project.id);
+  }
+
+  async showSession(sessionId: string): Promise<Session> {
+    const project = await this.requireProject();
+    return this.requireProjectSession(sessionId, project.id);
   }
 
   async captureSession(sessionId: string, rawInput: unknown): Promise<Session> {
@@ -627,6 +658,19 @@ export class ZenithApp {
     }
 
     return session;
+  }
+
+  private requireProjectFinding(findingId: string, projectId: string): Finding {
+    const finding = this.repository.getFindingById(findingId);
+
+    if (!finding || finding.projectId !== projectId) {
+      throw new ZenithError(`Finding not found: ${findingId}`, {
+        code: "finding_not_found",
+        details: { findingId },
+      });
+    }
+
+    return finding;
   }
 
   private resolveRoadmapItem(roadmap: Roadmap, itemIdOrTitle: { itemId?: string; itemTitle?: string }): RoadmapItem {

@@ -36,10 +36,14 @@ describe("agent installer", () => {
     expect(skill).toContain("propose committing the completed change set");
     expect(cliReference).toContain("zenith plan update <plan-id> --json --input -");
     expect(cliReference).toContain("zenith decision list --json");
-    expect(cliReference).toContain("zenith finding record --json --input -");
+    expect(cliReference).toContain("zenith finding show <finding-id> --json");
+    expect(cliReference).toContain("zenith finding update <finding-id> --json --input -");
     expect(cliReference).toContain("zenith session start --json --input -");
+    expect(cliReference).toContain("zenith session show <session-id> --json");
     expect(cliReference).toContain("bun run zenith");
     expect(workflows).toContain("Continue With Minimal Prompt");
+    expect(workflows).toContain("Insert Intermediate Roadmap Work");
+    expect(workflows).toContain("Targeted insertions");
     expect(workflows).toContain("Use that phase as the implementation target");
     expect(workflows).toContain("zenith session end session_id --json --input -");
     expect(workflows).toContain("bun run zenith");

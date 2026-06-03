@@ -27,6 +27,7 @@ describe("OpenTUI dashboard", () => {
     const roadmapsFrame = setup.captureCharFrame();
     expect(roadmapsFrame).toContain("Product Roadmap");
     expect(roadmapsFrame).toContain("Product And Architecture Hardening");
+    expect(roadmapsFrame).toContain("Hardening before review skills");
     expect(roadmapsFrame).toContain("active");
 
     await act(async () => {
@@ -255,8 +256,10 @@ function makeStatus(options: { finding: Finding; projectName?: string }): Projec
     openFindings: [
       {
         id: options.finding.id,
+        type: options.finding.type,
         severity: options.finding.severity,
         title: options.finding.title,
+        relatedFiles: options.finding.relatedFiles,
       },
     ],
     next: {
@@ -303,6 +306,7 @@ function makeRoadmap(): Roadmap {
         id: "rmi_2",
         roadmapId: "roadmap_1",
         title: "Product And Architecture Hardening",
+        justification: "Hardening before review skills.",
         status: "in_progress",
         evidence: [],
       },
@@ -394,8 +398,10 @@ function makeContext(status: ProjectStatus): CompactContext {
     openFindings: [
       {
         id: "finding_1",
+        type: "bug",
         severity: "high",
         title: "Missing session close",
+        relatedFiles: ["src/cli/program.ts"],
       },
     ],
     next: status.next,

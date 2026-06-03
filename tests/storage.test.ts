@@ -294,6 +294,48 @@ describe("sqlite repository", () => {
     services.close();
   });
 
+  test("roadmap item justification is stored and updated", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+
+    const roadmap = repo.createRoadmap({
+      projectId: project.id,
+      title: "Product Roadmap",
+      status: "active",
+      items: [
+        {
+          title: "MVP 4.5 - Product And Architecture Hardening",
+          status: "done",
+          justification: "Hardening was inserted before advanced skills.",
+          evidence: [],
+        },
+      ],
+    });
+    const added = repo.addRoadmapItem(roadmap.id, {
+      title: "MVP 4.75 - Operational Memory Polish",
+      status: "planned",
+      justification: "Memory must be reliable before review skills.",
+      evidence: [],
+      afterItemId: roadmap.items[0]!.id,
+    });
+    const updated = repo.updateRoadmapItem(
+      roadmap.id,
+      { itemId: added.items[1]!.id },
+      { justification: "Memory operations need auditability before review skills." },
+    );
+
+    expect(roadmap.items[0]?.justification).toBe("Hardening was inserted before advanced skills.");
+    expect(added.items[1]?.justification).toBe("Memory must be reliable before review skills.");
+    expect(updated.items[1]?.justification).toBe("Memory operations need auditability before review skills.");
+    repo.close();
+  });
+
   test("database enforces active plan uniqueness and status constraints", () => {
     const root = makeTempDir();
     tempDirs.push(root);

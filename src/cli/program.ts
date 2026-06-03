@@ -2,7 +2,8 @@ import { Command } from "commander";
 import { installAgentPack, type AgentKind } from "../agents/installer";
 import { createZenithApp } from "../app/factory";
 import { GitAdapter } from "../integrations/git/git-adapter";
-import { exitCodeFor, fail, ok } from "./json-output";
+import type { FindingListStatus } from "../storage/repository";
+import { exitCodeFor, fail, ok, ZenithError } from "./json-output";
 import { readJsonInput } from "./input";
 
 export type RunCliOptions = {
@@ -16,6 +17,7 @@ type CommandOptions = {
   json?: boolean;
   input?: string;
   phase?: string;
+  status?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -328,10 +330,30 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   finding
+    .command("show")
+    .argument("<finding-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (findingId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.showFinding(findingId), humanFinding);
+    });
+
+  finding
+    .command("update")
+    .argument("<finding-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (findingId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.updateFinding(findingId, await readJsonInput(commandOptions.input)),
+      humanFinding);
+    });
+
+  finding
     .command("list")
     .option("--json", "Emit stable JSON")
+    .option("--status <status>", "Filter by open, closed, or all")
     .action(async (commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.listFindings(), humanFindingList);
+      await handle(commandOptions, options, async (app) => app.listFindings(parseFindingStatus(commandOptions.status)), humanFindingList);
     });
 
   finding
@@ -350,6 +372,21 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .option("--input <source>", "Read JSON payload from stdin with --input -")
     .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) => app.startSession(await readJsonInput(commandOptions.input)), humanSession);
+    });
+
+  session
+    .command("list")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.listSessions(), humanSessionList);
+    });
+
+  session
+    .command("show")
+    .argument("<session-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (sessionId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.showSession(sessionId), humanSession);
     });
 
   session
@@ -537,9 +574,15 @@ function humanRoadmap(roadmap: {
   title: string;
   status: string;
   sourcePlanId?: string | undefined;
-  items: Array<{ title: string; status: string }>;
+  items: Array<{ title: string; status: string; justification?: string | undefined }>;
 }): string {
-  const items = roadmap.items.map((item) => `  - ${item.status}: ${item.title}`).join("\n");
+  const items = roadmap.items
+    .map((item) =>
+      [`  - ${item.status}: ${item.title}`, item.justification ? `    justification: ${item.justification}` : ""]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n");
   return [
     `Roadmap: ${roadmap.title}`,
     `ID: ${roadmap.id}`,
@@ -655,6 +698,27 @@ function humanSession(session: {
     `Summary: ${session.summary ?? "none"}`,
     `Next: ${session.nextSteps[0] ?? "none"}`,
   ].join("\n");
+}
+
+function humanSessionList(sessions: Array<{ id: string; startedAt: string; endedAt?: string | undefined; summary?: string | undefined }>): string {
+  return sessions
+    .map((session) => `${session.id} ${session.endedAt ? "closed" : "open"} ${session.summary ?? session.startedAt}`)
+    .join("\n");
+}
+
+function parseFindingStatus(status: string | undefined): FindingListStatus {
+  if (status === undefined) {
+    return "open";
+  }
+
+  if (status === "open" || status === "closed" || status === "all") {
+    return status;
+  }
+
+  throw new ZenithError("Finding status must be open, closed, or all.", {
+    code: "invalid_finding_status",
+    details: { status },
+  });
 }
 
 function toContextOptions(commandOptions: CommandOptions): { phaseId?: string } {

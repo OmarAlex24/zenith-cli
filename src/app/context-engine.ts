@@ -256,10 +256,18 @@ function appendRoadmaps(lines: string[], roadmaps: Roadmap[]): void {
   }
 
   for (const roadmap of roadmaps.slice(0, 5)) {
-    const visibleItems = roadmap.items.slice(0, 3).map((item) => `${item.status}: ${item.title}`);
+    const visibleItems = visibleRoadmapItems(roadmap).map((item) => {
+      const justification = item.justification ? ` why: ${item.justification}` : "";
+      return `${item.status}: ${item.title}${justification}`;
+    });
     const suffix = visibleItems.length > 0 ? ` Items: ${visibleItems.join("; ")}` : "";
     lines.push(`- ${roadmap.status}: ${truncate(`${roadmap.title}.${suffix}`, 220)}`);
   }
+}
+
+function visibleRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
+  const activeItems = roadmap.items.filter((item) => item.status === "in_progress" || item.status === "planned" || item.status === "deferred");
+  return (activeItems.length > 0 ? activeItems : roadmap.items).slice(0, 3);
 }
 
 function appendOpenSpikes(lines: string[], spikes: Spike[]): void {
@@ -351,7 +359,8 @@ function appendOpenFindings(lines: string[], findings: FindingSummary[]): void {
   }
 
   for (const finding of findings.slice(0, 5)) {
-    lines.push(`- ${finding.severity}: ${truncate(finding.title, 180)}`);
+    const files = finding.relatedFiles.length > 0 ? ` files: ${finding.relatedFiles.join(", ")}` : "";
+    lines.push(`- ${finding.severity} ${finding.type}: ${truncate(`${finding.title}${files}`, 180)}`);
   }
 }
 
@@ -408,8 +417,10 @@ function toSpikeSummary(spike: Spike): SpikeSummary {
 function toFindingSummary(finding: FindingSummary): FindingSummary {
   return {
     id: finding.id,
+    type: finding.type,
     severity: finding.severity,
     title: finding.title,
+    relatedFiles: finding.relatedFiles,
   };
 }
 

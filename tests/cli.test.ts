@@ -204,10 +204,19 @@ describe("cli json commands", () => {
         description: "Harden product workflow and architecture before advanced skills.",
         status: "in_progress",
         afterItemTitle: "MVP 4 - OpenTUI Dashboard",
+        justification: "Architecture hardening should happen before advanced review skills.",
         evidence: [{ kind: "note", value: "Backed by Zenith Product And Architecture Hardening." }],
       },
     });
     const itemId = (added.json as any).data.items[1].id as string;
+    const missingJustification = await runDecode(["roadmap", "add-item", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "MVP 4.75 - Missing Justification",
+        afterItemTitle: "MVP 4.5 - Product And Architecture Hardening",
+      },
+    });
 
     const createdPlan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
@@ -237,6 +246,11 @@ describe("cli json commands", () => {
       "MVP 4.5 - Product And Architecture Hardening",
       "MVP 5 - PR Review Skill",
     ]);
+    expect((added.json as any).data.items[1].justification).toBe(
+      "Architecture hardening should happen before advanced review skills.",
+    );
+    expect(missingJustification.exitCode).toBe(1);
+    expect((missingJustification.json as any).errors[0].message).toContain("Provide justification");
     expect(createdPlan.exitCode).toBe(0);
     expect((createdPlan.json as any).data.sourceRoadmapId).toBe(roadmapId);
     expect((createdPlan.json as any).data.sourceRoadmapItemId).toBe(itemId);
@@ -332,18 +346,35 @@ describe("cli json commands", () => {
     const findingId = (recorded.json as any).data.id;
 
     const list = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
+    const shown = await runDecode(["finding", "show", findingId, "--json"], { cwd, decodeHome });
+    const updated = await runDecode(["finding", "update", findingId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        severity: "medium",
+        title: "Updated operational risk",
+        relatedFiles: ["src/app/plan-next.ts", "src/cli/program.ts"],
+      },
+    });
     const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
     const closed = await runDecode(["finding", "close", findingId, "--json"], { cwd, decodeHome });
     const afterClose = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
+    const closedList = await runDecode(["finding", "list", "--status", "closed", "--json"], { cwd, decodeHome });
+    const allList = await runDecode(["finding", "list", "--status", "all", "--json"], { cwd, decodeHome });
 
     expect(recorded.exitCode).toBe(0);
     expect((recorded.json as any).data.status).toBe("open");
     expect((list.json as any).data).toHaveLength(1);
     expect((list.json as any).data[0].id).toBe(findingId);
-    expect((next.json as any).data.recommendation).toContain("Open operational risk");
+    expect((shown.json as any).data.id).toBe(findingId);
+    expect((updated.json as any).data.title).toBe("Updated operational risk");
+    expect((updated.json as any).data.relatedFiles).toEqual(["src/app/plan-next.ts", "src/cli/program.ts"]);
+    expect((next.json as any).data.recommendation).toContain("Updated operational risk");
     expect(closed.exitCode).toBe(0);
     expect((closed.json as any).data.status).toBe("closed");
     expect((afterClose.json as any).data).toEqual([]);
+    expect((closedList.json as any).data[0].id).toBe(findingId);
+    expect((allList.json as any).data[0].id).toBe(findingId);
   });
 
   test("session start capture end and summarize emit stable json", async () => {
@@ -408,6 +439,8 @@ describe("cli json commands", () => {
         changedFiles: ["README.md"],
       },
     });
+    const sessionList = await runDecode(["session", "list", "--json"], { cwd, decodeHome });
+    const sessionShow = await runDecode(["session", "show", sessionId, "--json"], { cwd, decodeHome });
 
     expect(started.exitCode).toBe(0);
     expect((started.json as any).data.endedAt).toBeUndefined();
@@ -419,6 +452,8 @@ describe("cli json commands", () => {
     expect((ended.json as any).data.nextSteps).toEqual(["Record evidence"]);
     expect(summarized.exitCode).toBe(0);
     expect((summarized.json as any).data.summary).toBe("Compatibility summary still works.");
+    expect((sessionList.json as any).data.map((session: any) => session.id)).toContain(sessionId);
+    expect((sessionShow.json as any).data.id).toBe(sessionId);
   });
 
   test("phase show returns phase_not_found for unknown ids", async () => {

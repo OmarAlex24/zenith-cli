@@ -145,8 +145,13 @@ bun run zenith decision record --json --input -
 bun run zenith decision list --json
 bun run zenith finding record --json --input -
 bun run zenith finding list --json
+bun run zenith finding list --status all --json
+bun run zenith finding show <finding-id> --json
+bun run zenith finding update <finding-id> --json --input -
 bun run zenith finding close <finding-id> --json
 bun run zenith session start --json --input -
+bun run zenith session list --json
+bun run zenith session show <session-id> --json
 bun run zenith session capture <session-id> --json --input -
 bun run zenith session end <session-id> --json --input -
 ```
@@ -206,13 +211,27 @@ zenith spike conclude <spike-id> --json --input -
 
 Use `roadmap create-plan` when product direction needs to become executable work. The payload must identify exactly one roadmap item by `itemId` or `itemTitle`; optional `phases` can expand the item into a real implementation plan. Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence.
 
+When inserting intermediate roadmap work between existing MVPs, use `position`, `afterItemId`, or `afterItemTitle` instead of renaming later MVPs. Targeted insertions require `justification` so the sequence change remains auditable:
+
+```json
+{
+  "title": "MVP 4.75 - Operational Memory Polish",
+  "afterItemTitle": "MVP 4.5 - Product And Architecture Hardening",
+  "justification": "Memory operations should be reliable and auditable before building review/delegation skills on top."
+}
+```
+
 Findings and sessions close the operational memory loop:
 
 ```bash
 zenith finding record --json --input -
-zenith finding list --json
+zenith finding list --status open --json
+zenith finding show <finding-id> --json
+zenith finding update <finding-id> --json --input -
 zenith finding close <finding-id> --json
 zenith session start --json --input -
+zenith session list --json
+zenith session show <session-id> --json
 zenith session capture <session-id> --json --input -
 zenith session end <session-id> --json --input -
 ```

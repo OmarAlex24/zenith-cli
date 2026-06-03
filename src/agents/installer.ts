@@ -251,7 +251,11 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 ## Findings
 
 - \`zenith finding record --json --input -\`
-- \`zenith finding list --json\`
+- \`zenith finding list --status open --json\`
+- \`zenith finding list --status closed --json\`
+- \`zenith finding list --status all --json\`
+- \`zenith finding show <finding-id> --json\`
+- \`zenith finding update <finding-id> --json --input -\`
 - \`zenith finding close <finding-id> --json\`
 
 ## Spikes
@@ -265,6 +269,8 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 ## Sessions
 
 - \`zenith session start --json --input -\`
+- \`zenith session list --json\`
+- \`zenith session show <session-id> --json\`
 - \`zenith session capture <session-id> --json --input -\`
 - \`zenith session end <session-id> --json --input -\`
 - \`zenith session summarize --json --input -\`
@@ -372,6 +378,27 @@ Payload:
 
 Created plans preserve \`sourceRoadmapId\`, \`sourceRoadmapItemId\`, and source evidence. Use \`itemTitle\` instead of \`itemId\` only when the title is unique.
 
+## Insert Intermediate Roadmap Work
+
+Use this when new prerequisite work belongs between existing MVPs. Do not rename later MVPs to make room; insert the new item after the completed/current item and explain why.
+
+\`\`\`bash
+zenith roadmap add-item roadmap_id --json --input -
+\`\`\`
+
+Payload:
+
+\`\`\`json
+{
+  "title": "MVP 4.75 - Operational Memory Polish",
+  "description": "Make memory operations inspectable and auditable before advanced skills.",
+  "afterItemTitle": "MVP 4.5 - Product And Architecture Hardening",
+  "justification": "Memory operations should be reliable and auditable before building review/delegation skills on top."
+}
+\`\`\`
+
+Targeted insertions with \`position\`, \`afterItemId\`, or \`afterItemTitle\` require \`justification\`.
+
 ## Update A Phase
 
 \`\`\`bash
@@ -458,12 +485,16 @@ Payload:
 Close a finding after the issue is handled:
 
 \`\`\`bash
+zenith finding show finding_id --json
+zenith finding update finding_id --json --input -
 zenith finding close finding_id --json
 \`\`\`
 
 ## End A Session
 
 \`\`\`bash
+zenith session list --json
+zenith session show session_id --json
 zenith session end session_id --json --input -
 \`\`\`
 

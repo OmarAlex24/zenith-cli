@@ -100,12 +100,16 @@ describe("context engine", () => {
       severity: "high",
       title: "Lifecycle commands are missing",
       description: "Agents cannot close operational memory loops.",
+      relatedFiles: ["src/cli/program.ts"],
     });
     const compact = await services.app.compactContext();
 
     expect(compact.openFindings[0]?.id).toBe(finding.id);
+    expect(compact.openFindings[0]?.type).toBe("risk");
+    expect(compact.openFindings[0]?.relatedFiles).toEqual(["src/cli/program.ts"]);
     expect(compact.next.recommendation).toBe("Review finding: Lifecycle commands are missing");
-    expect(compact.markdown).toContain("high: Lifecycle commands are missing");
+    expect(compact.markdown).toContain("high risk: Lifecycle commands are missing");
+    expect(compact.markdown).toContain("src/cli/program.ts");
     services.close();
   });
 
@@ -120,7 +124,11 @@ describe("context engine", () => {
       title: "Zenith CLI Product Roadmap",
       items: [
         { title: "MVP 4 - OpenTUI Dashboard", status: "done" },
-        { title: "MVP 4.5 - Product And Architecture Hardening", status: "in_progress" },
+        {
+          title: "MVP 4.5 - Product And Architecture Hardening",
+          status: "in_progress",
+          justification: "Hardening was inserted before review skills.",
+        },
       ],
     });
     await services.app.summarizeSession({
@@ -135,6 +143,7 @@ describe("context engine", () => {
     expect(next.reason).toContain("active roadmap");
     expect(next.evidence).toEqual([roadmap.id, roadmap.items[1]!.id]);
     expect(compact.next.recommendation).toBe(next.recommendation);
+    expect(compact.markdown).toContain("why: Hardening was inserted before review skills.");
     services.close();
   });
 

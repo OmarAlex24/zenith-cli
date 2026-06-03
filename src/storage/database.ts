@@ -157,6 +157,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
         position INTEGER NOT NULL,
         title TEXT NOT NULL,
         description TEXT,
+        justification TEXT,
         status TEXT NOT NULL,
         evidence_json TEXT NOT NULL,
         source_phase_id TEXT,
@@ -189,6 +190,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   },
   {
     version: 3,
+    sql: "",
+  },
+  {
+    version: 4,
     sql: "",
   },
 ];
@@ -238,6 +243,8 @@ export function runMigrations(db: Database): void {
     db.transaction(() => {
       if (migration.version === 3) {
         runIntegrityHardeningMigration(db);
+      } else if (migration.version === 4) {
+        runRoadmapItemJustificationMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -259,6 +266,12 @@ function runIntegrityHardeningMigration(db: Database): void {
 
   for (const statement of INTEGRITY_HARDENING_STATEMENTS) {
     db.run(statement);
+  }
+}
+
+function runRoadmapItemJustificationMigration(db: Database): void {
+  if (!tableHasColumn(db, "roadmap_items", "justification")) {
+    db.run("ALTER TABLE roadmap_items ADD COLUMN justification TEXT");
   }
 }
 

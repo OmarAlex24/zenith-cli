@@ -282,12 +282,20 @@ function RoadmapsView({ data }: { data: DashboardData }) {
           <text key={`${roadmap.id}-items`} fg={palette.muted}>
             {roadmap.status} / items {roadmap.items.length} / source {roadmap.sourcePlanId ?? "none"}
           </text>,
-          ...roadmap.items.slice(0, 4).map((item) => (
+          ...visibleRoadmapItems(roadmap).flatMap((item) => [
             <text key={`${roadmap.id}-${item.id}`} fg={item.status === "in_progress" ? palette.accent : palette.text}>
               {"  "}
               {statusGlyph(item.status)} {truncate(item.title, 94)}
-            </text>
-          )),
+            </text>,
+            ...(item.justification
+              ? [
+                  <text key={`${roadmap.id}-${item.id}-justification`} fg={palette.muted}>
+                    {"    "}
+                    why - {truncate(item.justification, 100)}
+                  </text>,
+                ]
+              : []),
+          ]),
         ])
       )}
     </box>
@@ -546,6 +554,11 @@ function phaseCounts(plan: Plan): { completed: number; inProgress: number; pendi
     }),
     { completed: 0, inProgress: 0, pending: 0 },
   );
+}
+
+function visibleRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
+  const activeItems = roadmap.items.filter((item) => item.status === "in_progress" || item.status === "planned" || item.status === "deferred");
+  return (activeItems.length > 0 ? activeItems : roadmap.items).slice(0, 4);
 }
 
 function truncate(value: string, max: number): string {
