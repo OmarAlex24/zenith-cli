@@ -187,6 +187,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
         ON spikes(project_id, status, updated_at DESC);
     `,
   },
+  {
+    version: 3,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -232,7 +236,11 @@ export function runMigrations(db: Database): void {
     }
 
     db.transaction(() => {
-      db.run(migration.sql);
+      if (migration.version === 3) {
+        runIntegrityHardeningMigration(db);
+      } else {
+        db.run(migration.sql);
+      }
       db.query("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(
         migration.version,
         new Date().toISOString(),
@@ -240,3 +248,191 @@ export function runMigrations(db: Database): void {
     })();
   }
 }
+
+function runIntegrityHardeningMigration(db: Database): void {
+  if (!tableHasColumn(db, "plans", "source_roadmap_id")) {
+    db.run("ALTER TABLE plans ADD COLUMN source_roadmap_id TEXT REFERENCES roadmaps(id) ON DELETE SET NULL");
+  }
+  if (!tableHasColumn(db, "plans", "source_roadmap_item_id")) {
+    db.run("ALTER TABLE plans ADD COLUMN source_roadmap_item_id TEXT REFERENCES roadmap_items(id) ON DELETE SET NULL");
+  }
+
+  for (const statement of INTEGRITY_HARDENING_STATEMENTS) {
+    db.run(statement);
+  }
+}
+
+function tableHasColumn(db: Database, tableName: string, columnName: string): boolean {
+  return db
+    .query<{ name: string }, []>(`PRAGMA table_info(${tableName})`)
+    .all()
+    .some((column) => column.name === columnName);
+}
+
+const INTEGRITY_HARDENING_STATEMENTS = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_plans_one_active_per_project
+    ON plans(project_id)
+    WHERE status = 'active'`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_phases_plan_position_unique
+    ON plan_phases(plan_id, position)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_roadmap_items_roadmap_position_unique
+    ON roadmap_items(roadmap_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_plans_source_roadmap
+    ON plans(source_roadmap_id, source_roadmap_item_id)`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plans_status_insert
+    BEFORE INSERT ON plans
+    WHEN NEW.status NOT IN ('active', 'completed', 'paused', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plans.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plans_status_update
+    BEFORE UPDATE OF status ON plans
+    WHEN NEW.status NOT IN ('active', 'completed', 'paused', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plans.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plans_priority_insert
+    BEFORE INSERT ON plans
+    WHEN NEW.priority IS NOT NULL AND NEW.priority NOT IN ('low', 'medium', 'high')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plans.priority');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plans_priority_update
+    BEFORE UPDATE OF priority ON plans
+    WHEN NEW.priority IS NOT NULL AND NEW.priority NOT IN ('low', 'medium', 'high')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plans.priority');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
+    BEFORE INSERT ON plan_phases
+    WHEN NEW.status NOT IN ('pending', 'in_progress', 'completed', 'blocked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plan_phases.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_update
+    BEFORE UPDATE OF status ON plan_phases
+    WHEN NEW.status NOT IN ('pending', 'in_progress', 'completed', 'blocked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plan_phases.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_project_briefs_status_insert
+    BEFORE INSERT ON project_briefs
+    WHEN NEW.status NOT IN ('current', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid project_briefs.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_project_briefs_status_update
+    BEFORE UPDATE OF status ON project_briefs
+    WHEN NEW.status NOT IN ('current', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid project_briefs.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmaps_status_insert
+    BEFORE INSERT ON roadmaps
+    WHEN NEW.status NOT IN ('active', 'paused', 'completed', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmaps.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmaps_status_update
+    BEFORE UPDATE OF status ON roadmaps
+    WHEN NEW.status NOT IN ('active', 'paused', 'completed', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmaps.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmaps_source_plan_insert
+    BEFORE INSERT ON roadmaps
+    WHEN NEW.source_plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plans WHERE id = NEW.source_plan_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmaps.source_plan_id');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmaps_source_plan_update
+    BEFORE UPDATE OF source_plan_id ON roadmaps
+    WHEN NEW.source_plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plans WHERE id = NEW.source_plan_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmaps.source_plan_id');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_insert
+    BEFORE INSERT ON roadmap_items
+    WHEN NEW.status NOT IN ('planned', 'in_progress', 'done', 'deferred')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_update
+    BEFORE UPDATE OF status ON roadmap_items
+    WHEN NEW.status NOT IN ('planned', 'in_progress', 'done', 'deferred')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_source_phase_insert
+    BEFORE INSERT ON roadmap_items
+    WHEN NEW.source_phase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan_phases WHERE id = NEW.source_phase_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.source_phase_id');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_source_phase_update
+    BEFORE UPDATE OF source_phase_id ON roadmap_items
+    WHEN NEW.source_phase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan_phases WHERE id = NEW.source_phase_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.source_phase_id');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_spikes_status_insert
+    BEFORE INSERT ON spikes
+    WHEN NEW.status NOT IN ('open', 'concluded', 'abandoned')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid spikes.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_spikes_status_update
+    BEFORE UPDATE OF status ON spikes
+    WHEN NEW.status NOT IN ('open', 'concluded', 'abandoned')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid spikes.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_findings_type_insert
+    BEFORE INSERT ON findings
+    WHEN NEW.type NOT IN ('bug', 'risk', 'tech_debt', 'architecture', 'docs_gap', 'test_gap', 'simplification')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid findings.type');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_findings_type_update
+    BEFORE UPDATE OF type ON findings
+    WHEN NEW.type NOT IN ('bug', 'risk', 'tech_debt', 'architecture', 'docs_gap', 'test_gap', 'simplification')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid findings.type');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_findings_severity_insert
+    BEFORE INSERT ON findings
+    WHEN NEW.severity NOT IN ('low', 'medium', 'high', 'critical')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid findings.severity');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_findings_severity_update
+    BEFORE UPDATE OF severity ON findings
+    WHEN NEW.severity NOT IN ('low', 'medium', 'high', 'critical')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid findings.severity');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_findings_status_insert
+    BEFORE INSERT ON findings
+    WHEN NEW.status NOT IN ('open', 'closed')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid findings.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_findings_status_update
+    BEFORE UPDATE OF status ON findings
+    WHEN NEW.status NOT IN ('open', 'closed')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid findings.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_sessions_related_plan_insert
+    BEFORE INSERT ON sessions
+    WHEN NEW.related_plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plans WHERE id = NEW.related_plan_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid sessions.related_plan_id');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_sessions_related_plan_update
+    BEFORE UPDATE OF related_plan_id ON sessions
+    WHEN NEW.related_plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plans WHERE id = NEW.related_plan_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid sessions.related_plan_id');
+    END`,
+];

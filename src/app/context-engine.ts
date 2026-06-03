@@ -152,7 +152,7 @@ export class ContextEngine {
       recentSessions,
       recentDecisions,
       openFindings,
-      next: computeNext(activePlan, recentSessions, openFindings),
+      next: computeNext(activePlan, recentSessions, openFindings, recentRoadmaps),
     };
   }
 

@@ -294,6 +294,84 @@ describe("sqlite repository", () => {
     services.close();
   });
 
+  test("database enforces active plan uniqueness and status constraints", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+
+    repo.createPlan({
+      projectId: project.id,
+      title: "Active plan",
+      status: "active",
+      phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+    });
+
+    expect(() =>
+      repo.createPlan({
+        projectId: project.id,
+        title: "Competing active plan",
+        status: "active",
+        phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      db
+        .query(
+          `
+          INSERT INTO plans (id, project_id, title, status, created_at, updated_at)
+          VALUES ('plan_invalid', ?, 'Invalid', 'bogus', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+        `,
+        )
+        .run(project.id),
+    ).toThrow("invalid plans.status");
+    repo.close();
+  });
+
+  test("roadmap source foreign keys and compound import rollback are enforced", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Paused implementation plan",
+      status: "paused",
+      phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+    });
+
+    expect(() =>
+      repo.createPlan({
+        projectId: project.id,
+        title: "Invalid source plan",
+        status: "paused",
+        sourceRoadmapId: "roadmap_missing",
+        sourceRoadmapItemId: "rmi_missing",
+        phases: [{ title: "Phase 1", status: "pending", acceptanceCriteria: [], evidence: [] }],
+      }),
+    ).toThrow();
+
+    const malformedPlan = {
+      ...plan,
+      phases: [{ ...plan.phases[0]!, id: "phase_missing" }],
+    };
+
+    expect(() => repo.importPlanAsRoadmap(malformedPlan, { status: "active", archivePlan: true })).toThrow(
+      "invalid roadmap_items.source_phase_id",
+    );
+    expect(repo.listRoadmaps(project.id)).toEqual([]);
+    expect(repo.getPlanById(plan.id)?.status).toBe("paused");
+    repo.close();
+  });
+
   test("openDecodeDatabase remains a legacy compatibility alias", () => {
     const root = makeTempDir();
     const decodeHome = join(root, ".decode");

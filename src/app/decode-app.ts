@@ -1,10 +1,12 @@
 import { ZenithError } from "../cli/json-output";
 import { createId, nowIso } from "../domain/ids";
 import {
+  AddRoadmapItemInputSchema,
   ConcludeSpikeInputSchema,
   CaptureSessionInputSchema,
   type CompactContext,
   type ContextSnapshot,
+  CreatePlanFromRoadmapInputSchema,
   CreateRoadmapInputSchema,
   CreatePlanInputSchema,
   CreateSpikeInputSchema,
@@ -29,6 +31,7 @@ import {
   type ProjectBrief,
   type Project,
   type Roadmap,
+  type RoadmapItem,
   type Session,
   type Spike,
 } from "../domain/schemas";
@@ -65,7 +68,7 @@ export type ProjectStatus = {
 
 export type { PlanNextResult } from "./plan-next";
 
-export class DecodeApp {
+export class ZenithApp {
   private readonly contextEngine: ContextEngine;
 
   constructor(
@@ -123,7 +126,7 @@ export class DecodeApp {
     const recentSessions = this.repository.listRecentSessions(detection.project.id, 5);
     const recentDecisions = this.repository.listDecisions(detection.project.id, 5);
     const openFindings = this.repository.listOpenFindings(detection.project.id);
-    const next = computeNext(activePlan, recentSessions, openFindings);
+    const next = computeNext(activePlan, recentSessions, openFindings, recentRoadmaps);
 
     return {
       ...detection,
@@ -214,6 +217,21 @@ export class DecodeApp {
     });
   }
 
+  async addRoadmapItem(roadmapId: string, rawInput: unknown): Promise<Roadmap> {
+    const input = AddRoadmapItemInputSchema.parse(rawInput);
+    await this.showRoadmap(roadmapId);
+
+    return this.repository.addRoadmapItem(roadmapId, {
+      title: input.title,
+      ...(input.description ? { description: input.description } : {}),
+      status: input.status,
+      evidence: input.evidence.map(normalizeEvidence),
+      ...(input.position !== undefined ? { position: input.position } : {}),
+      ...(input.afterItemId ? { afterItemId: input.afterItemId } : {}),
+      ...(input.afterItemTitle ? { afterItemTitle: input.afterItemTitle } : {}),
+    });
+  }
+
   async updateRoadmapItem(roadmapId: string, rawInput: unknown): Promise<Roadmap> {
     const input = UpdateRoadmapItemInputSchema.parse(rawInput);
     await this.showRoadmap(roadmapId);
@@ -242,6 +260,52 @@ export class DecodeApp {
       ...(input.description !== undefined ? { description: input.description } : {}),
       status: input.status,
       archivePlan: input.archivePlan,
+    });
+  }
+
+  async createPlanFromRoadmap(roadmapId: string, rawInput: unknown): Promise<Plan> {
+    const project = await this.requireProject();
+    const input = CreatePlanFromRoadmapInputSchema.parse(rawInput);
+    const roadmap = await this.showRoadmap(roadmapId);
+    const item = this.resolveRoadmapItem(roadmap, {
+      ...(input.itemId ? { itemId: input.itemId } : {}),
+      ...(input.itemTitle ? { itemTitle: input.itemTitle } : {}),
+    });
+
+    if (input.status === "active") {
+      this.assertNoOtherActivePlan(project.id);
+    }
+
+    const sourceEvidence = normalizeEvidence({
+      kind: "note",
+      value: `Created from roadmap ${roadmap.id} item ${item.id}: ${roadmap.title} / ${item.title}`,
+    });
+    const phases =
+      input.phases?.map((phase, index) => ({
+        title: phase.title,
+        ...(phase.description ? { description: phase.description } : {}),
+        status: phase.status,
+        acceptanceCriteria: phase.acceptanceCriteria,
+        evidence: [...(index === 0 ? [sourceEvidence, ...item.evidence] : []), ...phase.evidence.map(normalizeEvidence)],
+      })) ?? [
+        {
+          title: item.title,
+          ...(item.description ? { description: item.description } : {}),
+          status: "pending" as const,
+          acceptanceCriteria: [],
+          evidence: [sourceEvidence, ...item.evidence],
+        },
+      ];
+
+    return this.repository.createPlan({
+      projectId: project.id,
+      title: input.title ?? item.title,
+      description: input.description ?? item.description ?? `Executable plan created from roadmap item ${item.id}.`,
+      status: input.status,
+      ...(input.priority ? { priority: input.priority } : {}),
+      sourceRoadmapId: roadmap.id,
+      sourceRoadmapItemId: item.id,
+      phases,
     });
   }
 
@@ -399,7 +463,8 @@ export class DecodeApp {
     const activePlan = this.repository.getActivePlan(project.id);
     const recentSessions = this.repository.listRecentSessions(project.id, 5);
     const openFindings = this.repository.listOpenFindings(project.id);
-    return computeNext(activePlan, recentSessions, openFindings);
+    const recentRoadmaps = this.repository.listRoadmaps(project.id, 5);
+    return computeNext(activePlan, recentSessions, openFindings, recentRoadmaps);
   }
 
   async getContext(options: ContextOptions = {}): Promise<ContextSnapshot> {
@@ -564,6 +629,34 @@ export class DecodeApp {
     return session;
   }
 
+  private resolveRoadmapItem(roadmap: Roadmap, itemIdOrTitle: { itemId?: string; itemTitle?: string }): RoadmapItem {
+    if (itemIdOrTitle.itemId) {
+      const item = roadmap.items.find((candidate) => candidate.id === itemIdOrTitle.itemId);
+      if (!item) {
+        throw new ZenithError(`Roadmap item not found: ${itemIdOrTitle.itemId}`, {
+          code: "roadmap_item_not_found",
+          details: { roadmapId: roadmap.id, itemId: itemIdOrTitle.itemId },
+        });
+      }
+      return item;
+    }
+
+    const matches = roadmap.items.filter((candidate) => candidate.title === itemIdOrTitle.itemTitle);
+    if (matches.length === 0) {
+      throw new ZenithError(`Roadmap item not found: ${itemIdOrTitle.itemTitle}`, {
+        code: "roadmap_item_not_found",
+        details: { roadmapId: roadmap.id, itemTitle: itemIdOrTitle.itemTitle },
+      });
+    }
+    if (matches.length > 1) {
+      throw new ZenithError(`Roadmap item title is ambiguous: ${itemIdOrTitle.itemTitle}`, {
+        code: "roadmap_item_ambiguous",
+        details: { roadmapId: roadmap.id, itemTitle: itemIdOrTitle.itemTitle },
+      });
+    }
+    return matches[0]!;
+  }
+
   private async requireProject(): Promise<Project> {
     const detection = await this.detectProject();
 
@@ -613,4 +706,4 @@ function normalizeEvidence(evidence: {
   };
 }
 
-export { DecodeApp as ZenithApp };
+export { ZenithApp as DecodeApp };

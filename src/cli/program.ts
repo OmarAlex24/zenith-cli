@@ -135,6 +135,17 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   roadmap
+    .command("add-item")
+    .argument("<roadmap-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (roadmapId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.addRoadmapItem(roadmapId, await readJsonInput(commandOptions.input)),
+      humanRoadmap);
+    });
+
+  roadmap
     .command("update-item")
     .argument("<roadmap-id>")
     .option("--json", "Emit stable JSON")
@@ -154,6 +165,17 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) =>
         app.importPlanToRoadmap(planId, await readJsonInput(commandOptions.input)),
       humanRoadmap);
+    });
+
+  roadmap
+    .command("create-plan")
+    .argument("<roadmap-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (roadmapId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.createPlanFromRoadmap(roadmapId, await readJsonInput(commandOptions.input)),
+      humanPlan);
     });
 
   const spike = program.command("spike").description("Bounded investigations");
@@ -468,9 +490,25 @@ function humanProjectStatus(data: {
   ].join("\n");
 }
 
-function humanPlan(plan: { id: string; title: string; status: string; phases: Array<{ title: string; status: string }> }): string {
+function humanPlan(plan: {
+  id: string;
+  title: string;
+  status: string;
+  sourceRoadmapId?: string | undefined;
+  sourceRoadmapItemId?: string | undefined;
+  phases: Array<{ title: string; status: string }>;
+}): string {
   const phases = plan.phases.map((phase) => `  - ${phase.status}: ${phase.title}`).join("\n");
-  return [`Plan: ${plan.title}`, `ID: ${plan.id}`, `Status: ${plan.status}`, phases].filter(Boolean).join("\n");
+  return [
+    `Plan: ${plan.title}`,
+    `ID: ${plan.id}`,
+    `Status: ${plan.status}`,
+    `Source roadmap: ${plan.sourceRoadmapId ?? "none"}`,
+    `Source item: ${plan.sourceRoadmapItemId ?? "none"}`,
+    phases,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function humanBrief(

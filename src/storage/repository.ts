@@ -43,6 +43,8 @@ type PlanRow = {
   description: string | null;
   status: PlanStatus;
   priority: "low" | "medium" | "high" | null;
+  source_roadmap_id: string | null;
+  source_roadmap_item_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -164,6 +166,8 @@ export type InsertPlanInput = {
   description?: string;
   status: PlanStatus;
   priority?: "low" | "medium" | "high";
+  sourceRoadmapId?: string;
+  sourceRoadmapItemId?: string;
   phases: Array<Omit<PlanPhase, "id"> & { id?: string }>;
 };
 
@@ -197,6 +201,13 @@ export type InsertRoadmapInput = {
   status: RoadmapStatus;
   sourcePlanId?: string;
   items: Array<Omit<RoadmapItem, "id" | "roadmapId"> & { id?: string }>;
+};
+
+export type AddRoadmapItemInput = Omit<RoadmapItem, "id" | "roadmapId"> & {
+  id?: string;
+  position?: number;
+  afterItemId?: string;
+  afterItemTitle?: string;
 };
 
 export type UpdateRoadmapPatch = {
@@ -242,13 +253,14 @@ export type UpdateSessionPatch = {
   nextSteps?: string[];
 };
 
-export class DecodeRepository {
+export class ZenithRepository {
   constructor(private readonly db: Database) {}
 
   close(): void {
     this.db.close();
   }
 
+  // Project identity
   registerProject(input: RegisterProjectInput): Project {
     const existing = this.findProjectByRootPath(input.rootPath);
     const timestamp = nowIso();
@@ -314,6 +326,7 @@ export class DecodeRepository {
       .map(mapProject);
   }
 
+  // Brief memory
   setProjectBrief(input: SetProjectBriefInput): ProjectBrief {
     const timestamp = nowIso();
     const row = this.db
@@ -382,54 +395,13 @@ export class DecodeRepository {
     return row ? mapProjectBrief(row) : null;
   }
 
+  // Roadmap memory
   createRoadmap(input: InsertRoadmapInput): Roadmap {
     const id = createId("roadmap");
     const timestamp = nowIso();
 
     this.db.transaction(() => {
-      this.db
-        .query(
-          `
-          INSERT INTO roadmaps (id, project_id, title, description, status, source_plan_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        )
-        .run(
-          id,
-          input.projectId,
-          input.title,
-          input.description ?? null,
-          input.status,
-          input.sourcePlanId ?? null,
-          timestamp,
-          timestamp,
-        );
-
-      input.items.forEach((item, index) => {
-        this.db
-          .query(
-            `
-            INSERT INTO roadmap_items (
-              id, roadmap_id, position, title, description, status,
-              evidence_json, source_phase_id, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-          )
-          .run(
-            item.id ?? createId("rmi"),
-            id,
-            index,
-            item.title,
-            item.description ?? null,
-            item.status,
-            JSON.stringify(item.evidence),
-            item.sourcePhaseId ?? null,
-            timestamp,
-            timestamp,
-          );
-      });
-
+      this.insertRoadmapRows(id, input, timestamp);
       this.recordEvent(input.projectId, "roadmap.created", "roadmap", id, { title: input.title });
     })();
 
@@ -444,7 +416,9 @@ export class DecodeRepository {
     plan: Plan,
     input: { title?: string; description?: string; status: RoadmapStatus; archivePlan: boolean },
   ): Roadmap {
-    const roadmap = this.createRoadmap({
+    const id = createId("roadmap");
+    const timestamp = nowIso();
+    const roadmapInput: InsertRoadmapInput = {
       projectId: plan.projectId,
       title: input.title ?? plan.title,
       ...((input.description ?? plan.description) ? { description: (input.description ?? plan.description)! } : {}),
@@ -457,13 +431,21 @@ export class DecodeRepository {
         evidence: phase.evidence,
         sourcePhaseId: phase.id,
       })),
-    });
+    };
 
-    if (input.archivePlan) {
-      this.updatePlan(plan.id, { status: "archived" });
-    }
+    this.db.transaction(() => {
+      this.insertRoadmapRows(id, roadmapInput, timestamp);
+      this.recordEvent(plan.projectId, "roadmap.created", "roadmap", id, { title: roadmapInput.title });
 
-    return roadmap;
+      if (input.archivePlan) {
+        this.db
+          .query("UPDATE plans SET status = 'archived', updated_at = ? WHERE id = ?")
+          .run(timestamp, plan.id);
+        this.recordEvent(plan.projectId, "plan.updated", "plan", plan.id, { status: "archived" });
+      }
+    })();
+
+    return this.getRoadmapById(id)!;
   }
 
   listRoadmaps(projectId: string, limit = 10): Roadmap[] {
@@ -476,6 +458,60 @@ export class DecodeRepository {
   getRoadmapById(roadmapId: string): Roadmap | null {
     const row = this.db.query<RoadmapRow, [string]>("SELECT * FROM roadmaps WHERE id = ?").get(roadmapId);
     return row ? this.mapRoadmap(row) : null;
+  }
+
+  addRoadmapItem(roadmapId: string, input: AddRoadmapItemInput): Roadmap {
+    const roadmap = this.getRoadmapById(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap not found: ${roadmapId}`);
+    }
+
+    const position = resolveRoadmapInsertPosition(roadmap.items, input);
+    const timestamp = nowIso();
+    const itemId = input.id ?? createId("rmi");
+    const itemsToShift = roadmap.items
+      .map((item, index) => ({ id: item.id, nextPosition: index + 1, currentPosition: index }))
+      .filter((item) => item.currentPosition >= position)
+      .reverse();
+
+    this.db.transaction(() => {
+      for (const item of itemsToShift) {
+        this.db
+          .query("UPDATE roadmap_items SET position = ?, updated_at = ? WHERE id = ?")
+          .run(item.nextPosition, timestamp, item.id);
+      }
+
+      this.db
+        .query(
+          `
+          INSERT INTO roadmap_items (
+            id, roadmap_id, position, title, description, status,
+            evidence_json, source_phase_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          itemId,
+          roadmapId,
+          position,
+          input.title,
+          input.description ?? null,
+          input.status,
+          JSON.stringify(input.evidence),
+          input.sourcePhaseId ?? null,
+          timestamp,
+          timestamp,
+        );
+
+      this.db.query("UPDATE roadmaps SET updated_at = ? WHERE id = ?").run(timestamp, roadmapId);
+      this.recordEvent(roadmap.projectId, "roadmap.item_added", "roadmap_item", itemId, {
+        title: input.title,
+        position,
+      });
+    })();
+
+    return this.getRoadmapById(roadmapId)!;
   }
 
   updateRoadmap(roadmapId: string, patch: UpdateRoadmapPatch): Roadmap {
@@ -554,6 +590,7 @@ export class DecodeRepository {
     return this.getRoadmapById(roadmapId)!;
   }
 
+  // Spike memory
   createSpike(input: InsertSpikeInput): Spike {
     const id = createId("spike");
     const timestamp = nowIso();
@@ -650,6 +687,7 @@ export class DecodeRepository {
     return this.getSpikeById(spikeId)!;
   }
 
+  // Plan memory
   createPlan(input: InsertPlanInput): Plan {
     const id = createId("plan");
     const timestamp = nowIso();
@@ -658,8 +696,11 @@ export class DecodeRepository {
       this.db
         .query(
           `
-          INSERT INTO plans (id, project_id, title, description, status, priority, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO plans (
+            id, project_id, title, description, status, priority,
+            source_roadmap_id, source_roadmap_item_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -669,6 +710,8 @@ export class DecodeRepository {
           input.description ?? null,
           input.status,
           input.priority ?? null,
+          input.sourceRoadmapId ?? null,
+          input.sourceRoadmapItemId ?? null,
           timestamp,
           timestamp,
         );
@@ -698,7 +741,11 @@ export class DecodeRepository {
           );
       });
 
-      this.recordEvent(input.projectId, "plan.created", "plan", id, { title: input.title });
+      this.recordEvent(input.projectId, "plan.created", "plan", id, {
+        title: input.title,
+        sourceRoadmapId: input.sourceRoadmapId,
+        sourceRoadmapItemId: input.sourceRoadmapItemId,
+      });
     })();
 
     return this.getPlanById(id)!;
@@ -816,6 +863,7 @@ export class DecodeRepository {
     return this.getPlanById(planId)!;
   }
 
+  // Decision memory
   recordDecision(input: Omit<Decision, "id" | "createdAt">): Decision {
     const id = createId("dec");
     const timestamp = nowIso();
@@ -867,6 +915,7 @@ export class DecodeRepository {
     return row ? mapDecision(row) : null;
   }
 
+  // Finding memory
   recordFinding(input: InsertFindingInput): Finding {
     const id = createId("finding");
     const timestamp = nowIso();
@@ -947,6 +996,7 @@ export class DecodeRepository {
     return this.getFindingById(findingId)!;
   }
 
+  // Session memory
   startSession(input: Omit<Session, "id">): Session {
     const id = createId("sess");
     const timestamp = nowIso();
@@ -1035,11 +1085,18 @@ export class DecodeRepository {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    const updated = this.updateSession(session, patch);
-    this.recordEvent(session.projectId, "session.captured", "session", session.id, {
-      summary: patch.summary,
-      nextSteps: patch.nextSteps,
-    });
+    let updated: Session | null = null;
+    this.db.transaction(() => {
+      updated = this.updateSession(session, patch);
+      this.recordEvent(session.projectId, "session.captured", "session", session.id, {
+        summary: patch.summary,
+        nextSteps: patch.nextSteps,
+      });
+    })();
+
+    if (!updated) {
+      throw new Error(`Session not found after capture: ${sessionId}`);
+    }
     return updated;
   }
 
@@ -1049,14 +1106,21 @@ export class DecodeRepository {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    const updated = this.updateSession(session, {
-      ...patch,
-      endedAt: patch.endedAt ?? nowIso(),
-    });
-    this.recordEvent(session.projectId, "session.ended", "session", session.id, {
-      summary: updated.summary,
-      nextSteps: updated.nextSteps,
-    });
+    let updated: Session | null = null;
+    this.db.transaction(() => {
+      updated = this.updateSession(session, {
+        ...patch,
+        endedAt: patch.endedAt ?? nowIso(),
+      });
+      this.recordEvent(session.projectId, "session.ended", "session", session.id, {
+        summary: updated.summary,
+        nextSteps: updated.nextSteps,
+      });
+    })();
+
+    if (!updated) {
+      throw new Error(`Session not found after end: ${sessionId}`);
+    }
     return updated;
   }
 
@@ -1098,6 +1162,7 @@ export class DecodeRepository {
     return updated;
   }
 
+  // Internal read models and shared helpers
   private getPhases(planId: string): PlanPhase[] {
     return this.db
       .query<PhaseRow, [string]>("SELECT * FROM plan_phases WHERE plan_id = ? ORDER BY position ASC")
@@ -1113,6 +1178,8 @@ export class DecodeRepository {
       ...(row.description === null ? {} : { description: row.description }),
       status: row.status,
       ...(row.priority === null ? {} : { priority: row.priority }),
+      ...(row.source_roadmap_id === null ? {} : { sourceRoadmapId: row.source_roadmap_id }),
+      ...(row.source_roadmap_item_id === null ? {} : { sourceRoadmapItemId: row.source_roadmap_item_id }),
       phases: this.getPhases(row.id),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -1137,6 +1204,51 @@ export class DecodeRepository {
       items: this.getRoadmapItems(row.id),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+    });
+  }
+
+  private insertRoadmapRows(roadmapId: string, input: InsertRoadmapInput, timestamp: string): void {
+    this.db
+      .query(
+        `
+        INSERT INTO roadmaps (id, project_id, title, description, status, source_plan_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        roadmapId,
+        input.projectId,
+        input.title,
+        input.description ?? null,
+        input.status,
+        input.sourcePlanId ?? null,
+        timestamp,
+        timestamp,
+      );
+
+    input.items.forEach((item, index) => {
+      this.db
+        .query(
+          `
+          INSERT INTO roadmap_items (
+            id, roadmap_id, position, title, description, status,
+            evidence_json, source_phase_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          item.id ?? createId("rmi"),
+          roadmapId,
+          index,
+          item.title,
+          item.description ?? null,
+          item.status,
+          JSON.stringify(item.evidence),
+          item.sourcePhaseId ?? null,
+          timestamp,
+          timestamp,
+        );
     });
   }
 
@@ -1274,6 +1386,33 @@ function parseJsonArray<T>(value: string): T[] {
   return Array.isArray(parsed) ? (parsed as T[]) : [];
 }
 
+function resolveRoadmapInsertPosition(items: RoadmapItem[], input: AddRoadmapItemInput): number {
+  if (input.position !== undefined) {
+    return Math.min(input.position, items.length);
+  }
+
+  if (input.afterItemId) {
+    const index = items.findIndex((item) => item.id === input.afterItemId);
+    if (index === -1) {
+      throw new Error(`Roadmap item not found: ${input.afterItemId}`);
+    }
+    return index + 1;
+  }
+
+  if (input.afterItemTitle) {
+    const matching = items.filter((item) => item.title === input.afterItemTitle);
+    if (matching.length === 0) {
+      throw new Error(`Roadmap item not found: ${input.afterItemTitle}`);
+    }
+    if (matching.length > 1) {
+      throw new Error(`Roadmap item title is ambiguous: ${input.afterItemTitle}`);
+    }
+    return items.findIndex((item) => item.id === matching[0]!.id) + 1;
+  }
+
+  return items.length;
+}
+
 function phaseStatusToRoadmapItemStatus(status: PlanPhase["status"]): RoadmapItemStatus {
   if (status === "completed") {
     return "done";
@@ -1290,4 +1429,4 @@ function phaseStatusToRoadmapItemStatus(status: PlanPhase["status"]): RoadmapIte
   return "planned";
 }
 
-export { DecodeRepository as ZenithRepository };
+export { ZenithRepository as DecodeRepository };

@@ -1,4 +1,4 @@
-import type { Finding, NextStep, Plan, PlanPhase, Session } from "../domain/schemas";
+import type { Finding, NextStep, Plan, PlanPhase, Roadmap, Session } from "../domain/schemas";
 
 export type PlanNextResult = NextStep;
 
@@ -6,6 +6,7 @@ export function computeNext(
   activePlan: Plan | null,
   recentSessions: Session[],
   openFindings: Array<Pick<Finding, "id" | "severity" | "title">>,
+  recentRoadmaps: Roadmap[] = [],
 ): PlanNextResult {
   const blockingFinding = openFindings.find((finding) => finding.severity === "critical" || finding.severity === "high");
   if (blockingFinding) {
@@ -49,6 +50,26 @@ export function computeNext(
     };
   }
 
+  if (!activePlan) {
+    const roadmapTarget = findRoadmapTarget(recentRoadmaps);
+    if (roadmapTarget) {
+      return {
+        recommendation: `Create plan from roadmap: ${roadmapTarget.item.title}`,
+        reason: "No active plan exists; active roadmap has the next product direction.",
+        evidence: [roadmapTarget.roadmap.id, roadmapTarget.item.id],
+      };
+    }
+
+    const openFinding = openFindings[0];
+    if (openFinding) {
+      return {
+        recommendation: `Review finding: ${openFinding.title}`,
+        reason: "No active plan exists; open findings remain before new work is selected.",
+        evidence: [openFinding.id],
+      };
+    }
+  }
+
   const sessionStep = recentSessions.flatMap((session) => session.nextSteps).find(Boolean);
   if (sessionStep) {
     return {
@@ -63,6 +84,22 @@ export function computeNext(
     reason: activePlan ? "No pending, blocked, or in-progress phases remain." : "No active plan exists.",
     evidence: activePlan ? [activePlan.id] : [],
   };
+}
+
+function findRoadmapTarget(roadmaps: Roadmap[]): { roadmap: Roadmap; item: Roadmap["items"][number] } | null {
+  const activeRoadmaps = roadmaps.filter((roadmap) => roadmap.status === "active");
+  const statuses: Array<Roadmap["items"][number]["status"]> = ["in_progress", "planned", "deferred"];
+
+  for (const status of statuses) {
+    for (const roadmap of activeRoadmaps) {
+      const item = roadmap.items.find((candidate) => candidate.status === status);
+      if (item) {
+        return { roadmap, item };
+      }
+    }
+  }
+
+  return null;
 }
 
 export function findCurrentPhase(plan: Plan | null): PlanPhase | null {

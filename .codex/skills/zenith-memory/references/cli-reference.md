@@ -22,8 +22,10 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith roadmap list --json`
 - `zenith roadmap show <roadmap-id> --json`
 - `zenith roadmap update <roadmap-id> --json --input -`
+- `zenith roadmap add-item <roadmap-id> --json --input -`
 - `zenith roadmap update-item <roadmap-id> --json --input -`
 - `zenith roadmap import-plan <plan-id> --json --input -`
+- `zenith roadmap create-plan <roadmap-id> --json --input -`
 
 ## Plans
 

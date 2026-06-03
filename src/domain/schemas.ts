@@ -45,6 +45,8 @@ export const PlanSchema = z.object({
   description: z.string().optional(),
   status: PlanStatusSchema,
   priority: z.enum(["low", "medium", "high"]).optional(),
+  sourceRoadmapId: z.string().min(1).optional(),
+  sourceRoadmapItemId: z.string().min(1).optional(),
   phases: z.array(PlanPhaseSchema),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -379,6 +381,25 @@ export const CreateRoadmapInputSchema = z.object({
     .min(1),
 });
 
+export const AddRoadmapItemInputSchema = z
+  .object({
+    title: z.string().min(1),
+    description: z.string().optional(),
+    status: RoadmapItemStatusSchema.default("planned"),
+    evidence: z.array(EvidenceSchema).default([]),
+    position: z.number().int().nonnegative().optional(),
+    afterItemId: z.string().min(1).optional(),
+    afterItemTitle: z.string().min(1).optional(),
+  })
+  .refine(
+    (value) =>
+      [value.position !== undefined, value.afterItemId !== undefined, value.afterItemTitle !== undefined].filter(Boolean)
+        .length <= 1,
+    {
+      message: "Provide only one insertion target",
+    },
+  );
+
 export const UpdateRoadmapInputSchema = z
   .object({
     title: z.string().min(1).optional(),
@@ -421,6 +442,30 @@ export const ImportPlanToRoadmapInputSchema = z.object({
   status: RoadmapStatusSchema.default("active"),
   archivePlan: z.boolean().default(false),
 });
+
+export const CreatePlanFromRoadmapInputSchema = z
+  .object({
+    itemId: z.string().min(1).optional(),
+    itemTitle: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    status: PlanStatusSchema.default("active"),
+    priority: z.enum(["low", "medium", "high"]).optional(),
+    phases: z
+      .array(
+        z.object({
+          title: z.string().min(1),
+          description: z.string().optional(),
+          status: PhaseStatusSchema.default("pending"),
+          acceptanceCriteria: z.array(z.string().min(1)).default([]),
+          evidence: z.array(EvidenceSchema).default([]),
+        }),
+      )
+      .optional(),
+  })
+  .refine((value) => Boolean(value.itemId) !== Boolean(value.itemTitle), {
+    message: "Provide exactly one of itemId or itemTitle",
+  });
 
 export const CreateSpikeInputSchema = z.object({
   title: z.string().min(1).optional(),
@@ -541,9 +586,11 @@ export type UpdatePhaseInput = z.infer<typeof UpdatePhaseInputSchema>;
 export type RecordDecisionInput = z.infer<typeof RecordDecisionInputSchema>;
 export type SetBriefInput = z.infer<typeof SetBriefInputSchema>;
 export type CreateRoadmapInput = z.infer<typeof CreateRoadmapInputSchema>;
+export type AddRoadmapItemInput = z.infer<typeof AddRoadmapItemInputSchema>;
 export type UpdateRoadmapInput = z.infer<typeof UpdateRoadmapInputSchema>;
 export type UpdateRoadmapItemInput = z.infer<typeof UpdateRoadmapItemInputSchema>;
 export type ImportPlanToRoadmapInput = z.infer<typeof ImportPlanToRoadmapInputSchema>;
+export type CreatePlanFromRoadmapInput = z.infer<typeof CreatePlanFromRoadmapInputSchema>;
 export type CreateSpikeInput = z.infer<typeof CreateSpikeInputSchema>;
 export type RecordSpikeInput = z.infer<typeof RecordSpikeInputSchema>;
 export type ConcludeSpikeInput = z.infer<typeof ConcludeSpikeInputSchema>;

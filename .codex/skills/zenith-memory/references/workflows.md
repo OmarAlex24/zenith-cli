@@ -58,6 +58,32 @@ Payload:
 }
 ```
 
+## Convert Roadmap Direction To A Plan
+
+Use this when a roadmap item is the next product target and there is no active plan.
+
+```bash
+zenith roadmap create-plan roadmap_id --json --input -
+```
+
+Payload:
+
+```json
+{
+  "itemId": "rmi_id",
+  "title": "Executable plan title",
+  "priority": "high",
+  "phases": [
+    {
+      "title": "Implementation phase",
+      "acceptanceCriteria": ["CLI flow works", "Tests pass"]
+    }
+  ]
+}
+```
+
+Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence. Use `itemTitle` instead of `itemId` only when the title is unique.
+
 ## Update A Phase
 
 ```bash

@@ -105,6 +105,7 @@ Before planning:
 - Run \`zenith context compact --json\`.
 - Run \`zenith plan next --json\`.
 - If \`plan next\` returns a \`phaseId\`, run \`zenith phase show <phase-id> --json\`.
+- If \`plan next\` recommends a roadmap item and no active plan exists, use \`zenith roadmap create-plan <roadmap-id> --json --input -\`.
 
 Prefer \`zenith ... --json\` and \`--input -\` for machine-readable commands.
 Use \`plan\` only for executable phased work. Use \`brief\`, \`roadmap\`, or \`spike\` for non-executable memory.
@@ -141,6 +142,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Treat \`zenith plan next --json\` as the default source for what to implement next.
 - If the user's request conflicts with \`plan next\`, report the conflict and ask for confirmation before implementing.
 - Always inspect the target phase with \`zenith phase show <phase-id> --json\` when a phase id is available.
+- When \`plan next\` recommends a roadmap item and no active plan exists, use \`zenith roadmap create-plan <roadmap-id> --json --input -\` to preserve source links.
 - Use \`plan\` only for executable phased work; use \`brief\`, \`roadmap\`, or \`spike\` for non-executable memory.
 - Prefer \`zenith ...\`; use \`bun run zenith ...\` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
@@ -219,8 +221,10 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 - \`zenith roadmap list --json\`
 - \`zenith roadmap show <roadmap-id> --json\`
 - \`zenith roadmap update <roadmap-id> --json --input -\`
+- \`zenith roadmap add-item <roadmap-id> --json --input -\`
 - \`zenith roadmap update-item <roadmap-id> --json --input -\`
 - \`zenith roadmap import-plan <plan-id> --json --input -\`
+- \`zenith roadmap create-plan <roadmap-id> --json --input -\`
 
 ## Plans
 
@@ -341,6 +345,32 @@ Payload:
   ]
 }
 \`\`\`
+
+## Convert Roadmap Direction To A Plan
+
+Use this when a roadmap item is the next product target and there is no active plan.
+
+\`\`\`bash
+zenith roadmap create-plan roadmap_id --json --input -
+\`\`\`
+
+Payload:
+
+\`\`\`json
+{
+  "itemId": "rmi_id",
+  "title": "Executable plan title",
+  "priority": "high",
+  "phases": [
+    {
+      "title": "Implementation phase",
+      "acceptanceCriteria": ["CLI flow works", "Tests pass"]
+    }
+  ]
+}
+\`\`\`
+
+Created plans preserve \`sourceRoadmapId\`, \`sourceRoadmapItemId\`, and source evidence. Use \`itemTitle\` instead of \`itemId\` only when the title is unique.
 
 ## Update A Phase
 

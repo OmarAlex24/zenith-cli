@@ -24,6 +24,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Treat `zenith plan next --json` as the default source for what to implement next.
 - If the user's request conflicts with `plan next`, report the conflict and ask for confirmation before implementing.
 - Always inspect the target phase with `zenith phase show <phase-id> --json` when a phase id is available.
+- When `plan next` recommends a roadmap item and no active plan exists, use `zenith roadmap create-plan <roadmap-id> --json --input -` to preserve source links.
 - Use `plan` only for executable phased work; use `brief`, `roadmap`, or `spike` for non-executable memory.
 - Prefer `zenith ...`; use `bun run zenith ...` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.

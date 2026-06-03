@@ -36,7 +36,8 @@ const tabs = [
   { id: "spikes", label: "4 Spikes" },
   { id: "decisions", label: "5 Decisions" },
   { id: "findings", label: "6 Findings" },
-  { id: "context", label: "7 Context" },
+  { id: "sessions", label: "7 Sessions" },
+  { id: "context", label: "8 Context" },
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
@@ -97,7 +98,7 @@ function Header({ refreshing }: { refreshing: boolean }) {
   return (
     <box style={{ flexDirection: "row", justifyContent: "space-between", height: 2 }}>
       <text fg={palette.accent}>Zenith CLI</text>
-      <text fg={palette.muted}>{refreshing ? "refreshing..." : "1-7 tabs  arrows/tab switch  r refresh  q/esc quit"}</text>
+      <text fg={palette.muted}>{refreshing ? "refreshing..." : "1-8 tabs  arrows/tab switch  r refresh  q/esc quit"}</text>
     </box>
   );
 }
@@ -133,6 +134,10 @@ function renderTab(activeTab: TabId, data: DashboardData) {
 
   if (activeTab === "findings") {
     return <FindingsView data={data} />;
+  }
+
+  if (activeTab === "sessions") {
+    return <SessionsView data={data} />;
   }
 
   if (activeTab === "context") {
@@ -252,6 +257,11 @@ function OverviewView({ data }: { data: DashboardData }) {
 }
 
 function RoadmapsView({ data }: { data: DashboardData }) {
+  const activeRoadmap = data.roadmaps.find((roadmap) => roadmap.status === "active");
+  const nextRoadmapItem = activeRoadmap?.items.find((item) => item.status === "in_progress") ??
+    activeRoadmap?.items.find((item) => item.status === "planned") ??
+    activeRoadmap?.items.find((item) => item.status === "deferred");
+
   return (
     <box
       title="Roadmaps"
@@ -260,16 +270,23 @@ function RoadmapsView({ data }: { data: DashboardData }) {
       backgroundColor={palette.panel}
       style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
     >
+      <text fg={palette.accent}>Next roadmap target: {nextRoadmapItem ? truncate(nextRoadmapItem.title, 92) : "none"}</text>
       {data.roadmaps.length === 0 ? (
         <text fg={palette.muted}>No roadmaps recorded.</text>
       ) : (
-        data.roadmaps.slice(0, 8).flatMap((roadmap) => [
+        data.roadmaps.slice(0, 5).flatMap((roadmap) => [
           <text key={`${roadmap.id}-title`} fg={roadmap.status === "active" ? palette.accent : palette.text}>
             {statusGlyph(roadmap.status)} {truncate(roadmap.title, 96)}
           </text>,
           <text key={`${roadmap.id}-items`} fg={palette.muted}>
             {roadmap.status} / items {roadmap.items.length} / source {roadmap.sourcePlanId ?? "none"}
           </text>,
+          ...roadmap.items.slice(0, 4).map((item) => (
+            <text key={`${roadmap.id}-${item.id}`} fg={item.status === "in_progress" ? palette.accent : palette.text}>
+              {"  "}
+              {statusGlyph(item.status)} {truncate(item.title, 94)}
+            </text>
+          )),
         ])
       )}
     </box>
@@ -294,6 +311,12 @@ function PlanView({ data }: { data: DashboardData }) {
           <text fg={palette.muted}>Plan: {truncate(planTitle, 96)}</text>
           <text fg={phaseColor(phase.status)}>Status: {phase.status}</text>
           <text fg={palette.text}>Description: {truncate(phase.description ?? "No description.", 140)}</text>
+          <text fg={palette.muted}>
+            Acceptance: {phase.acceptanceCriteria.length > 0 ? truncate(phase.acceptanceCriteria.join(" / "), 128) : "none"}
+          </text>
+          <text fg={palette.muted}>
+            Evidence: {phase.evidence.length > 0 ? truncate(phase.evidence.map((item) => item.value).join(" / "), 128) : "none"}
+          </text>
         </>
       ) : (
         <text fg={palette.muted}>No current phase.</text>
@@ -304,13 +327,16 @@ function PlanView({ data }: { data: DashboardData }) {
         data.plans.slice(0, 10).map((plan) => {
           const counts = phaseCounts(plan);
           return (
-            <box key={plan.id} style={{ flexDirection: "column", height: 3 }}>
+            <box key={plan.id} style={{ flexDirection: "column", height: 4 }}>
               <text fg={plan.status === "active" ? palette.accent : palette.text}>
                 {statusGlyph(plan.status)} {truncate(plan.title, 86)}
               </text>
               <text fg={palette.muted}>
                 {plan.status} / {plan.priority ?? "no priority"} / phases {counts.completed} done, {counts.inProgress} work,{" "}
                 {counts.pending} todo
+              </text>
+              <text fg={palette.muted}>
+                source {plan.sourceRoadmapId ?? "none"} / item {plan.sourceRoadmapItemId ?? "none"}
               </text>
             </box>
           );
@@ -396,9 +422,39 @@ function FindingsView({ data }: { data: DashboardData }) {
       ) : (
         findings.slice(0, 12).map((finding) => (
           <text key={finding.id} fg={severityColor(finding.severity)}>
-            {finding.severity} - {truncate(finding.title, 112)}
+            {finding.severity} - {truncate(finding.title, 96)} / {finding.id}
           </text>
         ))
+      )}
+    </box>
+  );
+}
+
+function SessionsView({ data }: { data: DashboardData }) {
+  const sessions = data.status.recentSessions;
+
+  return (
+    <box
+      title="Recent Sessions"
+      border
+      borderColor={palette.border}
+      backgroundColor={palette.panel}
+      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
+    >
+      {sessions.length === 0 ? (
+        <text fg={palette.muted}>No sessions recorded.</text>
+      ) : (
+        sessions.slice(0, 8).flatMap((session) => [
+          <text key={`${session.id}-summary`} fg={session.endedAt ? palette.text : palette.accent}>
+            {session.endedAt ? "closed" : "open"} {truncate(session.summary ?? session.id, 108)}
+          </text>,
+          <text key={`${session.id}-meta`} fg={palette.muted}>
+            {session.branch ?? "no branch"} / files {session.changedFiles.length} / plan {session.relatedPlanId ?? "none"}
+          </text>,
+          <text key={`${session.id}-next`} fg={palette.muted}>
+            next - {truncate(session.nextSteps[0] ?? "none", 116)}
+          </text>,
+        ])
       )}
     </box>
   );

@@ -26,6 +26,7 @@ describe("OpenTUI dashboard", () => {
     await setup.flush();
     const roadmapsFrame = setup.captureCharFrame();
     expect(roadmapsFrame).toContain("Product Roadmap");
+    expect(roadmapsFrame).toContain("Product And Architecture Hardening");
     expect(roadmapsFrame).toContain("active");
 
     await act(async () => {
@@ -35,6 +36,7 @@ describe("OpenTUI dashboard", () => {
     const planFrame = setup.captureCharFrame();
     expect(planFrame).toContain("Executable Plans");
     expect(planFrame).toContain("Documented acceptance");
+    expect(planFrame).toContain("roadmap_1");
 
     await act(async () => {
       setup.mockInput.pressKey("4");
@@ -65,6 +67,14 @@ describe("OpenTUI dashboard", () => {
       setup.mockInput.pressKey("7");
     });
     await setup.flush();
+    const sessionsFrame = setup.captureCharFrame();
+    expect(sessionsFrame).toContain("Recent Sessions");
+    expect(sessionsFrame).toContain("Finished context work");
+
+    await act(async () => {
+      setup.mockInput.pressKey("8");
+    });
+    await setup.flush();
     const contextFrame = setup.captureCharFrame();
     expect(contextFrame).toContain("Zenith Compact Context");
 
@@ -93,6 +103,8 @@ function makeStatus(): ProjectStatus {
     projectId: "proj_1",
     title: "Zenith MVP",
     status: "active",
+    sourceRoadmapId: "roadmap_1",
+    sourceRoadmapItemId: "rmi_2",
     phases: [
       {
         id: "phase_1",
@@ -145,7 +157,19 @@ function makeStatus(): ProjectStatus {
     },
     recentRoadmaps: [makeRoadmap()],
     openSpikes: [makeSpike()],
-    recentSessions: [],
+    recentSessions: [
+      {
+        id: "sess_1",
+        projectId: "proj_1",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T01:00:00.000Z",
+        branch: "main",
+        summary: "Finished context work",
+        changedFiles: ["src/app/context-engine.ts"],
+        relatedPlanId: "plan_1",
+        nextSteps: ["Continue hardening"],
+      },
+    ],
     recentDecisions: [
       {
         id: "dec_1",
@@ -190,6 +214,13 @@ function makeRoadmap(): Roadmap {
         roadmapId: "roadmap_1",
         title: "Product Roadmap",
         status: "done",
+        evidence: [],
+      },
+      {
+        id: "rmi_2",
+        roadmapId: "roadmap_1",
+        title: "Product And Architecture Hardening",
+        status: "in_progress",
         evidence: [],
       },
     ],
@@ -257,7 +288,18 @@ function makeContext(status: ProjectStatus): CompactContext {
       planTitle: "Zenith MVP",
       phase: status.currentPhase!,
     },
-    recentSessions: [],
+    recentSessions: [
+      {
+        id: "sess_1",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T01:00:00.000Z",
+        branch: "main",
+        summary: "Finished context work",
+        changedFiles: ["src/app/context-engine.ts"],
+        relatedPlanId: "plan_1",
+        nextSteps: ["Continue hardening"],
+      },
+    ],
     recentDecisions: [
       {
         id: "dec_1",

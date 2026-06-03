@@ -77,6 +77,8 @@ Storage home precedence:
 
 When Zenith uses the legacy `~/.decode` home, it keeps the legacy database name `decode.db`. All other homes use `zenith.db`.
 
+SQLite enforces core integrity such as foreign keys, status guards, active-plan uniqueness, and source links for roadmap-derived plans. See [`docs/storage-policy.md`](docs/storage-policy.md) for the normalization policy behind embedded JSON arrays.
+
 ## Memory Types
 
 - `brief`: stable project intent and why the project exists.
@@ -126,7 +128,9 @@ bun run zenith brief set --json --input -
 bun run zenith brief show --json
 bun run zenith roadmap create --json --input -
 bun run zenith roadmap list --json
+bun run zenith roadmap add-item <roadmap-id> --json --input -
 bun run zenith roadmap update-item <roadmap-id> --json --input -
+bun run zenith roadmap create-plan <roadmap-id> --json --input -
 bun run zenith spike create --json --input -
 bun run zenith spike conclude <spike-id> --json --input -
 ```
@@ -190,10 +194,14 @@ Roadmaps and spikes have separate commands:
 ```bash
 zenith brief set --json --input -
 zenith roadmap create --json --input -
+zenith roadmap add-item <roadmap-id> --json --input -
+zenith roadmap create-plan <roadmap-id> --json --input -
 zenith roadmap import-plan <plan-id> --json --input -
 zenith spike create --json --input -
 zenith spike conclude <spike-id> --json --input -
 ```
+
+Use `roadmap create-plan` when product direction needs to become executable work. The payload must identify exactly one roadmap item by `itemId` or `itemTitle`; optional `phases` can expand the item into a real implementation plan. Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence.
 
 Findings and sessions close the operational memory loop:
 

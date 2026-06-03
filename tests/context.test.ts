@@ -109,6 +109,35 @@ describe("context engine", () => {
     services.close();
   });
 
+  test("plan next uses active roadmap when no active plan exists", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+    const services = createZenithApp({ cwd, zenithHome });
+
+    await services.app.registerProject();
+    const roadmap = await services.app.createRoadmap({
+      title: "Zenith CLI Product Roadmap",
+      items: [
+        { title: "MVP 4 - OpenTUI Dashboard", status: "done" },
+        { title: "MVP 4.5 - Product And Architecture Hardening", status: "in_progress" },
+      ],
+    });
+    await services.app.summarizeSession({
+      summary: "Old session suggested unrelated work.",
+      nextSteps: ["Ignore this stale next step"],
+    });
+
+    const next = await services.app.nextPlanStep();
+    const compact = await services.app.compactContext();
+
+    expect(next.recommendation).toBe("Create plan from roadmap: MVP 4.5 - Product And Architecture Hardening");
+    expect(next.reason).toContain("active roadmap");
+    expect(next.evidence).toEqual([roadmap.id, roadmap.items[1]!.id]);
+    expect(compact.next.recommendation).toBe(next.recommendation);
+    services.close();
+  });
+
   test("git context includes changed file names without file contents", async () => {
     const cwd = makeTempDir();
     const zenithHome = makeTempDir();

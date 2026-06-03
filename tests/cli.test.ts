@@ -177,6 +177,75 @@ describe("cli json commands", () => {
     });
   });
 
+  test("roadmap items can become active executable plans", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Zenith CLI Product Roadmap",
+        items: [
+          { title: "MVP 4 - OpenTUI Dashboard", status: "in_progress" },
+          { title: "MVP 5 - PR Review Skill" },
+        ],
+      },
+    });
+    const roadmapId = (roadmap.json as any).data.id as string;
+
+    const added = await runDecode(["roadmap", "add-item", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "MVP 4.5 - Product And Architecture Hardening",
+        description: "Harden product workflow and architecture before advanced skills.",
+        status: "in_progress",
+        afterItemTitle: "MVP 4 - OpenTUI Dashboard",
+        evidence: [{ kind: "note", value: "Backed by Zenith Product And Architecture Hardening." }],
+      },
+    });
+    const itemId = (added.json as any).data.items[1].id as string;
+
+    const createdPlan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        itemId,
+        title: "Zenith Product And Architecture Hardening",
+        priority: "high",
+        phases: [
+          {
+            title: "Roadmap-to-plan workflow",
+            acceptanceCriteria: ["A CLI flow can create an active plan from a roadmap item"],
+          },
+        ],
+      },
+    });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const duplicate = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemId },
+    });
+
+    expect(added.exitCode).toBe(0);
+    expect((added.json as any).data.items.map((item: any) => item.title)).toEqual([
+      "MVP 4 - OpenTUI Dashboard",
+      "MVP 4.5 - Product And Architecture Hardening",
+      "MVP 5 - PR Review Skill",
+    ]);
+    expect(createdPlan.exitCode).toBe(0);
+    expect((createdPlan.json as any).data.sourceRoadmapId).toBe(roadmapId);
+    expect((createdPlan.json as any).data.sourceRoadmapItemId).toBe(itemId);
+    expect((createdPlan.json as any).data.phases[0].evidence[0].value).toContain("Created from roadmap");
+    expect((next.json as any).data.recommendation).toBe("Roadmap-to-plan workflow");
+    expect(duplicate.exitCode).toBe(1);
+    expect((duplicate.json as any).errors[0].code).toBe("active_plan_exists");
+  });
+
   test("decision list and show return project decisions", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();
