@@ -2,8 +2,10 @@ import { ZenithError } from "../cli/json-output";
 import { createId, nowIso } from "../domain/ids";
 import {
   AddRoadmapItemInputSchema,
+  AdvancePlanInputSchema,
   ConcludeSpikeInputSchema,
   CaptureSessionInputSchema,
+  type AdvanceResult,
   type CompactContext,
   type ContextSnapshot,
   CreatePlanFromRoadmapInputSchema,
@@ -13,6 +15,7 @@ import {
   EndSessionInputSchema,
   ImportPlanToRoadmapInputSchema,
   type PhaseDetail,
+  type PlanPath,
   RecordFindingInputSchema,
   RecordDecisionInputSchema,
   RecordSpikeInputSchema,
@@ -43,7 +46,7 @@ import type { ZenithRepository } from "../storage/repository";
 import type { FindingListStatus } from "../storage/repository";
 import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
-import { validatePhaseDependencies } from "./plan-graph";
+import { computePlanPath, validatePhaseDependencies } from "./plan-graph";
 import { resolveActivePlan, type FocusCandidate, type FocusResolution } from "./focus";
 import { buildRoadmapWorkspace, type RoadmapWorkspace } from "./roadmap-workspace";
 
@@ -410,7 +413,7 @@ export class ZenithApp {
         },
       ];
 
-    return this.repository.createPlan({
+    const plan = this.repository.createPlan({
       projectId: project.id,
       title: input.title ?? item.title,
       description: input.description ?? item.description ?? `Executable plan created from roadmap item ${item.id}.`,
@@ -420,6 +423,107 @@ export class ZenithApp {
       sourceRoadmapItemId: item.id,
       phases,
     });
+
+    // Companion fix: flip roadmap item from todo → in_progress when plan is active
+    if (input.status === "active" && item.status === "todo") {
+      this.repository.activateRoadmapItemTransaction(project.id, roadmap.id, item.id);
+    }
+
+    return plan;
+  }
+
+  async completePlan(planId: string): Promise<{ plan: Plan; roadmapItemAdvanced: { roadmapId: string; itemId: string } | null }> {
+    const plan = await this.showPlan(planId);
+
+    // Idempotency guard: already completed, no-op
+    if (plan.status === "completed") {
+      return { plan, roadmapItemAdvanced: null };
+    }
+
+    const openPhases = plan.phases.filter((phase) => phase.status !== "done");
+    if (openPhases.length > 0) {
+      throw new ZenithError(
+        `Cannot complete plan: ${openPhases.length} phase(s) are not done.`,
+        {
+          code: "plan_has_open_phases",
+          details: { openPhaseIds: openPhases.map((p) => p.id) },
+        },
+      );
+    }
+
+    const { completedPlan, roadmapItemAdvanced } = this.repository.completePlanTransaction(planId, plan);
+    return { plan: completedPlan, roadmapItemAdvanced };
+  }
+
+  async advancePlan(rawInput: unknown): Promise<AdvanceResult> {
+    const project = await this.requireProject();
+    const input = AdvancePlanInputSchema.parse(rawInput);
+    const plan = await this.showPlan(input.planId);
+
+    if (plan.projectId !== project.id) {
+      throw new ZenithError(`Plan not found: ${input.planId}`, { code: "plan_not_found" });
+    }
+
+    let completedPhaseResult: { phaseId: string; status: Plan["phases"][number]["status"] } | null = null;
+
+    if (input.completedPhaseId) {
+      const phase = plan.phases.find((p) => p.id === input.completedPhaseId);
+      if (!phase) {
+        throw new ZenithError(`Phase not found: ${input.completedPhaseId}`, {
+          code: "phase_not_found",
+          details: { planId: input.planId, phaseId: input.completedPhaseId },
+        });
+      }
+
+      const targetStatus = input.status ?? "done";
+      await this.repository.updatePhase(
+        input.planId,
+        { phaseId: input.completedPhaseId },
+        {
+          status: targetStatus,
+          ...(input.evidence.length > 0 ? { evidence: input.evidence.map(normalizeEvidence) } : {}),
+        },
+      );
+      completedPhaseResult = { phaseId: input.completedPhaseId, status: targetStatus };
+    }
+
+    // Re-fetch the plan after the phase update to get fresh state
+    const updatedPlan = await this.showPlan(input.planId);
+
+    // Check if all phases are now done — auto-complete the plan
+    // Guard: vacuous truth on zero-phase plans must not trigger auto-completion
+    const allDone = updatedPlan.phases.length > 0 && updatedPlan.phases.every((p) => p.status === "done");
+    let planCompleted = false;
+    let roadmapItemAdvanced: { roadmapId: string; itemId: string } | null = null;
+
+    if (allDone) {
+      const { roadmapItemAdvanced: advanced } = await this.completePlan(input.planId);
+      planCompleted = true;
+      roadmapItemAdvanced = advanced;
+    }
+
+    // Recompute next step on the latest plan state
+    const git = await this.git.inspect(this.cwd);
+    const recentSessions = this.repository.listRecentSessions(project.id, 5);
+    const openFindings = this.repository.listOpenFindings(project.id);
+    const recentRoadmaps = this.repository.listRoadmaps(project.id, 5);
+    const { resolution } = this.resolveFocus(project.id, git.worktreeRoot);
+    const next = computeNext(resolution.activePlan, recentSessions, openFindings, recentRoadmaps, {}, {
+      ambiguous: resolution.ambiguous,
+      candidates: resolution.candidates,
+    });
+
+    return {
+      completed: completedPhaseResult,
+      planCompleted,
+      roadmapItemAdvanced,
+      next,
+    };
+  }
+
+  async planPath(planId: string): Promise<PlanPath> {
+    const plan = await this.showPlan(planId);
+    return computePlanPath(plan);
   }
 
   async createSpike(rawInput: unknown): Promise<Spike> {
@@ -606,9 +710,32 @@ export class ZenithApp {
     return this.contextEngine.resume();
   }
 
-  async timeline(options: { limit?: number } = {}): Promise<Event[]> {
+  async timeline(options: { limit?: number; since?: string } = {}): Promise<Event[]> {
     const project = await this.requireProject();
-    return this.repository.listEvents(project.id, { ...(options.limit ? { limit: options.limit } : {}) });
+
+    let sinceOption: { createdAt: string; id?: string } | undefined;
+    if (options.since) {
+      // Detect whether it's an event id or an ISO timestamp
+      const isIso = /^\d{4}-\d{2}-\d{2}T/.test(options.since);
+      if (isIso) {
+        sinceOption = { createdAt: options.since };
+      } else {
+        // Treat as event id: resolve to its created_at
+        const event = this.repository.getEventById(options.since);
+        if (!event) {
+          throw new ZenithError(`Event not found: ${options.since}`, {
+            code: "event_not_found",
+            details: { eventId: options.since },
+          });
+        }
+        sinceOption = { createdAt: event.createdAt, id: event.id };
+      }
+    }
+
+    return this.repository.listEvents(project.id, {
+      ...(options.limit ? { limit: options.limit } : {}),
+      ...(sinceOption ? { since: sinceOption } : {}),
+    });
   }
 
   async showPhase(phaseId: string): Promise<PhaseDetail> {

@@ -190,6 +190,18 @@ export const FindingSummarySchema = FindingSchema.pick({
   relatedPlanId: true,
 });
 
+export const NextStepKindSchema = z.enum([
+  "implement_phase",
+  "create_plan",
+  "review_deferred",
+  "blocking_finding",
+  "review_finding",
+  "ambiguous_focus",
+  "blocked_dependency",
+  "review_completed",
+  "create_plan_empty",
+]);
+
 export const NextStepSchema = z.object({
   recommendation: z.string().min(1).nullable(),
   reason: z.string().min(1),
@@ -197,6 +209,46 @@ export const NextStepSchema = z.object({
   phaseId: z.string().min(1).optional(),
   evidence: z.array(z.string().min(1)).default([]),
   blockedBy: z.array(z.string().min(1)).optional(),
+  kind: NextStepKindSchema.optional(),
+});
+
+export const AdvancePlanInputSchema = z.object({
+  planId: z.string().min(1),
+  completedPhaseId: z.string().min(1).optional(),
+  status: PhaseStatusSchema.optional(),
+  evidence: z.array(EvidenceSchema).default([]),
+});
+
+export const AdvanceResultSchema = z.object({
+  completed: z
+    .object({
+      phaseId: z.string().min(1),
+      status: PhaseStatusSchema,
+    })
+    .nullable(),
+  planCompleted: z.boolean(),
+  roadmapItemAdvanced: z
+    .object({
+      roadmapId: z.string().min(1),
+      itemId: z.string().min(1),
+    })
+    .nullable(),
+  next: NextStepSchema,
+});
+
+export const PlanPathPhaseSchema = z.object({
+  phaseId: z.string().min(1),
+  title: z.string().min(1),
+  status: PhaseStatusSchema,
+  dependsOn: z.array(z.string().min(1)),
+  ready: z.boolean(),
+});
+
+export const PlanPathSchema = z.object({
+  planId: z.string().min(1),
+  orderedPhases: z.array(PlanPathPhaseSchema),
+  criticalPath: z.array(z.string().min(1)),
+  remaining: z.number().int().nonnegative(),
 });
 
 export const ProjectSummarySchema = ProjectSchema.pick({
@@ -674,3 +726,8 @@ export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
 export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;
 export type Event = z.infer<typeof EventSchema>;
+export type NextStepKind = z.infer<typeof NextStepKindSchema>;
+export type AdvancePlanInput = z.infer<typeof AdvancePlanInputSchema>;
+export type AdvanceResult = z.infer<typeof AdvanceResultSchema>;
+export type PlanPathPhase = z.infer<typeof PlanPathPhaseSchema>;
+export type PlanPath = z.infer<typeof PlanPathSchema>;

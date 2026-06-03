@@ -769,4 +769,428 @@ describe("cli json commands", () => {
     expect(item.linkedPlans).toHaveLength(1);
     expect(item.phaseProgress).toEqual({ done: 1, total: 1 });
   });
+
+  // -------------------------------------------------------------------------
+  // F1: plan complete
+  // -------------------------------------------------------------------------
+
+  test("plan complete fails with plan_has_open_phases when phases are not done", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Incomplete Plan", phases: [{ title: "Phase A" }, { title: "Phase B", status: "done" }] },
+    });
+    const planId = (created.json as any).data.id;
+    const openPhaseId = (created.json as any).data.phases[0].id;
+
+    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(1);
+    expect((result.json as any).errors[0].code).toBe("plan_has_open_phases");
+    expect((result.json as any).errors[0].details.openPhaseIds).toContain(openPhaseId);
+  });
+
+  test("plan complete succeeds when all phases are done and emits stable envelope", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Completable Plan", phases: [{ title: "Phase A", status: "done" }] },
+    });
+    const planId = (created.json as any).data.id;
+
+    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).ok).toBe(true);
+    expect((result.json as any).meta.schemaVersion).toBe(1);
+    expect((result.json as any).data.plan.status).toBe("completed");
+    expect((result.json as any).data.roadmapItemAdvanced).toBeNull();
+  });
+
+  test("plan complete via roadmap advances roadmap item to done", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Complete Roadmap", items: [{ title: "Item A", status: "todo" }] },
+    });
+    const roadmapId = (roadmap.json as any).data.id;
+    const itemId = (roadmap.json as any).data.items[0].id;
+
+    const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemId, phases: [{ title: "Phase A", status: "done" }] },
+    });
+    expect(plan.exitCode).toBe(0);
+    const planId = (plan.json as any).data.id;
+
+    // Verify companion fix: item is now in_progress
+    const roadmapAfterCreate = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    expect((roadmapAfterCreate.json as any).data.items[0].status).toBe("in_progress");
+
+    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.plan.status).toBe("completed");
+    expect((result.json as any).data.roadmapItemAdvanced.roadmapId).toBe(roadmapId);
+    expect((result.json as any).data.roadmapItemAdvanced.itemId).toBe(itemId);
+
+    // Verify roadmap item is now done
+    const roadmapAfterComplete = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    expect((roadmapAfterComplete.json as any).data.items[0].status).toBe("done");
+  });
+
+  // -------------------------------------------------------------------------
+  // F1 companion: createPlanFromRoadmap flips item todo → in_progress
+  // -------------------------------------------------------------------------
+
+  test("roadmap create-plan flips todo item to in_progress when plan is active", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Flip Roadmap", items: [{ title: "Todo Item", status: "todo" }] },
+    });
+    const roadmapId = (roadmap.json as any).data.id;
+    const itemId = (roadmap.json as any).data.items[0].id;
+
+    const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemId, phases: [{ title: "Phase A" }] },
+    });
+    expect(plan.exitCode).toBe(0);
+
+    const roadmapAfter = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    expect((roadmapAfter.json as any).data.items[0].status).toBe("in_progress");
+  });
+
+  test("roadmap create-plan does NOT flip item that is already in_progress", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Already Active Roadmap", items: [{ title: "Active Item", status: "in_progress" }] },
+    });
+    const roadmapId = (roadmap.json as any).data.id;
+    const itemId = (roadmap.json as any).data.items[0].id;
+
+    const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemId, phases: [{ title: "Phase A" }] },
+    });
+    expect(plan.exitCode).toBe(0);
+
+    const roadmapAfter = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    // Still in_progress, not mutated by the flip logic
+    expect((roadmapAfter.json as any).data.items[0].status).toBe("in_progress");
+  });
+
+  // -------------------------------------------------------------------------
+  // F3: plan advance
+  // -------------------------------------------------------------------------
+
+  test("plan advance marks phase done and recomputes next step", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Advance Plan", phases: [{ title: "Phase A" }, { title: "Phase B" }] },
+    });
+    const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+
+    const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { planId, completedPhaseId: phaseAId, evidence: [{ kind: "note", value: "Phase A done!" }] },
+    });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).ok).toBe(true);
+    expect((result.json as any).meta.schemaVersion).toBe(1);
+    expect((result.json as any).data.completed.phaseId).toBe(phaseAId);
+    expect((result.json as any).data.completed.status).toBe("done");
+    expect((result.json as any).data.planCompleted).toBe(false);
+    expect((result.json as any).data.roadmapItemAdvanced).toBeNull();
+    expect((result.json as any).data.next.recommendation).toBe("Phase B");
+  });
+
+  test("plan advance auto-completes plan when last phase is finished", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Auto-Complete Roadmap", items: [{ title: "AC Item", status: "todo" }, { title: "Next Item", status: "todo" }] },
+    });
+    const roadmapId = (roadmap.json as any).data.id;
+    const itemId = (roadmap.json as any).data.items[0].id;
+
+    const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemId, phases: [{ title: "Only Phase" }] },
+    });
+    expect(plan.exitCode).toBe(0);
+    const planId = (plan.json as any).data.id;
+    const phaseId = (plan.json as any).data.phases[0].id;
+
+    const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { planId, completedPhaseId: phaseId },
+    });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.planCompleted).toBe(true);
+    expect((result.json as any).data.roadmapItemAdvanced.itemId).toBe(itemId);
+    // Next step should now point to the second roadmap item
+    expect((result.json as any).data.next.recommendation).toContain("Next Item");
+  });
+
+  test("plan advance without completedPhaseId just recomputes next", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "No-Op Advance Plan", phases: [{ title: "Phase A" }] },
+    });
+    const planId = (created.json as any).data.id;
+
+    const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { planId },
+    });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.completed).toBeNull();
+    expect((result.json as any).data.planCompleted).toBe(false);
+    expect((result.json as any).data.next.recommendation).toBe("Phase A");
+  });
+
+  // -------------------------------------------------------------------------
+  // F4: plan path
+  // -------------------------------------------------------------------------
+
+  test("plan path returns topological order with ready flags and critical path", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Path Plan", phases: [{ title: "Phase A" }, { title: "Phase B" }, { title: "Phase C" }] },
+    });
+    const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+    const phaseBId = (created.json as any).data.phases[1].id;
+    const phaseCId = (created.json as any).data.phases[2].id;
+
+    // Set B depends on A
+    await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { phaseId: phaseBId, dependsOn: [phaseAId] },
+    });
+
+    const result = await runDecode(["plan", "path", planId, "--json"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).ok).toBe(true);
+    expect((result.json as any).meta.schemaVersion).toBe(1);
+    expect((result.json as any).data.planId).toBe(planId);
+    expect((result.json as any).data.remaining).toBe(3);
+
+    const phases = (result.json as any).data.orderedPhases;
+    expect(phases).toHaveLength(3);
+    // A must come before B in topo order
+    const aIdx = phases.findIndex((p: any) => p.phaseId === phaseAId);
+    const bIdx = phases.findIndex((p: any) => p.phaseId === phaseBId);
+    expect(aIdx).toBeLessThan(bIdx);
+
+    // A is ready (no deps), B is not ready (dep A is todo), C is ready (no deps)
+    expect(phases.find((p: any) => p.phaseId === phaseAId).ready).toBe(true);
+    expect(phases.find((p: any) => p.phaseId === phaseBId).ready).toBe(false);
+    expect(phases.find((p: any) => p.phaseId === phaseCId).ready).toBe(true);
+
+    // Critical path includes A and B (chain of 2)
+    const criticalPath = (result.json as any).data.criticalPath;
+    expect(criticalPath).toContain(phaseAId);
+    expect(criticalPath).toContain(phaseBId);
+  });
+
+  // -------------------------------------------------------------------------
+  // F5: timeline --since
+  // -------------------------------------------------------------------------
+
+  test("timeline --since <iso> returns only events after the timestamp", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    // Get the timestamp after init
+    const after = new Date().toISOString();
+
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Since Test Plan", phases: [{ title: "Phase A" }] },
+    });
+
+    const result = await runDecode(["timeline", "--json", "--since", after], { cwd, decodeHome });
+    expect(result.exitCode).toBe(0);
+    // Only events after 'after' — should include plan.created but not project.registered
+    const events = (result.json as any).data as any[];
+    expect(events.some((e) => e.type === "plan.created")).toBe(true);
+    // All returned events should be after the timestamp
+    for (const event of events) {
+      expect(event.createdAt >= after).toBe(true);
+    }
+  });
+
+  test("timeline --since <eventId> returns only events after that event", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+
+    // Get the first event id from timeline
+    const timeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, decodeHome });
+    // The most recent event (DESC order) — use this as the cursor
+    const firstEventId = (timeline.json as any).data[0].id;
+
+    // Create a plan to generate more events
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "EventId Since Test", phases: [{ title: "Phase A" }] },
+    });
+
+    // Pass that event id as --since; we should get the plan events but not the init event
+    const sinceResult = await runDecode(["timeline", "--json", "--since", firstEventId], { cwd, decodeHome });
+    expect(sinceResult.exitCode).toBe(0);
+    const events = (sinceResult.json as any).data as any[];
+    // There should be new events (plan.created at minimum)
+    expect(events.some((e) => e.type === "plan.created")).toBe(true);
+  });
+
+  test("timeline --since with unknown event id returns event_not_found error", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+
+    const result = await runDecode(["timeline", "--json", "--since", "evt_nonexistent_xyz"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(1);
+    expect((result.json as any).errors[0].code).toBe("event_not_found");
+  });
+
+  test("completePlan is idempotent: second call is a no-op and does not emit duplicate events", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Idempotent Complete Plan", phases: [{ title: "Only Phase" }] },
+    });
+    expect(created.exitCode).toBe(0);
+    const planId = (created.json as any).data.id as string;
+    const phaseId = (created.json as any).data.phases[0].id as string;
+
+    // Advance the plan marking the only phase done — triggers auto-complete
+    const advance = await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { planId, completedPhaseId: phaseId },
+    });
+    expect(advance.exitCode).toBe(0);
+    expect((advance.json as any).data.planCompleted).toBe(true);
+
+    // Count events after first completion
+    const timelineAfterFirst = await runDecode(["timeline", "--json"], { cwd, decodeHome });
+    expect(timelineAfterFirst.exitCode).toBe(0);
+    const countAfterFirst = ((timelineAfterFirst.json as any).data as any[]).length;
+
+    // Explicitly complete the already-completed plan — should be a no-op
+    const second = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    expect(second.exitCode).toBe(0);
+
+    // Timeline should not have grown (no new events emitted)
+    const timelineAfterSecond = await runDecode(["timeline", "--json"], { cwd, decodeHome });
+    expect(timelineAfterSecond.exitCode).toBe(0);
+    const countAfterSecond = ((timelineAfterSecond.json as any).data as any[]).length;
+    expect(countAfterSecond).toBe(countAfterFirst);
+  });
+
+  test("advancing a zero-phase plan does not auto-complete it", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    // Create a plan with no phases
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Zero Phase Plan", phases: [] },
+    });
+    // A plan with zero phases may be rejected by schema; tolerate that and skip
+    if (created.exitCode !== 0) {
+      return;
+    }
+    const planId = (created.json as any).data.id as string;
+
+    // Advance with no completedPhaseId — just a recompute
+    const advance = await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { planId },
+    });
+    expect(advance.exitCode).toBe(0);
+    // Plan must NOT be auto-completed for a zero-phase plan
+    expect((advance.json as any).data.planCompleted).toBe(false);
+
+    // Verify plan status remains active
+    const show = await runDecode(["plan", "show", planId, "--json"], { cwd, decodeHome });
+    expect(show.exitCode).toBe(0);
+    expect((show.json as any).data.status).not.toBe("completed");
+  });
 });

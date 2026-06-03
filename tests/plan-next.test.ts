@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { computeNext } from "../src/app/plan-next";
+import type { NextStepKind } from "../src/domain/schemas";
 import type { Finding, Plan, PlanPhase, Roadmap, Session } from "../src/domain/schemas";
 
 // ---------------------------------------------------------------------------
@@ -223,6 +224,98 @@ describe("computeNext — characterization tests", () => {
     const result = computeNext(null, [], [], [], { now: "2025-01-01T00:00:00.000Z", staleAfterDays: 7, top: 3 });
 
     expect(result.recommendation).toBe("Create an active plan");
+  });
+
+  // ---------------------------------------------------------------------------
+  // F2: NextStep.kind discriminant — assert kind at each return site
+  // ---------------------------------------------------------------------------
+
+  test("kind=blocking_finding for high-severity finding", () => {
+    const finding = makeFinding({ id: "f1", title: "Urgent bug", severity: "high" });
+    const result = computeNext(null, [], [finding]);
+    expect(result.kind).toBe("blocking_finding" satisfies NextStepKind);
+  });
+
+  test("kind=blocking_finding for critical-severity finding", () => {
+    const finding = makeFinding({ id: "f2", title: "Auth bypass", severity: "critical" });
+    const result = computeNext(null, [], [finding]);
+    expect(result.kind).toBe("blocking_finding" satisfies NextStepKind);
+  });
+
+  test("kind=ambiguous_focus when focus is ambiguous and no active plan", () => {
+    const result = computeNext(null, [], [], [], {}, {
+      ambiguous: true,
+      candidates: [{ roadmapId: "r1", roadmapTitle: "Roadmap A", planTitle: "Plan A", planId: "p1" }],
+    });
+    expect(result.kind).toBe("ambiguous_focus" satisfies NextStepKind);
+  });
+
+  test("kind=implement_phase for in-progress phase", () => {
+    const phase = makePhase({ id: "ph1", title: "Build it", status: "in_progress" });
+    const plan = makePlan({ id: "plan1", title: "Plan", phases: [phase] });
+    const result = computeNext(plan, [], []);
+    expect(result.kind).toBe("implement_phase" satisfies NextStepKind);
+  });
+
+  test("kind=blocked_dependency for blocked phase", () => {
+    const phase = makePhase({ id: "ph2", title: "Blocked Phase", status: "blocked" });
+    const plan = makePlan({ id: "plan2", title: "Plan", phases: [phase] });
+    const result = computeNext(plan, [], []);
+    expect(result.kind).toBe("blocked_dependency" satisfies NextStepKind);
+  });
+
+  test("kind=implement_phase for ready todo phase", () => {
+    const phase = makePhase({ id: "ph3", title: "Ready Phase", status: "todo" });
+    const plan = makePlan({ id: "plan3", title: "Plan", phases: [phase] });
+    const result = computeNext(plan, [], []);
+    expect(result.kind).toBe("implement_phase" satisfies NextStepKind);
+  });
+
+  test("kind=blocked_dependency when all todo phases are gated by deps", () => {
+    const gated = makePhase({ id: "ph4", title: "Gated Phase", status: "todo", dependsOn: ["phase_missing"] });
+    const plan = makePlan({ id: "plan4", title: "Plan", phases: [gated] });
+    const result = computeNext(plan, [], []);
+    expect(result.kind).toBe("blocked_dependency" satisfies NextStepKind);
+  });
+
+  test("kind=create_plan for active roadmap with todo/in_progress item", () => {
+    const item = makeRoadmapItem({ id: "i1", roadmapId: "r1", title: "Next Item", status: "todo" });
+    const roadmap = makeRoadmap({ id: "r1", title: "Roadmap", items: [item] });
+    const result = computeNext(null, [], [], [roadmap]);
+    expect(result.kind).toBe("create_plan" satisfies NextStepKind);
+  });
+
+  test("kind=review_deferred for deferred roadmap item", () => {
+    const done = makeRoadmapItem({ id: "i2", roadmapId: "r2", title: "Done", status: "done" });
+    const deferred = makeRoadmapItem({ id: "i3", roadmapId: "r2", title: "Deferred", status: "deferred" });
+    const roadmap = makeRoadmap({ id: "r2", title: "Roadmap 2", items: [done, deferred] });
+    const result = computeNext(null, [], [], [roadmap]);
+    expect(result.kind).toBe("review_deferred" satisfies NextStepKind);
+  });
+
+  test("kind=review_finding for open low-severity finding with no active plan or roadmap", () => {
+    const finding = makeFinding({ id: "f3", title: "Minor issue", severity: "low" });
+    const result = computeNext(null, [], [finding], []);
+    expect(result.kind).toBe("review_finding" satisfies NextStepKind);
+  });
+
+  test("kind is undefined for session nextStep fallback", () => {
+    const session = makeSession({ id: "sess1", nextSteps: ["Review the PR"] });
+    const result = computeNext(null, [session], [], []);
+    // kind intentionally omitted for session nextStep — freeform user guidance
+    expect(result.kind).toBeUndefined();
+  });
+
+  test("kind=review_completed when active plan has all phases done", () => {
+    const done = makePhase({ id: "ph5", title: "Done Phase", status: "done" });
+    const plan = makePlan({ id: "plan5", title: "Plan", phases: [done] });
+    const result = computeNext(plan, [], []);
+    expect(result.kind).toBe("review_completed" satisfies NextStepKind);
+  });
+
+  test("kind=create_plan_empty when no plan, no roadmap, no findings, no sessions", () => {
+    const result = computeNext(null, [], [], []);
+    expect(result.kind).toBe("create_plan_empty" satisfies NextStepKind);
   });
 
   // ---------------------------------------------------------------------------

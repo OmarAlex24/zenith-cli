@@ -1456,9 +1456,94 @@ export class ZenithRepository {
     });
   }
 
+  /**
+   * Atomically completes a plan:
+   * 1. Sets plan status to "completed".
+   * 2. If the plan has a sourceRoadmapItemId, sets that roadmap item status to "done".
+   * 3. Emits "plan.completed" and (if applicable) "roadmap.item_advanced" events.
+   *
+   * Does NOT check whether all phases are done — that precondition is the caller's responsibility.
+   */
+  completePlanTransaction(
+    planId: string,
+    plan: Plan,
+  ): { completedPlan: Plan; roadmapItemAdvanced: { roadmapId: string; itemId: string } | null } {
+    const timestamp = nowIso();
+    let advancedItem: { roadmapId: string; itemId: string } | null = null;
+
+    this.db.transaction(() => {
+      // 1. Mark plan completed
+      this.db
+        .query("UPDATE plans SET status = 'completed', updated_at = ? WHERE id = ?")
+        .run(timestamp, planId);
+      this.recordEvent(plan.projectId, "plan.completed", "plan", planId, {
+        title: plan.title,
+        sourceRoadmapId: plan.sourceRoadmapId,
+        sourceRoadmapItemId: plan.sourceRoadmapItemId,
+      });
+
+      // 2. If linked to a roadmap item, advance it to "done"
+      if (plan.sourceRoadmapId && plan.sourceRoadmapItemId) {
+        this.db
+          .query("UPDATE roadmap_items SET status = 'done', updated_at = ? WHERE id = ?")
+          .run(timestamp, plan.sourceRoadmapItemId);
+        this.db
+          .query("UPDATE roadmaps SET updated_at = ? WHERE id = ?")
+          .run(timestamp, plan.sourceRoadmapId);
+        this.recordEvent(plan.projectId, "roadmap.item_advanced", "roadmap_item", plan.sourceRoadmapItemId, {
+          roadmapId: plan.sourceRoadmapId,
+          status: "done",
+        });
+        advancedItem = { roadmapId: plan.sourceRoadmapId, itemId: plan.sourceRoadmapItemId };
+      }
+    })();
+
+    return {
+      completedPlan: this.getPlanById(planId)!,
+      roadmapItemAdvanced: advancedItem,
+    };
+  }
+
+  /**
+   * Atomically advances the source roadmap item from "todo" to "in_progress" for a new plan.
+   * Used by createPlanFromRoadmap when the plan status is "active".
+   */
+  activateRoadmapItemTransaction(
+    projectId: string,
+    roadmapId: string,
+    itemId: string,
+  ): void {
+    const timestamp = nowIso();
+    this.db.transaction(() => {
+      this.db
+        .query("UPDATE roadmap_items SET status = 'in_progress', updated_at = ? WHERE id = ? AND status = 'todo'")
+        .run(timestamp, itemId);
+      this.db
+        .query("UPDATE roadmaps SET updated_at = ? WHERE id = ?")
+        .run(timestamp, roadmapId);
+      this.recordEvent(projectId, "roadmap.item_advanced", "roadmap_item", itemId, {
+        roadmapId,
+        status: "in_progress",
+      });
+    })();
+  }
+
+  getEventById(eventId: string): Event | null {
+    const row = this.db.query<EventRow, [string]>("SELECT * FROM events WHERE id = ?").get(eventId);
+    return row ? mapEvent(row) : null;
+  }
+
   listEvents(
     projectId: string,
-    options: { types?: string[]; limit?: number; before?: { createdAt: string; id: string } } = {},
+    options: {
+      types?: string[];
+      limit?: number;
+      before?: { createdAt: string; id: string };
+      /** Return only events strictly after this cursor. When `id` is provided, uses a
+       * compound `(created_at, id) > (?, ?)` predicate so same-millisecond events are
+       * not silently dropped. Plain ISO string uses `created_at > ?` (no id). */
+      since?: { createdAt: string; id?: string };
+    } = {},
   ): Event[] {
     const MAX_LIMIT = 500;
     const limit = Math.min(options.limit ?? 50, MAX_LIMIT);
@@ -1473,6 +1558,18 @@ export class ZenithRepository {
     if (options.before) {
       sql += " AND (created_at, id) < (?, ?)";
       params.push(options.before.createdAt, options.before.id);
+    }
+
+    if (options.since) {
+      if (options.since.id) {
+        // Compound cursor: same millisecond events with later ids are included
+        sql += " AND (created_at, id) > (?, ?)";
+        params.push(options.since.createdAt, options.since.id);
+      } else {
+        // Plain ISO timestamp: events strictly after that second
+        sql += " AND created_at > ?";
+        params.push(options.since.createdAt);
+      }
     }
 
     sql += " ORDER BY created_at DESC, id DESC LIMIT ?";

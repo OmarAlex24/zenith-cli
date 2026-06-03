@@ -19,6 +19,7 @@ type CommandOptions = {
   phase?: string;
   status?: string;
   limit?: string;
+  since?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -318,6 +319,60 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
+  plan
+    .command("complete")
+    .argument("<plan-id>")
+    .description("Mark a plan completed (all phases must be done); advances the source roadmap item if set")
+    .option("--json", "Emit stable JSON")
+    .action(async (planId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.completePlan(planId), (result) =>
+        [
+          `Plan: ${result.plan.title}`,
+          `Status: ${result.plan.status}`,
+          result.roadmapItemAdvanced
+            ? `Roadmap item advanced: ${result.roadmapItemAdvanced.itemId} → done`
+            : "No roadmap item to advance.",
+        ].join("\n"),
+      );
+    });
+
+  plan
+    .command("advance")
+    .description("Advance the plan by marking a phase done, appending evidence, and recomputing next step")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.advancePlan(await readJsonInput(commandOptions.input)), (result) =>
+        [
+          result.completed ? `Completed phase: ${result.completed.phaseId} → ${result.completed.status}` : "No phase completed.",
+          `Plan completed: ${result.planCompleted ? "yes" : "no"}`,
+          result.roadmapItemAdvanced
+            ? `Roadmap item advanced: ${result.roadmapItemAdvanced.itemId}`
+            : "No roadmap item advanced.",
+          `Next: ${result.next.recommendation ?? "none"}`,
+        ].join("\n"),
+      );
+    });
+
+  plan
+    .command("path")
+    .argument("<plan-id>")
+    .description("Topological view of plan phases with dependency ordering, critical path, and ready flags")
+    .option("--json", "Emit stable JSON")
+    .action(async (planId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.planPath(planId), (path) =>
+        [
+          `Plan: ${path.planId}`,
+          `Remaining: ${path.remaining}`,
+          `Critical path: ${path.criticalPath.join(" → ") || "none"}`,
+          "Phases (topo order):",
+          ...path.orderedPhases.map((p) =>
+            `  ${p.ready ? "✓" : "○"} [${p.status}] ${p.title}${p.dependsOn.length > 0 ? ` (deps: ${p.dependsOn.join(", ")})` : ""}`,
+          ),
+        ].join("\n"),
+      );
+    });
+
   const phase = program.command("phase").description("Phase lookup");
 
   phase
@@ -470,8 +525,14 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .description("Show recent project activity (read-only event log)")
     .option("--json", "Emit stable JSON")
     .option("--limit <n>", "Max number of events (default 50)")
+    .option("--since <cursor>", "Return only events after this event id or ISO timestamp (checkpoint/resume diff)")
     .action(async (commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.timeline(parseLimitOption(commandOptions.limit)), humanTimeline);
+      await handle(
+        commandOptions,
+        options,
+        async (app) => app.timeline({ ...parseLimitOption(commandOptions.limit), ...(commandOptions.since ? { since: commandOptions.since } : {}) }),
+        humanTimeline,
+      );
     });
 
   const agents = program.command("agents").description("Agent pack installer");

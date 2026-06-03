@@ -708,6 +708,69 @@ describe("sqlite repository", () => {
     ).toThrow("Roadmap not found");
     repo.close();
   });
+
+  test("completePlan is idempotent: second call returns existing plan without emitting duplicate events", async () => {
+    const workspace = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(workspace, zenithHome);
+    const services = createZenithApp({ cwd: workspace, zenithHome });
+
+    await services.app.registerProject();
+    const plan = await services.app.createPlan({
+      title: "Idempotent Complete",
+      phases: [{ title: "Phase A" }],
+    });
+    const planId = plan.id;
+    const phaseId = plan.phases[0]!.id;
+
+    // Mark phase done and advance — triggers auto-completion
+    await services.app.advancePlan({ planId, completedPhaseId: phaseId });
+
+    // Count events after first completion
+    const project = services.repository.findProjectByRootPath(workspace);
+    if (!project) throw new Error("Project not found after registration");
+    const eventsAfterFirst = services.repository.listEvents(project.id, {});
+    const countAfterFirst = eventsAfterFirst.length;
+
+    // Call completePlan again — should be no-op (idempotency guard)
+    const second = await services.app.completePlan(planId);
+    expect(second.roadmapItemAdvanced).toBeNull();
+
+    // Event count must not have grown
+    const eventsAfterSecond = services.repository.listEvents(project.id, {});
+    expect(eventsAfterSecond.length).toBe(countAfterFirst);
+
+    services.close();
+  });
+
+  test("advancing a zero-phase plan does not auto-complete it", async () => {
+    const workspace = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(workspace, zenithHome);
+    const services = createZenithApp({ cwd: workspace, zenithHome });
+
+    const registration = await services.app.registerProject();
+    if (!registration.project) throw new Error("Project not found after registration");
+    const project = registration.project;
+
+    // Bypass CLI schema by inserting zero-phase plan directly via repository
+    const plan = services.repository.createPlan({
+      projectId: project.id,
+      title: "Zero Phase Plan",
+      status: "active",
+      phases: [],
+    });
+
+    // Advance with no completedPhaseId — just a recompute
+    const result = await services.app.advancePlan({ planId: plan.id });
+    expect(result.planCompleted).toBe(false);
+
+    // Status must remain active
+    const fetched = services.repository.getPlanById(plan.id);
+    expect(fetched?.status).toBe("active");
+
+    services.close();
+  });
 });
 
 function restoreEnv(key: "HOME" | "ZENITH_HOME" | "DECODE_HOME", value: string | undefined): void {

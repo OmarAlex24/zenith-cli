@@ -1,4 +1,4 @@
-import type { Finding, NextStep, Plan, PlanPhase, Roadmap, Session } from "../domain/schemas";
+import type { Finding, NextStep, NextStepKind, Plan, PlanPhase, Roadmap, Session } from "../domain/schemas";
 import type { FocusCandidate } from "./focus";
 
 export type PlanNextResult = NextStep;
@@ -23,6 +23,7 @@ export function computeNext(
       recommendation: `Review finding: ${blockingFinding.title}`,
       reason: "Open high-severity finding should be handled before advancing the plan.",
       evidence: [blockingFinding.id],
+      kind: "blocking_finding" satisfies NextStepKind,
     };
   }
 
@@ -32,6 +33,7 @@ export function computeNext(
       recommendation: "Set roadmap focus for this worktree: zenith focus set <roadmap-id>",
       reason: `Multiple roadmaps have an active plan (${titles}); bind this worktree to one roadmap to continue.`,
       evidence: focus.candidates.map((candidate) => candidate.roadmapId).filter((id) => id.length > 0),
+      kind: "ambiguous_focus" satisfies NextStepKind,
     };
   }
 
@@ -43,6 +45,7 @@ export function computeNext(
       planId: activePlan.id,
       phaseId: inProgress.id,
       evidence: [activePlan.title],
+      kind: "implement_phase" satisfies NextStepKind,
     };
   }
 
@@ -54,6 +57,7 @@ export function computeNext(
       planId: activePlan.id,
       phaseId: blocked.id,
       evidence: [activePlan.title],
+      kind: "blocked_dependency" satisfies NextStepKind,
     };
   }
 
@@ -67,6 +71,7 @@ export function computeNext(
         planId: activePlan.id,
         phaseId: readyPhase.id,
         evidence: [activePlan.title],
+        kind: "implement_phase" satisfies NextStepKind,
       };
     }
     const firstTodo = todoPhasesInOrder[0];
@@ -87,6 +92,7 @@ export function computeNext(
         phaseId: firstTodo.id,
         evidence: unmetDepIds,
         blockedBy: unmetDepIds,
+        kind: "blocked_dependency" satisfies NextStepKind,
       };
     }
   }
@@ -98,6 +104,7 @@ export function computeNext(
         recommendation: `Create plan from roadmap: ${roadmapTarget.item.title}`,
         reason: "No active plan exists; active roadmap has the next product direction.",
         evidence: [roadmapTarget.roadmap.id, roadmapTarget.item.id],
+        kind: "create_plan" satisfies NextStepKind,
       };
     }
 
@@ -107,6 +114,7 @@ export function computeNext(
         recommendation: `Review deferred roadmap work: ${deferredTarget.item.title}`,
         reason: "No active plan exists and active roadmap work is deferred; reactivate a roadmap item before creating a plan.",
         evidence: [deferredTarget.roadmap.id, deferredTarget.item.id],
+        kind: "review_deferred" satisfies NextStepKind,
       };
     }
 
@@ -116,6 +124,7 @@ export function computeNext(
         recommendation: `Review finding: ${openFinding.title}`,
         reason: "No active plan exists; open findings remain before new work is selected.",
         evidence: [openFinding.id],
+        kind: "review_finding" satisfies NextStepKind,
       };
     }
   }
@@ -126,6 +135,7 @@ export function computeNext(
       recommendation: sessionStep,
       reason: "Latest session included an explicit next step.",
       evidence: [recentSessions[0]?.id ?? "latest_session"],
+      // kind intentionally omitted: freeform guidance with no plan/roadmap/finding context
     };
   }
 
@@ -133,6 +143,7 @@ export function computeNext(
     recommendation: activePlan ? "Review completed active plan" : "Create an active plan",
     reason: activePlan ? "No pending, blocked, or in-progress phases remain." : "No active plan exists.",
     evidence: activePlan ? [activePlan.id] : [],
+    kind: (activePlan ? "review_completed" : "create_plan_empty") satisfies NextStepKind,
   };
 }
 

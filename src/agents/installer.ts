@@ -151,8 +151,12 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Prefer \`zenith ...\`; use \`bun run zenith ...\` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
-- Use \`zenith timeline --json\` (with optional \`--limit <n>\`) for a read-only view of recent project activity.
+- Use \`zenith timeline --json\` (with optional \`--limit <n>\` and \`--since <eventId|iso>\`) for a read-only view of recent project activity.
 - Phase prerequisites are expressed with \`dependsOn\` (array of phase ids) via \`plan update-phase\`; when all remaining phases are gated, \`plan next\` reports \`Blocked by dependency\`.
+- Use \`plan next\` \`kind\` field to dispatch in agent loops: \`implement_phase\` → implement; \`blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty\` → STOP.
+- Use \`zenith plan advance --json --input -\` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
+- Use \`zenith plan complete <plan-id> --json\` to close a completed plan and advance its source roadmap item.
+- Use \`zenith plan path <plan-id> --json\` to view topological phase order with dependency and readiness information.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow
@@ -242,10 +246,47 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith plan update <plan-id> --json --input -\`
 - \`zenith plan update-phase <plan-id> --json --input -\`
 - \`zenith plan next --json\`
+- \`zenith plan complete <plan-id> --json\` — mark plan completed (all phases must be done); advances source roadmap item to \`done\`
+- \`zenith plan advance --json --input -\` — mark a phase done + append evidence + recompute next step (one transaction); returns \`AdvanceResult\`
+- \`zenith plan path <plan-id> --json\` — topological view of phases: \`orderedPhases\`, \`criticalPath\`, \`remaining\`, \`ready\` flags
 
 \`plan update-phase\` JSON input accepts optional \`dependsOn\` (array of phase ids) to declare phase prerequisites. When all remaining \`todo\` phases are gated by unmet dependencies, \`plan next\` returns a recommendation prefixed \`Blocked by dependency:\` with a \`blockedBy\` array.
 
 \`plan next\` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
+
+### plan next — NextStep.kind discriminant
+
+\`plan next --json\` now returns an optional \`kind\` field for clean switch-dispatch in agent loops:
+
+| kind | meaning |
+|---|---|
+| \`implement_phase\` | Implement the identified phase (in-progress or ready todo) |
+| \`create_plan\` | Create a plan from the roadmap item |
+| \`review_deferred\` | Reactivate a deferred roadmap item |
+| \`blocking_finding\` | Fix or triage the critical/high finding |
+| \`review_finding\` | Review an open finding (no active plan) |
+| \`ambiguous_focus\` | Set \`zenith focus set <roadmap-id>\` to resolve multiple active plans |
+| \`blocked_dependency\` | Unblock a dependency (blocked phase or all todos gated) |
+| \`review_completed\` | All phases done; complete or archive the active plan |
+| \`create_plan_empty\` | No plan, roadmap, finding, or session — create a plan |
+
+\`kind\` is omitted when the fallback is a freeform session next-step.
+
+### plan advance — AdvanceResult
+
+\`plan advance\` payload: \`{ planId, completedPhaseId?, status?, evidence[] }\`
+
+Response \`data\`:
+\`\`\`json
+{
+  "completed": { "phaseId": "phase_x", "status": "done" },
+  "planCompleted": false,
+  "roadmapItemAdvanced": null,
+  "next": { "recommendation": "...", "reason": "...", "kind": "implement_phase" }
+}
+\`\`\`
+
+If all phases are done after the advance, \`planCompleted\` is \`true\` and (if linked) \`roadmapItemAdvanced\` contains \`{ roadmapId, itemId }\`.
 
 ## Context
 
@@ -253,7 +294,9 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith context compact --json\`
 - \`zenith resume --json\`
 - \`zenith phase show <phase-id> --json\`
-- \`zenith timeline --json\` — read-only activity log; accepts \`--limit <n>\`
+- \`zenith timeline --json\` — read-only activity log; accepts \`--limit <n>\` and \`--since <eventId|iso>\`
+
+Use \`--since <eventId|iso>\` to return only events after a checkpoint cursor (ISO timestamp or event id). Useful for resumed sessions to diff progress without re-reading the entire timeline.
 
 ## Decisions
 
@@ -568,5 +611,63 @@ Payload:
 \`\`\`
 
 Use \`zenith session summarize --json --input -\` as a compatibility shortcut when there is no open session id.
+
+## Long-Running Loop (multi-phase roadmap grind)
+
+Use this workflow when driving a whole roadmap across one session (or resumed sessions).
+
+### Setup — scope the work
+
+\`\`\`bash
+zenith plan path plan_id --json   # topological order, criticalPath, ready flags
+zenith plan next --json           # first action
+\`\`\`
+
+### Iteration — one phase at a time
+
+Read \`next.kind\` and dispatch:
+
+| kind | action |
+|---|---|
+| \`implement_phase\` | \`zenith phase show <phaseId> --json\` → implement → verify (\`bun x tsc --noEmit && bun test && bun run build\`) → \`zenith plan advance --json --input -\` |
+| \`blocking_finding\` | STOP — hand back to user |
+| \`ambiguous_focus\` | STOP — hand back to user |
+| \`blocked_dependency\` | STOP — hand back to user |
+| \`review_finding\` | STOP — hand back to user |
+| \`review_completed\` | Run \`zenith plan complete <plan-id> --json\` then continue to next roadmap item |
+| \`create_plan\` | Run \`zenith roadmap create-plan <roadmap-id> --json --input -\` then loop |
+| \`create_plan_empty\` | STOP — hand back to user |
+| \`review_deferred\` | STOP — hand back to user |
+
+Advance payload (mark phase done with evidence):
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "completedPhaseId": "phase_id",
+  "evidence": [
+    { "kind": "command", "value": "bun x tsc --noEmit passed" },
+    { "kind": "command", "value": "bun test passed" }
+  ]
+}
+\`\`\`
+
+If \`planCompleted\` is \`true\` in the \`AdvanceResult\`, the plan has auto-completed and \`roadmapItemAdvanced\` reports which roadmap item moved to \`done\`. \`next\` already points at the next roadmap item.
+
+### Checkpoint / Resume
+
+Before pausing, record the latest event id as a cursor:
+
+\`\`\`bash
+zenith timeline --json --limit 1   # take data[0].id as cursor
+\`\`\`
+
+When resuming, use the cursor to diff progress since the pause:
+
+\`\`\`bash
+zenith timeline --json --since <cursor>   # events since pause
+zenith resume --json                       # structured context
+zenith plan next --json                    # current next step
+\`\`\`
 `;
 }

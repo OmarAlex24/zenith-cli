@@ -69,6 +69,26 @@ describe("agent installer", () => {
     expect(workflows).toContain("Blocked by dependency");
     expect(workflows).toContain("relatedPlanId");
     expect(workflows).toContain("relatedPhaseId");
+
+    // F1-F5 long-running loop assertions
+    expect(cliReference).toContain("zenith plan complete");
+    expect(cliReference).toContain("zenith plan advance");
+    expect(cliReference).toContain("zenith plan path");
+    expect(cliReference).toContain("--since");
+    expect(cliReference).toContain("AdvanceResult");
+    expect(cliReference).toContain("implement_phase");
+    expect(cliReference).toContain("blocking_finding");
+    expect(cliReference).toContain("create_plan_empty");
+    expect(skill).toContain("zenith plan advance");
+    expect(skill).toContain("zenith plan complete");
+    expect(skill).toContain("zenith plan path");
+    expect(skill).toContain("kind");
+    expect(workflows).toContain("Long-Running Loop");
+    expect(workflows).toContain("implement_phase");
+    expect(workflows).toContain("zenith plan advance");
+    expect(workflows).toContain("zenith plan complete");
+    expect(workflows).toContain("zenith plan path");
+    expect(workflows).toContain("--since");
   });
 
   test("updates only the marked block in existing agent file", () => {
