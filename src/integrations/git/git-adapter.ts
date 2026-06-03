@@ -27,7 +27,7 @@ export class GitAdapter {
       this.gitText(["rev-parse", "--abbrev-ref", "HEAD"], rootPath),
       this.gitText(["config", "--get", "remote.origin.url"], rootPath),
       this.gitText(["rev-parse", "HEAD"], rootPath),
-      this.gitText(["status", "--porcelain=v1"], rootPath),
+      this.gitText(["status", "--porcelain=v1"], rootPath, { preserveWhitespace: true }),
     ]);
 
     const changedFiles = parseChangedFiles(status ?? "");
@@ -47,7 +47,11 @@ export class GitAdapter {
     return basename(rootPath);
   }
 
-  private async gitText(args: string[], cwd: string): Promise<string | null> {
+  private async gitText(
+    args: string[],
+    cwd: string,
+    options: { preserveWhitespace?: boolean } = {},
+  ): Promise<string | null> {
     const proc = Bun.spawn(["git", ...args], {
       cwd,
       stdout: "pipe",
@@ -57,6 +61,10 @@ export class GitAdapter {
     const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     if (exitCode !== 0) {
       return null;
+    }
+
+    if (options.preserveWhitespace) {
+      return stdout.length > 0 ? stdout : null;
     }
 
     const trimmed = stdout.trim();

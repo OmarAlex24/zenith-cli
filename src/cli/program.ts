@@ -19,19 +19,6 @@ type CommandOptions = {
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
-  const userArgs = argv.slice(2);
-
-  if (userArgs.length === 0) {
-    const { runTui } = await import("../tui/run-tui");
-    await runTui({
-      cwd: options.cwd ?? process.cwd(),
-      ...(options.zenithHome ? { zenithHome: options.zenithHome } : {}),
-      ...(options.decodeHome ? { decodeHome: options.decodeHome } : {}),
-      ...(options.dbPath ? { dbPath: options.dbPath } : {}),
-    });
-    return;
-  }
-
   const program = new Command();
   program.name("zenith").description("Local-first project memory and agent coordination CLI");
 
@@ -399,6 +386,11 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
         return installAgentPack(agent as AgentKind, git.rootPath);
       });
     });
+
+  if (argv.slice(2).length === 0) {
+    program.outputHelp();
+    return;
+  }
 
   await program.parseAsync(argv);
 }

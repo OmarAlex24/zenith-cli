@@ -1,7 +1,9 @@
 {
   "name": "zenith-cli",
   "version": "0.1.0",
+  "description": "Local-first project memory and agent coordination CLI for AI coding workflows.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "zenith": "./src/index.ts",
@@ -12,8 +14,9 @@
     "decode": "bun run src/index.ts",
     "test": "bun test",
     "typecheck": "bun x tsc --noEmit",
+    "ci": "bun run typecheck && bun test && bun run build",
     "build": "bun build ./src/index.ts --target=bun --outdir=dist",
-    "compile": "bun build ./src/index.ts --compile --outfile dist/zenith"
+    "compile": "bun build ./src/cli/headless.ts --target=bun --outfile dist/zenith"
   },
   "dependencies": {
     "@opentui/core": "^0.3.1",

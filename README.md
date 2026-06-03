@@ -6,6 +6,64 @@ This MVP stores private project memory locally, exposes stable JSON commands for
 
 The public product name is Zenith CLI. The `decode` binary remains available as a compatibility alias while the command surface migrates to `zenith`.
 
+## Status
+
+Zenith is private and source-first for now. The supported development and dogfooding path is Bun from this checkout. npm publication and standalone binary distribution are intentionally deferred.
+
+## Requirements
+
+- Bun 1.x
+- Git, when project detection should include repository context
+
+## Install And Run From Source
+
+Install dependencies:
+
+```bash
+bun install
+```
+
+Run Zenith from the checkout:
+
+```bash
+bun run zenith --help
+bun run zenith project detect --json
+```
+
+Register the current project when needed:
+
+```bash
+bun run zenith init --json
+```
+
+If a `zenith` binary is already available on `PATH`, the same commands work without `bun run`:
+
+```bash
+zenith project detect --json
+zenith context compact --json
+```
+
+## Build Output
+
+Build the bundled JavaScript entrypoint:
+
+```bash
+bun run build
+bun dist/index.js project detect --json
+```
+
+The bundled JS entrypoint is a verified way to run built output.
+
+Build the local headless executable:
+
+```bash
+bun run compile
+./dist/zenith --help
+./dist/zenith project detect --json
+```
+
+The `dist/zenith` entrypoint is a Bun executable script, not a standalone binary. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. The source checkout remains the supported dogfooding path, and npm publication plus standalone binary distribution are still deferred.
+
 ## Storage
 
 Zenith stores private project memory in a local SQLite database. New installs use `~/.zenith/zenith.db` by default.
@@ -30,6 +88,68 @@ When Zenith uses the legacy `~/.decode` home, it keeps the legacy database name 
 - `session`: work continuity log.
 
 Use `plan` only for executable work. Store non-executable project memory with `brief`, `roadmap`, or `spike`.
+
+## MVP Commands
+
+Project:
+
+```bash
+bun run zenith init --json
+bun run zenith project detect --json
+bun run zenith project status --json
+```
+
+Plans and phases:
+
+```bash
+bun run zenith plan create --json --input -
+bun run zenith plan list --json
+bun run zenith plan show <plan-id> --json
+bun run zenith plan update <plan-id> --json --input -
+bun run zenith plan update-phase <plan-id> --json --input -
+bun run zenith plan next --json
+bun run zenith phase show <phase-id> --json
+```
+
+Context:
+
+```bash
+bun run zenith context get --json
+bun run zenith context compact --json
+bun run zenith resume --json
+```
+
+Long-running memory:
+
+```bash
+bun run zenith brief set --json --input -
+bun run zenith brief show --json
+bun run zenith roadmap create --json --input -
+bun run zenith roadmap list --json
+bun run zenith roadmap update-item <roadmap-id> --json --input -
+bun run zenith spike create --json --input -
+bun run zenith spike conclude <spike-id> --json --input -
+```
+
+Operational memory:
+
+```bash
+bun run zenith decision record --json --input -
+bun run zenith decision list --json
+bun run zenith finding record --json --input -
+bun run zenith finding list --json
+bun run zenith finding close <finding-id> --json
+bun run zenith session start --json --input -
+bun run zenith session capture <session-id> --json --input -
+bun run zenith session end <session-id> --json --input -
+```
+
+Agent pack:
+
+```bash
+bun run zenith agents install codex --json
+bun run zenith agents install claude --json
+```
 
 ## Agent Workflow
 
@@ -93,3 +213,25 @@ zenith plan update-phase <plan-id> --json --input -
 ```
 
 Use `decode` only as a legacy alias when `zenith` is not available.
+
+## Development
+
+Run the local verification suite:
+
+```bash
+bun run typecheck
+bun test
+bun run build
+```
+
+Run the same commands through the convenience CI script:
+
+```bash
+bun run ci
+```
+
+GitHub Actions runs dependency installation, typecheck, tests, and build on pushes to `main` and pull requests.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
