@@ -195,6 +195,7 @@ function renderCompactMarkdown(snapshot: ContextSnapshot): string {
   appendRoadmaps(lines, snapshot.recentRoadmaps);
   appendOpenSpikes(lines, snapshot.openSpikes);
   appendPhaseDetails(lines, focusPhaseDetail(snapshot));
+  appendOpenFindings(lines, snapshot.openFindings);
   return lines.join("\n");
 }
 

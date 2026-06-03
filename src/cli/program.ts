@@ -308,7 +308,62 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  const session = program.command("session").description("Session summaries");
+  const finding = program.command("finding").description("Findings and risks");
+
+  finding
+    .command("record")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.recordFinding(await readJsonInput(commandOptions.input)), humanFinding);
+    });
+
+  finding
+    .command("list")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.listFindings(), humanFindingList);
+    });
+
+  finding
+    .command("close")
+    .argument("<finding-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (findingId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.closeFinding(findingId), humanFinding);
+    });
+
+  const session = program.command("session").description("Session lifecycle");
+
+  session
+    .command("start")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.startSession(await readJsonInput(commandOptions.input)), humanSession);
+    });
+
+  session
+    .command("capture")
+    .argument("<session-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (sessionId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.captureSession(sessionId, await readJsonInput(commandOptions.input)),
+      humanSession);
+    });
+
+  session
+    .command("end")
+    .argument("<session-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (sessionId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.endSession(sessionId, await readJsonInput(commandOptions.input)),
+      humanSession);
+    });
 
   session
     .command("summarize")
@@ -527,6 +582,48 @@ function humanDecision(decision: {
     `Consequences: ${decision.consequences ?? "none"}`,
     `Alternatives: ${decision.alternatives.length > 0 ? decision.alternatives.join(", ") : "none"}`,
     `Related plans: ${decision.relatedPlanIds.length > 0 ? decision.relatedPlanIds.join(", ") : "none"}`,
+  ].join("\n");
+}
+
+function humanFinding(finding: {
+  id: string;
+  type: string;
+  severity: string;
+  title: string;
+  description: string;
+  status: string;
+  relatedFiles: string[];
+}): string {
+  return [
+    `Finding: ${finding.title}`,
+    `ID: ${finding.id}`,
+    `Status: ${finding.status}`,
+    `Severity: ${finding.severity}`,
+    `Type: ${finding.type}`,
+    `Description: ${finding.description}`,
+    `Related files: ${finding.relatedFiles.length > 0 ? finding.relatedFiles.join(", ") : "none"}`,
+  ].join("\n");
+}
+
+function humanFindingList(findings: Array<{ id: string; severity: string; title: string; status: string }>): string {
+  return findings.map((finding) => `${finding.id} ${finding.status} ${finding.severity} ${finding.title}`).join("\n");
+}
+
+function humanSession(session: {
+  id: string;
+  startedAt: string;
+  endedAt?: string | undefined;
+  branch?: string | undefined;
+  summary?: string | undefined;
+  nextSteps: string[];
+}): string {
+  return [
+    `Session: ${session.id}`,
+    `Started: ${session.startedAt}`,
+    `Ended: ${session.endedAt ?? "open"}`,
+    `Branch: ${session.branch ?? "none"}`,
+    `Summary: ${session.summary ?? "none"}`,
+    `Next: ${session.nextSteps[0] ?? "none"}`,
   ].join("\n");
 }
 

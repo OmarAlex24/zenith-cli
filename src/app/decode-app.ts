@@ -2,23 +2,28 @@ import { ZenithError } from "../cli/json-output";
 import { createId, nowIso } from "../domain/ids";
 import {
   ConcludeSpikeInputSchema,
+  CaptureSessionInputSchema,
   type CompactContext,
   type ContextSnapshot,
   CreateRoadmapInputSchema,
   CreatePlanInputSchema,
   CreateSpikeInputSchema,
+  EndSessionInputSchema,
   ImportPlanToRoadmapInputSchema,
   type PhaseDetail,
+  RecordFindingInputSchema,
   RecordDecisionInputSchema,
   RecordSpikeInputSchema,
   type ResumeContext,
   SessionSummaryInputSchema,
   SetBriefInputSchema,
+  StartSessionInputSchema,
   UpdatePhaseInputSchema,
   UpdatePlanInputSchema,
   UpdateRoadmapInputSchema,
   UpdateRoadmapItemInputSchema,
   type Decision,
+  type Finding,
   type Plan,
   type PlanPhase,
   type ProjectBrief,
@@ -447,6 +452,87 @@ export class DecodeApp {
     return decision;
   }
 
+  async recordFinding(rawInput: unknown): Promise<Finding> {
+    const project = await this.requireProject();
+    const input = RecordFindingInputSchema.parse(rawInput);
+
+    return this.repository.recordFinding({
+      projectId: project.id,
+      type: input.type,
+      severity: input.severity,
+      title: input.title,
+      description: input.description,
+      relatedFiles: input.relatedFiles,
+    });
+  }
+
+  async listFindings(): Promise<Finding[]> {
+    const project = await this.requireProject();
+    return this.repository.listFindings(project.id, "open");
+  }
+
+  async closeFinding(findingId: string): Promise<Finding> {
+    const project = await this.requireProject();
+    const finding = this.repository.getFindingById(findingId);
+
+    if (!finding || finding.projectId !== project.id) {
+      throw new ZenithError(`Finding not found: ${findingId}`, {
+        code: "finding_not_found",
+        details: { findingId },
+      });
+    }
+
+    return this.repository.closeFinding(findingId);
+  }
+
+  async startSession(rawInput: unknown): Promise<Session> {
+    const project = await this.requireProject();
+    const git = await this.git.inspect(this.cwd);
+    const input = StartSessionInputSchema.parse(rawInput);
+    const branch = input.branch ?? git.branch;
+
+    return this.repository.startSession({
+      projectId: project.id,
+      startedAt: input.startedAt ?? nowIso(),
+      ...(branch ? { branch } : {}),
+      ...(input.summary ? { summary: input.summary } : {}),
+      changedFiles: input.changedFiles ?? git.changedFiles,
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      nextSteps: input.nextSteps,
+    });
+  }
+
+  async captureSession(sessionId: string, rawInput: unknown): Promise<Session> {
+    const project = await this.requireProject();
+    this.requireProjectSession(sessionId, project.id);
+    const input = CaptureSessionInputSchema.parse(rawInput);
+
+    return this.repository.captureSession(sessionId, {
+      ...(input.summary ? { summary: input.summary } : {}),
+      ...(input.changedFiles !== undefined ? { changedFiles: input.changedFiles } : {}),
+      ...(input.nextSteps !== undefined ? { nextSteps: input.nextSteps } : {}),
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      ...(input.branch ? { branch: input.branch } : {}),
+    });
+  }
+
+  async endSession(sessionId: string, rawInput: unknown): Promise<Session> {
+    const project = await this.requireProject();
+    this.requireProjectSession(sessionId, project.id);
+    const git = await this.git.inspect(this.cwd);
+    const input = EndSessionInputSchema.parse(rawInput);
+    const branch = input.branch ?? git.branch;
+
+    return this.repository.endSession(sessionId, {
+      endedAt: input.endedAt ?? nowIso(),
+      ...(branch ? { branch } : {}),
+      ...(input.summary ? { summary: input.summary } : {}),
+      changedFiles: input.changedFiles ?? git.changedFiles,
+      ...(input.nextSteps !== undefined ? { nextSteps: input.nextSteps } : {}),
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+    });
+  }
+
   async summarizeSession(rawInput: unknown): Promise<Session> {
     const project = await this.requireProject();
     const git = await this.git.inspect(this.cwd);
@@ -463,6 +549,19 @@ export class DecodeApp {
       relatedPlanId: input.relatedPlanId,
       nextSteps: input.nextSteps,
     });
+  }
+
+  private requireProjectSession(sessionId: string, projectId: string): Session {
+    const session = this.repository.getSessionById(sessionId);
+
+    if (!session || session.projectId !== projectId) {
+      throw new ZenithError(`Session not found: ${sessionId}`, {
+        code: "session_not_found",
+        details: { sessionId },
+      });
+    }
+
+    return session;
   }
 
   private async requireProject(): Promise<Project> {

@@ -234,6 +234,124 @@ describe("cli json commands", () => {
     expect((missing.json as any).errors[0].details).toEqual({ decisionId: "dec_missing" });
   });
 
+  test("finding record list and close emit stable json", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    const unregisteredList = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
+    expect(unregisteredList.exitCode).toBe(1);
+    expect((unregisteredList.json as any).errors[0].code).toBe("project_not_registered");
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const missing = await runDecode(["finding", "close", "finding_missing", "--json"], { cwd, decodeHome });
+    expect(missing.exitCode).toBe(1);
+    expect((missing.json as any).errors[0].code).toBe("finding_not_found");
+    expect((missing.json as any).errors[0].details).toEqual({ findingId: "finding_missing" });
+
+    const recorded = await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        type: "risk",
+        severity: "high",
+        title: "Open operational risk",
+        description: "High severity findings should block the next plan step.",
+        relatedFiles: ["src/app/plan-next.ts"],
+      },
+    });
+    const findingId = (recorded.json as any).data.id;
+
+    const list = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const closed = await runDecode(["finding", "close", findingId, "--json"], { cwd, decodeHome });
+    const afterClose = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
+
+    expect(recorded.exitCode).toBe(0);
+    expect((recorded.json as any).data.status).toBe("open");
+    expect((list.json as any).data).toHaveLength(1);
+    expect((list.json as any).data[0].id).toBe(findingId);
+    expect((next.json as any).data.recommendation).toContain("Open operational risk");
+    expect(closed.exitCode).toBe(0);
+    expect((closed.json as any).data.status).toBe("closed");
+    expect((afterClose.json as any).data).toEqual([]);
+  });
+
+  test("session start capture end and summarize emit stable json", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    const unregisteredStart = await runDecode(["session", "start", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {},
+    });
+    expect(unregisteredStart.exitCode).toBe(1);
+    expect((unregisteredStart.json as any).errors[0].code).toBe("project_not_registered");
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const missingCapture = await runDecode(["session", "capture", "sess_missing", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { summary: "No session exists." },
+    });
+    expect(missingCapture.exitCode).toBe(1);
+    expect((missingCapture.json as any).errors[0].code).toBe("session_not_found");
+    expect((missingCapture.json as any).errors[0].details).toEqual({ sessionId: "sess_missing" });
+
+    const started = await runDecode(["session", "start", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        summary: "Started lifecycle work.",
+        changedFiles: ["src/domain/schemas.ts"],
+        nextSteps: ["Capture progress"],
+      },
+    });
+    const sessionId = (started.json as any).data.id;
+
+    const captured = await runDecode(["session", "capture", sessionId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        summary: "Captured lifecycle progress.",
+        nextSteps: ["End session"],
+      },
+    });
+
+    const ended = await runDecode(["session", "end", sessionId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        summary: "Finished lifecycle work.",
+        changedFiles: ["src/domain/schemas.ts", "src/cli/program.ts"],
+        nextSteps: ["Record evidence"],
+        endedAt: "2026-01-01T01:00:00.000Z",
+      },
+    });
+
+    const summarized = await runDecode(["session", "summarize", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        summary: "Compatibility summary still works.",
+        changedFiles: ["README.md"],
+      },
+    });
+
+    expect(started.exitCode).toBe(0);
+    expect((started.json as any).data.endedAt).toBeUndefined();
+    expect(captured.exitCode).toBe(0);
+    expect((captured.json as any).data.summary).toBe("Captured lifecycle progress.");
+    expect((captured.json as any).data.endedAt).toBeUndefined();
+    expect(ended.exitCode).toBe(0);
+    expect((ended.json as any).data.endedAt).toBe("2026-01-01T01:00:00.000Z");
+    expect((ended.json as any).data.nextSteps).toEqual(["Record evidence"]);
+    expect(summarized.exitCode).toBe(0);
+    expect((summarized.json as any).data.summary).toBe("Compatibility summary still works.");
+  });
+
   test("phase show returns phase_not_found for unknown ids", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();

@@ -10,7 +10,8 @@ Use the zenith-memory skill at .codex/skills/zenith-memory/SKILL.md when:
 - continuing previous work
 - updating project progress
 - recording technical decisions
-- summarizing a coding session
+- recording and closing findings
+- starting, capturing, ending, or summarizing a coding session
 
 Before planning:
 - Run `zenith context compact --json`.

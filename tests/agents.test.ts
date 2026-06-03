@@ -33,11 +33,15 @@ describe("agent installer", () => {
     expect(skill).toContain("zenith phase show <phase-id> --json");
     expect(skill).toContain("bun run zenith");
     expect(skill).toContain("bun x tsc --noEmit");
+    expect(skill).toContain("propose committing the completed change set");
     expect(cliReference).toContain("zenith plan update <plan-id> --json --input -");
     expect(cliReference).toContain("zenith decision list --json");
+    expect(cliReference).toContain("zenith finding record --json --input -");
+    expect(cliReference).toContain("zenith session start --json --input -");
     expect(cliReference).toContain("bun run zenith");
     expect(workflows).toContain("Continue With Minimal Prompt");
     expect(workflows).toContain("Use that phase as the implementation target");
+    expect(workflows).toContain("zenith session end session_id --json --input -");
     expect(workflows).toContain("bun run zenith");
     expect(generated).not.toContain("Decode CLI");
     expect(generated).not.toContain("decode-memory");

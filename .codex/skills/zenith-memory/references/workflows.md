@@ -123,10 +123,34 @@ Evidence payload:
 }
 ```
 
+## Record Findings
+
+```bash
+zenith finding record --json --input -
+```
+
+Payload:
+
+```json
+{
+  "type": "bug",
+  "severity": "high",
+  "title": "Missing retry around sync",
+  "description": "A transient failure can drop pending progress.",
+  "relatedFiles": ["src/sync.ts"]
+}
+```
+
+Close a finding after the issue is handled:
+
+```bash
+zenith finding close finding_id --json
+```
+
 ## End A Session
 
 ```bash
-zenith session summarize --json --input -
+zenith session end session_id --json --input -
 ```
 
 Payload:
@@ -137,3 +161,5 @@ Payload:
   "nextSteps": ["Wire CLI commands to the app service"]
 }
 ```
+
+Use `zenith session summarize --json --input -` as a compatibility shortcut when there is no open session id.

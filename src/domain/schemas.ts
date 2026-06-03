@@ -459,6 +459,52 @@ export const SessionSummaryInputSchema = z.object({
   endedAt: z.string().min(1).optional(),
 });
 
+export const RecordFindingInputSchema = z.object({
+  type: FindingTypeSchema,
+  severity: FindingSeveritySchema,
+  title: z.string().min(1),
+  description: z.string().min(1),
+  relatedFiles: z.array(z.string().min(1)).default([]),
+});
+
+export const StartSessionInputSchema = z.object({
+  summary: z.string().min(1).optional(),
+  changedFiles: z.array(z.string().min(1)).optional(),
+  nextSteps: z.array(z.string().min(1)).default([]),
+  relatedPlanId: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  startedAt: z.string().min(1).optional(),
+});
+
+export const CaptureSessionInputSchema = z
+  .object({
+    summary: z.string().min(1).optional(),
+    changedFiles: z.array(z.string().min(1)).optional(),
+    nextSteps: z.array(z.string().min(1)).optional(),
+    relatedPlanId: z.string().min(1).optional(),
+    branch: z.string().min(1).optional(),
+  })
+  .refine(
+    (value) =>
+      value.summary !== undefined ||
+      value.changedFiles !== undefined ||
+      value.nextSteps !== undefined ||
+      value.relatedPlanId !== undefined ||
+      value.branch !== undefined,
+    {
+      message: "Provide at least one session field to capture",
+    },
+  );
+
+export const EndSessionInputSchema = z.object({
+  summary: z.string().min(1).optional(),
+  changedFiles: z.array(z.string().min(1)).optional(),
+  nextSteps: z.array(z.string().min(1)).optional(),
+  relatedPlanId: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  endedAt: z.string().min(1).optional(),
+});
+
 export type Project = z.infer<typeof ProjectSchema>;
 export type Plan = z.infer<typeof PlanSchema>;
 export type PlanPhase = z.infer<typeof PlanPhaseSchema>;
@@ -502,3 +548,7 @@ export type CreateSpikeInput = z.infer<typeof CreateSpikeInputSchema>;
 export type RecordSpikeInput = z.infer<typeof RecordSpikeInputSchema>;
 export type ConcludeSpikeInput = z.infer<typeof ConcludeSpikeInputSchema>;
 export type SessionSummaryInput = z.infer<typeof SessionSummaryInputSchema>;
+export type RecordFindingInput = z.infer<typeof RecordFindingInputSchema>;
+export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
+export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
+export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;

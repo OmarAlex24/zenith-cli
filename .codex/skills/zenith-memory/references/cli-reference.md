@@ -47,6 +47,12 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith decision list --json`
 - `zenith decision show <decision-id> --json`
 
+## Findings
+
+- `zenith finding record --json --input -`
+- `zenith finding list --json`
+- `zenith finding close <finding-id> --json`
+
 ## Spikes
 
 - `zenith spike create --json --input -`
@@ -57,6 +63,9 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 
 ## Sessions
 
+- `zenith session start --json --input -`
+- `zenith session capture <session-id> --json --input -`
+- `zenith session end <session-id> --json --input -`
 - `zenith session summarize --json --input -`
 
 ## JSON Envelope

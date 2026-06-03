@@ -84,6 +84,31 @@ describe("context engine", () => {
     }
   });
 
+  test("open high severity findings appear in context and block next step", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+    const services = createZenithApp({ cwd, zenithHome });
+
+    await services.app.registerProject();
+    await services.app.createPlan({
+      title: "Zenith CLI Roadmap",
+      phases: [{ title: "Foundation" }],
+    });
+    const finding = await services.app.recordFinding({
+      type: "risk",
+      severity: "high",
+      title: "Lifecycle commands are missing",
+      description: "Agents cannot close operational memory loops.",
+    });
+    const compact = await services.app.compactContext();
+
+    expect(compact.openFindings[0]?.id).toBe(finding.id);
+    expect(compact.next.recommendation).toBe("Review finding: Lifecycle commands are missing");
+    expect(compact.markdown).toContain("high: Lifecycle commands are missing");
+    services.close();
+  });
+
   test("git context includes changed file names without file contents", async () => {
     const cwd = makeTempDir();
     const zenithHome = makeTempDir();

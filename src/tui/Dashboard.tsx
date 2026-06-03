@@ -35,7 +35,8 @@ const tabs = [
   { id: "plan", label: "3 Plan" },
   { id: "spikes", label: "4 Spikes" },
   { id: "decisions", label: "5 Decisions" },
-  { id: "context", label: "6 Context" },
+  { id: "findings", label: "6 Findings" },
+  { id: "context", label: "7 Context" },
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
@@ -96,7 +97,7 @@ function Header({ refreshing }: { refreshing: boolean }) {
   return (
     <box style={{ flexDirection: "row", justifyContent: "space-between", height: 2 }}>
       <text fg={palette.accent}>Zenith CLI</text>
-      <text fg={palette.muted}>{refreshing ? "refreshing..." : "1-6 tabs  arrows/tab switch  r refresh  q/esc quit"}</text>
+      <text fg={palette.muted}>{refreshing ? "refreshing..." : "1-7 tabs  arrows/tab switch  r refresh  q/esc quit"}</text>
     </box>
   );
 }
@@ -130,6 +131,10 @@ function renderTab(activeTab: TabId, data: DashboardData) {
     return <DecisionsView data={data} />;
   }
 
+  if (activeTab === "findings") {
+    return <FindingsView data={data} />;
+  }
+
   if (activeTab === "context") {
     return <ContextView data={data} />;
   }
@@ -142,6 +147,7 @@ function OverviewView({ data }: { data: DashboardData }) {
   const phaseRows = status.activePlan?.phases.slice(0, 8) ?? [];
   const decisions = status.recentDecisions.slice(0, 4);
   const openSpikes = status.openSpikes.slice(0, 4);
+  const openFindings = status.openFindings.slice(0, 4);
 
   return (
     <box style={{ flexDirection: "column", gap: 1, flexGrow: 1 }}>
@@ -206,6 +212,24 @@ function OverviewView({ data }: { data: DashboardData }) {
         </box>
 
         <box
+          title="Findings"
+          border
+          borderColor={palette.border}
+          backgroundColor={palette.panel}
+          style={{ flexGrow: 1, flexDirection: "column", padding: 1 }}
+        >
+          {openFindings.length === 0 ? (
+            <text fg={palette.muted}>No open findings.</text>
+          ) : (
+            openFindings.map((finding) => (
+              <text key={finding.id} fg={severityColor(finding.severity)}>
+                {finding.severity} {truncate(finding.title, 48)}
+              </text>
+            ))
+          )}
+        </box>
+
+        <box
           title="Decisions"
           border
           borderColor={palette.border}
@@ -217,7 +241,7 @@ function OverviewView({ data }: { data: DashboardData }) {
           ) : (
             decisions.map((decision) => (
               <text key={decision.id} fg={palette.text}>
-                {truncate(decision.title, 56)}
+                {truncate(decision.title, 42)}
               </text>
             ))
           )}
@@ -356,6 +380,30 @@ function DecisionsView({ data }: { data: DashboardData }) {
   );
 }
 
+function FindingsView({ data }: { data: DashboardData }) {
+  const findings = data.status.openFindings;
+
+  return (
+    <box
+      title="Open Findings"
+      border
+      borderColor={palette.border}
+      backgroundColor={palette.panel}
+      style={{ flexGrow: 1, flexDirection: "column", padding: 1, gap: 1 }}
+    >
+      {findings.length === 0 ? (
+        <text fg={palette.muted}>No open findings.</text>
+      ) : (
+        findings.slice(0, 12).map((finding) => (
+          <text key={finding.id} fg={severityColor(finding.severity)}>
+            {finding.severity} - {truncate(finding.title, 112)}
+          </text>
+        ))
+      )}
+    </box>
+  );
+}
+
 function ContextView({ data }: { data: DashboardData }) {
   const lines = data.context.markdown.split("\n").filter((line) => line.trim().length > 0);
 
@@ -400,6 +448,12 @@ function phaseColor(status: string): string {
   if (status === "in_progress") return palette.accent;
   if (status === "blocked") return palette.danger;
   return palette.warning;
+}
+
+function severityColor(severity: string): string {
+  if (severity === "critical" || severity === "high") return palette.danger;
+  if (severity === "medium") return palette.warning;
+  return palette.success;
 }
 
 function tabByNumber(keyName: string): TabId | null {

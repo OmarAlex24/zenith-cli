@@ -154,6 +154,80 @@ describe("sqlite repository", () => {
     repo.close();
   });
 
+  test("records, lists, and closes findings by project", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+
+    const finding = repo.recordFinding({
+      projectId: project.id,
+      type: "bug",
+      severity: "high",
+      title: "Missing lifecycle command",
+      description: "Agents cannot close operational findings yet.",
+      relatedFiles: ["src/cli/program.ts"],
+    });
+
+    expect(repo.listFindings(project.id)).toHaveLength(1);
+    expect(repo.listOpenFindings(project.id)[0]?.id).toBe(finding.id);
+    expect(repo.getFindingById(finding.id)?.relatedFiles).toEqual(["src/cli/program.ts"]);
+
+    const closed = repo.closeFinding(finding.id);
+
+    expect(closed.status).toBe("closed");
+    expect(closed.closedAt).toBeTruthy();
+    expect(repo.listOpenFindings(project.id)).toEqual([]);
+    expect(repo.listFindings(project.id, "closed")[0]?.id).toBe(finding.id);
+    repo.close();
+  });
+
+  test("starts, captures, and ends sessions", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({
+      name: "meridian",
+      rootPath: "/work/meridian",
+    });
+
+    const started = repo.startSession({
+      projectId: project.id,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      branch: "main",
+      changedFiles: ["src/index.ts"],
+      nextSteps: ["Capture progress"],
+    });
+
+    expect(started.endedAt).toBeUndefined();
+    expect(started.changedFiles).toEqual(["src/index.ts"]);
+
+    const captured = repo.captureSession(started.id, {
+      summary: "Implemented most lifecycle commands.",
+      nextSteps: ["Run verification"],
+    });
+
+    expect(captured.summary).toBe("Implemented most lifecycle commands.");
+    expect(captured.nextSteps).toEqual(["Run verification"]);
+    expect(captured.endedAt).toBeUndefined();
+
+    const ended = repo.endSession(started.id, {
+      endedAt: "2026-01-01T01:00:00.000Z",
+      changedFiles: ["src/index.ts", "tests/storage.test.ts"],
+      nextSteps: ["Record evidence"],
+    });
+
+    expect(ended.endedAt).toBe("2026-01-01T01:00:00.000Z");
+    expect(ended.changedFiles).toEqual(["src/index.ts", "tests/storage.test.ts"]);
+    expect(ended.nextSteps).toEqual(["Record evidence"]);
+    repo.close();
+  });
+
   test("creates a plan and computes deterministic next step", async () => {
     const workspace = makeTempDir();
     const zenithHome = makeTempDir();

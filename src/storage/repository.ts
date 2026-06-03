@@ -231,6 +231,17 @@ export type ConcludeSpikePatch = {
   evidence?: Evidence[];
 };
 
+export type InsertFindingInput = Omit<Finding, "id" | "createdAt" | "closedAt" | "status">;
+
+export type UpdateSessionPatch = {
+  endedAt?: string;
+  branch?: string;
+  summary?: string;
+  changedFiles?: string[];
+  relatedPlanId?: string;
+  nextSteps?: string[];
+};
+
 export class DecodeRepository {
   constructor(private readonly db: Database) {}
 
@@ -856,11 +867,125 @@ export class DecodeRepository {
     return row ? mapDecision(row) : null;
   }
 
-  listOpenFindings(projectId: string): Finding[] {
+  recordFinding(input: InsertFindingInput): Finding {
+    const id = createId("finding");
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO findings (
+            id, project_id, type, severity, title, description,
+            status, related_files_json, created_at, closed_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.type,
+          input.severity,
+          input.title,
+          input.description,
+          JSON.stringify(input.relatedFiles),
+          timestamp,
+        );
+
+      this.recordEvent(input.projectId, "finding.recorded", "finding", id, {
+        type: input.type,
+        severity: input.severity,
+        title: input.title,
+      });
+    })();
+
+    const finding = this.getFindingById(id);
+    if (!finding) {
+      throw new Error(`Finding not found after insert: ${id}`);
+    }
+    return finding;
+  }
+
+  listFindings(projectId: string, status: Finding["status"] = "open"): Finding[] {
     return this.db
-      .query<FindingRow, [string]>("SELECT * FROM findings WHERE project_id = ? AND status = 'open' ORDER BY created_at DESC")
-      .all(projectId)
+      .query<FindingRow, [string, Finding["status"]]>(
+        "SELECT * FROM findings WHERE project_id = ? AND status = ? ORDER BY created_at DESC",
+      )
+      .all(projectId, status)
       .map(mapFinding);
+  }
+
+  listOpenFindings(projectId: string): Finding[] {
+    return this.listFindings(projectId, "open");
+  }
+
+  getFindingById(findingId: string): Finding | null {
+    const row = this.db.query<FindingRow, [string]>("SELECT * FROM findings WHERE id = ?").get(findingId);
+    return row ? mapFinding(row) : null;
+  }
+
+  closeFinding(findingId: string): Finding {
+    const finding = this.getFindingById(findingId);
+    if (!finding) {
+      throw new Error(`Finding not found: ${findingId}`);
+    }
+
+    if (finding.status === "closed") {
+      return finding;
+    }
+
+    const timestamp = nowIso();
+    this.db.transaction(() => {
+      this.db.query("UPDATE findings SET status = 'closed', closed_at = ? WHERE id = ?").run(timestamp, findingId);
+      this.recordEvent(finding.projectId, "finding.closed", "finding", finding.id, {
+        title: finding.title,
+        severity: finding.severity,
+      });
+    })();
+
+    return this.getFindingById(findingId)!;
+  }
+
+  startSession(input: Omit<Session, "id">): Session {
+    const id = createId("sess");
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO sessions (
+            id, project_id, started_at, ended_at, branch, summary,
+            changed_files_json, related_plan_id, next_steps_json, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.startedAt,
+          input.endedAt ?? null,
+          input.branch ?? null,
+          input.summary ?? null,
+          JSON.stringify(input.changedFiles),
+          input.relatedPlanId ?? null,
+          JSON.stringify(input.nextSteps),
+          timestamp,
+        );
+
+      this.recordEvent(input.projectId, input.endedAt ? "session.ended" : "session.started", "session", id, {
+        summary: input.summary,
+        nextSteps: input.nextSteps,
+      });
+    })();
+
+    const session = this.getSessionById(id);
+    if (!session) {
+      throw new Error(`Session not found after insert: ${id}`);
+    }
+    return session;
   }
 
   recordSessionSummary(input: Omit<Session, "id">): Session {
@@ -904,6 +1029,37 @@ export class DecodeRepository {
     return session;
   }
 
+  captureSession(sessionId: string, patch: UpdateSessionPatch): Session {
+    const session = this.getSessionById(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    const updated = this.updateSession(session, patch);
+    this.recordEvent(session.projectId, "session.captured", "session", session.id, {
+      summary: patch.summary,
+      nextSteps: patch.nextSteps,
+    });
+    return updated;
+  }
+
+  endSession(sessionId: string, patch: UpdateSessionPatch): Session {
+    const session = this.getSessionById(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    const updated = this.updateSession(session, {
+      ...patch,
+      endedAt: patch.endedAt ?? nowIso(),
+    });
+    this.recordEvent(session.projectId, "session.ended", "session", session.id, {
+      summary: updated.summary,
+      nextSteps: updated.nextSteps,
+    });
+    return updated;
+  }
+
   listRecentSessions(projectId: string, limit = 5): Session[] {
     return this.db
       .query<SessionRow, [string, number]>("SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT ?")
@@ -914,6 +1070,32 @@ export class DecodeRepository {
   getSessionById(sessionId: string): Session | null {
     const row = this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
     return row ? mapSession(row) : null;
+  }
+
+  private updateSession(session: Session, patch: UpdateSessionPatch): Session {
+    this.db
+      .query(
+        `
+        UPDATE sessions
+        SET ended_at = ?, branch = ?, summary = ?, changed_files_json = ?, related_plan_id = ?, next_steps_json = ?
+        WHERE id = ?
+      `,
+      )
+      .run(
+        patch.endedAt ?? session.endedAt ?? null,
+        patch.branch ?? session.branch ?? null,
+        patch.summary ?? session.summary ?? null,
+        JSON.stringify(patch.changedFiles ?? session.changedFiles),
+        patch.relatedPlanId ?? session.relatedPlanId ?? null,
+        JSON.stringify(patch.nextSteps ?? session.nextSteps),
+        session.id,
+      );
+
+    const updated = this.getSessionById(session.id);
+    if (!updated) {
+      throw new Error(`Session not found after update: ${session.id}`);
+    }
+    return updated;
   }
 
   private getPhases(planId: string): PlanPhase[] {

@@ -98,7 +98,8 @@ Use the zenith-memory skill at ${skillPath} when:
 - continuing previous work
 - updating project progress
 - recording technical decisions
-- summarizing a coding session
+- recording and closing findings
+- starting, capturing, ending, or summarizing a coding session
 
 Before planning:
 - Run \`zenith context compact --json\`.
@@ -116,12 +117,12 @@ Do not store secrets, full diffs, or long transcripts in Zenith.
 function skillTemplate(agent: AgentKind): string {
   return `---
 name: zenith-memory
-description: Use when working in a repository that uses Zenith CLI to read local project context, continue previous work, maintain briefs/roadmaps/spikes, update executable plan progress, record decisions, and summarize sessions.
+description: Use when working in a repository that uses Zenith CLI to read local project context, continue previous work, maintain briefs/roadmaps/spikes, update executable plan progress, record findings/decisions, and manage sessions.
 ---
 
 # Zenith Memory
 
-Use this skill when the user asks to plan, resume, record project intent, maintain roadmap direction, record research spikes, store technical decisions, or close a meaningful coding session.
+Use this skill when the user asks to plan, resume, record project intent, maintain roadmap direction, record research spikes, store technical decisions, record findings, or close a meaningful coding session.
 
 Zenith CLI is the source of truth for private local project memory. It stores data locally, not in the repository.
 
@@ -144,6 +145,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Prefer \`zenith ...\`; use \`bun run zenith ...\` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
+- After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow
 
@@ -173,8 +175,15 @@ Zenith CLI is the source of truth for private local project memory. It stores da
    \`zenith plan update <plan-id> --json --input -\`
 11. Record architectural decisions:
    \`zenith decision record --json --input -\`
-12. At the end of meaningful work, summarize the session:
+12. Record findings or session lifecycle when needed:
+   \`zenith finding record --json --input -\`
+   \`zenith finding close <finding-id> --json\`
+   \`zenith session start --json --input -\`
+   \`zenith session capture <session-id> --json --input -\`
+   \`zenith session end <session-id> --json --input -\`
+13. For quick compatibility summaries, use:
    \`zenith session summarize --json --input -\`
+14. Before closing the turn, check git status and propose committing the completed change set if the worktree is dirty.
 
 ## References
 
@@ -235,6 +244,12 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 - \`zenith decision list --json\`
 - \`zenith decision show <decision-id> --json\`
 
+## Findings
+
+- \`zenith finding record --json --input -\`
+- \`zenith finding list --json\`
+- \`zenith finding close <finding-id> --json\`
+
 ## Spikes
 
 - \`zenith spike create --json --input -\`
@@ -245,6 +260,9 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 
 ## Sessions
 
+- \`zenith session start --json --input -\`
+- \`zenith session capture <session-id> --json --input -\`
+- \`zenith session end <session-id> --json --input -\`
 - \`zenith session summarize --json --input -\`
 
 ## JSON Envelope
@@ -389,10 +407,34 @@ Evidence payload:
 }
 \`\`\`
 
+## Record Findings
+
+\`\`\`bash
+zenith finding record --json --input -
+\`\`\`
+
+Payload:
+
+\`\`\`json
+{
+  "type": "bug",
+  "severity": "high",
+  "title": "Missing retry around sync",
+  "description": "A transient failure can drop pending progress.",
+  "relatedFiles": ["src/sync.ts"]
+}
+\`\`\`
+
+Close a finding after the issue is handled:
+
+\`\`\`bash
+zenith finding close finding_id --json
+\`\`\`
+
 ## End A Session
 
 \`\`\`bash
-zenith session summarize --json --input -
+zenith session end session_id --json --input -
 \`\`\`
 
 Payload:
@@ -403,5 +445,7 @@ Payload:
   "nextSteps": ["Wire CLI commands to the app service"]
 }
 \`\`\`
+
+Use \`zenith session summarize --json --input -\` as a compatibility shortcut when there is no open session id.
 `;
 }

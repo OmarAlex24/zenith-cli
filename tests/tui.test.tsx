@@ -56,6 +56,15 @@ describe("OpenTUI dashboard", () => {
       setup.mockInput.pressKey("6");
     });
     await setup.flush();
+    const findingsFrame = setup.captureCharFrame();
+    expect(findingsFrame).toContain("Open Findings");
+    expect(findingsFrame).toContain("Missing session close");
+    expect(findingsFrame).toContain("high");
+
+    await act(async () => {
+      setup.mockInput.pressKey("7");
+    });
+    await setup.flush();
     const contextFrame = setup.captureCharFrame();
     expect(contextFrame).toContain("Zenith Compact Context");
 
@@ -150,7 +159,13 @@ function makeStatus(): ProjectStatus {
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    openFindings: [],
+    openFindings: [
+      {
+        id: "finding_1",
+        severity: "high",
+        title: "Missing session close",
+      },
+    ],
     next: {
       recommendation: "Foundation",
       reason: "First pending phase in the active plan.",
@@ -251,7 +266,13 @@ function makeContext(status: ProjectStatus): CompactContext {
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    openFindings: [],
+    openFindings: [
+      {
+        id: "finding_1",
+        severity: "high",
+        title: "Missing session close",
+      },
+    ],
     next: status.next,
     markdown:
       "# Zenith Compact Context\n\n## Project\n- Name: Meridian\n\n## Plan\n- Active plan: Zenith MVP\n\n## Phase details\n- Description: Documented acceptance details.",

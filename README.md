@@ -75,6 +75,17 @@ zenith spike create --json --input -
 zenith spike conclude <spike-id> --json --input -
 ```
 
+Findings and sessions close the operational memory loop:
+
+```bash
+zenith finding record --json --input -
+zenith finding list --json
+zenith finding close <finding-id> --json
+zenith session start --json --input -
+zenith session capture <session-id> --json --input -
+zenith session end <session-id> --json --input -
+```
+
 Phase progress is recorded with evidence:
 
 ```bash
