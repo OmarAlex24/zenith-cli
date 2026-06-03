@@ -5,7 +5,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
-import type { CompactContext, Plan, Roadmap, Spike } from "../src/domain/schemas";
+import type { CompactContext, Finding, Plan, Roadmap, Spike } from "../src/domain/schemas";
 
 describe("OpenTUI dashboard", () => {
   test("renders memory tabs, supports navigation, and handles resize", async () => {
@@ -62,6 +62,9 @@ describe("OpenTUI dashboard", () => {
     expect(findingsFrame).toContain("Open Findings");
     expect(findingsFrame).toContain("Missing session close");
     expect(findingsFrame).toContain("high");
+    expect(findingsFrame).toContain("bug");
+    expect(findingsFrame).toContain("Sessions must be closed");
+    expect(findingsFrame).toContain("src/cli/program.ts");
 
     await act(async () => {
       setup.mockInput.pressKey("7");
@@ -87,17 +90,83 @@ describe("OpenTUI dashboard", () => {
       setup.renderer.destroy();
     });
   });
+
+  test("reload refreshes dashboard data without leaving the active tab", async () => {
+    const initialData = makeDashboardData();
+    const refreshedData = makeDashboardData({
+      finding: {
+        ...makeFinding(),
+        id: "finding_2",
+        severity: "medium",
+        type: "docs_gap",
+        title: "Dashboard docs missing",
+        description: "README should explain source TUI and headless compiled output.",
+        relatedFiles: ["README.md"],
+      },
+      projectName: "Atlas",
+    });
+    let reloadCount = 0;
+
+    const setup = await testRender(
+      <Dashboard
+        initialData={initialData}
+        reload={async () => {
+          reloadCount += 1;
+          return refreshedData;
+        }}
+      />,
+      { width: 96, height: 26 },
+    );
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressKey("6");
+    });
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("Missing session close");
+
+    await act(async () => {
+      setup.mockInput.pressKey("r");
+    });
+    await setup.flush();
+    const refreshedFrame = setup.captureCharFrame();
+
+    expect(reloadCount).toBe(1);
+    expect(refreshedFrame).toContain("Open Findings");
+    expect(refreshedFrame).toContain("Dashboard docs missing");
+    expect(refreshedFrame).toContain("docs_gap");
+    expect(refreshedFrame).toContain("README.md");
+
+    act(() => {
+      setup.resize(50, 16);
+    });
+    await setup.flush();
+    const compactFrame = setup.captureCharFrame();
+    expect(compactFrame).toContain("Zenith");
+    expect(compactFrame).toContain("CLI");
+    expect(compactFrame).toContain("Open Findings");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
 });
 
-function makeDashboardData(): DashboardData {
-  const status = makeStatus();
+function makeDashboardData(options: { finding?: Finding; projectName?: string } = {}): DashboardData {
+  const finding = options.finding ?? makeFinding();
+  const status = makeStatus({
+    finding,
+    ...(options.projectName ? { projectName: options.projectName } : {}),
+  });
   const plans = [status.activePlan!];
   const roadmaps = status.recentRoadmaps;
+  const findings = [finding];
   const context = makeContext(status);
-  return { status, plans, roadmaps, context };
+  return { status, plans, roadmaps, findings, context };
 }
 
-function makeStatus(): ProjectStatus {
+function makeStatus(options: { finding: Finding; projectName?: string }): ProjectStatus {
+  const projectName = options.projectName ?? "Meridian";
   const activePlan: Plan = {
     id: "plan_1",
     projectId: "proj_1",
@@ -122,7 +191,7 @@ function makeStatus(): ProjectStatus {
   const status: ProjectStatus = {
     project: {
       id: "proj_1",
-      name: "Meridian",
+      name: projectName,
       rootPath: "/work/meridian",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -185,9 +254,9 @@ function makeStatus(): ProjectStatus {
     ],
     openFindings: [
       {
-        id: "finding_1",
-        severity: "high",
-        title: "Missing session close",
+        id: options.finding.id,
+        severity: options.finding.severity,
+        title: options.finding.title,
       },
     ],
     next: {
@@ -200,6 +269,20 @@ function makeStatus(): ProjectStatus {
   };
 
   return status;
+}
+
+function makeFinding(): Finding {
+  return {
+    id: "finding_1",
+    projectId: "proj_1",
+    type: "bug",
+    severity: "high",
+    title: "Missing session close",
+    description: "Sessions must be closed so future agents can resume from accurate next steps.",
+    status: "open",
+    relatedFiles: ["src/cli/program.ts"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
 }
 
 function makeRoadmap(): Roadmap {

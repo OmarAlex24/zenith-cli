@@ -33,6 +33,7 @@ async function loadDashboardData(app: ReturnType<typeof createZenithApp>["app"])
   const status = await app.getProjectStatus();
   const plans = status.project ? await app.listPlans() : [];
   const roadmaps = status.project ? await app.listRoadmaps() : [];
+  const findings = status.project ? await app.listFindings() : [];
   const context = await app.compactContext();
-  return { status, plans, roadmaps, context };
+  return { status, plans, roadmaps, findings, context };
 }

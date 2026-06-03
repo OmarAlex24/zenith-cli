@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import type { ProjectStatus } from "../app/decode-app";
-import type { CompactContext, Plan, Roadmap } from "../domain/schemas";
+import type { CompactContext, Finding, Plan, Roadmap } from "../domain/schemas";
 
 export type DashboardData = {
   status: ProjectStatus;
   plans: Plan[];
   roadmaps: Roadmap[];
+  findings: Finding[];
   context: CompactContext;
 };
 
@@ -407,7 +408,7 @@ function DecisionsView({ data }: { data: DashboardData }) {
 }
 
 function FindingsView({ data }: { data: DashboardData }) {
-  const findings = data.status.openFindings;
+  const findings = data.findings;
 
   return (
     <box
@@ -420,11 +421,20 @@ function FindingsView({ data }: { data: DashboardData }) {
       {findings.length === 0 ? (
         <text fg={palette.muted}>No open findings.</text>
       ) : (
-        findings.slice(0, 12).map((finding) => (
-          <text key={finding.id} fg={severityColor(finding.severity)}>
-            {finding.severity} - {truncate(finding.title, 96)} / {finding.id}
-          </text>
-        ))
+        findings.slice(0, 5).flatMap((finding) => [
+          <text key={`${finding.id}-title`} fg={severityColor(finding.severity)}>
+            {finding.severity} {finding.type} - {truncate(finding.title, 92)}
+          </text>,
+          <text key={`${finding.id}-description`} fg={palette.text}>
+            description - {truncate(finding.description, 116)}
+          </text>,
+          <text key={`${finding.id}-files`} fg={palette.muted}>
+            files - {finding.relatedFiles.length > 0 ? truncate(finding.relatedFiles.join(", "), 116) : "none"}
+          </text>,
+          <text key={`${finding.id}-meta`} fg={palette.muted}>
+            {finding.status} / {finding.id}
+          </text>,
+        ])
       )}
     </box>
   );

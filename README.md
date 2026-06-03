@@ -26,9 +26,12 @@ bun install
 Run Zenith from the checkout:
 
 ```bash
+bun run zenith
 bun run zenith --help
 bun run zenith project detect --json
 ```
+
+Running `bun run zenith` with no arguments launches the read-only OpenTUI dashboard for project status, roadmap, plan, findings, sessions, decisions, spikes, and compact context. JSON commands remain available by passing command arguments.
 
 Register the current project when needed:
 
@@ -62,7 +65,7 @@ bun run compile
 ./dist/zenith project detect --json
 ```
 
-The `dist/zenith` entrypoint is a Bun executable script, not a standalone binary. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. The source checkout remains the supported dogfooding path, and npm publication plus standalone binary distribution are still deferred.
+The `dist/zenith` entrypoint is a Bun executable script, not a standalone binary. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. Use `bun run zenith` from the source checkout for the dashboard. The source checkout remains the supported dogfooding path, and npm publication plus standalone binary distribution are still deferred.
 
 ## Storage
 
