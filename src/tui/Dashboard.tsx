@@ -266,8 +266,8 @@ function Sidebar({ data, activeSection, hasFocus }: { data: DashboardData; activ
         const badge = sidebarBadge(section.id, data);
         return (
           <text key={section.id}>
-            <span fg={active ? palette.accent : palette.faint}>{active ? "▸ " : "  "}</span>
-            <span fg={active ? palette.accent : palette.text}>{section.label}</span>
+            <span fg={active && hasFocus ? palette.accent : palette.faint}>{active ? "▸ " : "  "}</span>
+            <span fg={active && hasFocus ? palette.accent : palette.text}>{section.label}</span>
             {badge ? <span fg={badge.color}>{` ${badge.text}`}</span> : null}
           </text>
         );
