@@ -60,6 +60,7 @@ type PhaseRow = {
   status: PlanPhase["status"];
   acceptance_criteria_json: string;
   evidence_json: string;
+  depends_on_json: string;
   created_at: string;
   updated_at: string;
 };
@@ -183,7 +184,7 @@ export type InsertPlanInput = {
   priority?: "low" | "medium" | "high";
   sourceRoadmapId?: string;
   sourceRoadmapItemId?: string;
-  phases: Array<Omit<PlanPhase, "id"> & { id?: string }>;
+  phases: Array<Omit<PlanPhase, "id" | "dependsOn"> & { id?: string; dependsOn?: string[] }>;
 };
 
 export type UpdatePhasePatch = {
@@ -192,6 +193,7 @@ export type UpdatePhasePatch = {
   status?: PlanPhase["status"];
   acceptanceCriteria?: string[];
   evidence?: Evidence[];
+  dependsOn?: string[];
 };
 
 export type UpdatePlanPatch = {
@@ -752,9 +754,9 @@ export class ZenithRepository {
             `
             INSERT INTO plan_phases (
               id, plan_id, position, title, description, status,
-              acceptance_criteria_json, evidence_json, created_at, updated_at
+              acceptance_criteria_json, evidence_json, depends_on_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           )
           .run(
@@ -766,6 +768,7 @@ export class ZenithRepository {
             phase.status,
             JSON.stringify(phase.acceptanceCriteria),
             JSON.stringify(phase.evidence),
+            JSON.stringify(phase.dependsOn ?? []),
             timestamp,
             timestamp,
           );
@@ -866,13 +869,14 @@ export class ZenithRepository {
     const nextEvidence = patch.evidence === undefined ? phase.evidence : [...phase.evidence, ...patch.evidence];
     const nextAcceptance =
       patch.acceptanceCriteria === undefined ? phase.acceptanceCriteria : patch.acceptanceCriteria;
+    const nextDependsOn = patch.dependsOn === undefined ? phase.dependsOn : patch.dependsOn;
 
     this.db.transaction(() => {
       this.db
         .query(
           `
           UPDATE plan_phases
-          SET title = ?, description = ?, status = ?, acceptance_criteria_json = ?, evidence_json = ?, updated_at = ?
+          SET title = ?, description = ?, status = ?, acceptance_criteria_json = ?, evidence_json = ?, depends_on_json = ?, updated_at = ?
           WHERE id = ?
         `,
         )
@@ -882,6 +886,7 @@ export class ZenithRepository {
           patch.status ?? phase.status,
           JSON.stringify(nextAcceptance),
           JSON.stringify(nextEvidence),
+          JSON.stringify(nextDependsOn),
           timestamp,
           phase.id,
         );
@@ -1393,6 +1398,7 @@ function mapPhase(row: PhaseRow): PlanPhase {
     status: row.status,
     acceptanceCriteria: parseJsonArray<string>(row.acceptance_criteria_json),
     evidence: parseJsonArray<PlanPhase["evidence"][number]>(row.evidence_json),
+    dependsOn: parseJsonArray<string>(row.depends_on_json),
   };
 }
 

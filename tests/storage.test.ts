@@ -318,7 +318,7 @@ describe("sqlite repository", () => {
 
     expect(plan.phases).toHaveLength(2);
     expect(next.recommendation).toBe("DB schema");
-    expect(next.reason).toContain("First todo phase");
+    expect(next.reason).toContain("First ready todo phase");
     services.close();
   });
 
@@ -535,6 +535,71 @@ describe("sqlite repository", () => {
     const limited = repo.listEvents(projectA.id, { limit: 1 });
     expect(limited).toHaveLength(1);
 
+    repo.close();
+  });
+
+  test("v7 migration adds depends_on_json column to plan_phases", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(plan_phases)")
+      .all()
+      .map((col) => col.name);
+
+    expect(columns).toContain("depends_on_json");
+    db.close();
+  });
+
+  test("createPlan yields phases with dependsOn: []", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Dep plan",
+      status: "active",
+      phases: [
+        { title: "Phase A", status: "todo", acceptanceCriteria: [], evidence: [] },
+        { title: "Phase B", status: "todo", acceptanceCriteria: [], evidence: [] },
+      ],
+    });
+
+    expect(plan.phases[0]?.dependsOn).toEqual([]);
+    expect(plan.phases[1]?.dependsOn).toEqual([]);
+    repo.close();
+  });
+
+  test("updatePhase with dependsOn round-trips correctly", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Dep plan 2",
+      status: "active",
+      phases: [
+        { title: "Phase A", status: "done", acceptanceCriteria: [], evidence: [] },
+        { title: "Phase B", status: "todo", acceptanceCriteria: [], evidence: [] },
+      ],
+    });
+    const phaseAId = plan.phases[0]!.id;
+    const phaseBId = plan.phases[1]!.id;
+
+    const updated = repo.updatePhase(
+      plan.id,
+      { phaseId: phaseBId },
+      { dependsOn: [phaseAId] },
+    );
+
+    expect(updated.phases[1]?.dependsOn).toEqual([phaseAId]);
     repo.close();
   });
 

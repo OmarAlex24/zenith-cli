@@ -49,6 +49,7 @@ export const PlanPhaseSchema = z.object({
   status: PhaseStatusSchema,
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   evidence: z.array(StoredEvidenceSchema).default([]),
+  dependsOn: z.array(z.string().min(1)).default([]),
 });
 
 export const PlanSchema = z.object({
@@ -193,6 +194,7 @@ export const NextStepSchema = z.object({
   planId: z.string().min(1).optional(),
   phaseId: z.string().min(1).optional(),
   evidence: z.array(z.string().min(1)).default([]),
+  blockedBy: z.array(z.string().min(1)).optional(),
 });
 
 export const ProjectSummarySchema = ProjectSchema.pick({
@@ -334,6 +336,7 @@ export const UpdatePhaseInputSchema = z
     status: PhaseStatusSchema.optional(),
     acceptanceCriteria: z.array(z.string().min(1)).optional(),
     evidence: z.array(EvidenceSchema).optional(),
+    dependsOn: z.array(z.string().min(1)).optional(),
   })
   .refine((value) => value.phaseId || value.phaseTitle, {
     message: "Provide phaseId or phaseTitle",
@@ -344,7 +347,8 @@ export const UpdatePhaseInputSchema = z
       value.description !== undefined ||
       value.status !== undefined ||
       value.acceptanceCriteria !== undefined ||
-      value.evidence !== undefined,
+      value.evidence !== undefined ||
+      value.dependsOn !== undefined,
     {
       message: "Provide at least one phase update",
     },

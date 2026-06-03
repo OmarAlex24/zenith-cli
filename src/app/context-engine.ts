@@ -316,6 +316,10 @@ function appendPhaseDetails(lines: string[], phaseDetail: PhaseDetail | null): v
       lines.push(`  - ${item.kind}: ${truncate(item.value, 180)}`);
     }
   }
+
+  if (phaseDetail.phase.dependsOn.length > 0) {
+    lines.push(`- Depends on: ${phaseDetail.phase.dependsOn.join(", ")}`);
+  }
 }
 
 function focusPhaseDetail(context: Pick<ContextParts, "activePlan" | "currentPhase" | "selectedPhase">): PhaseDetail | null {

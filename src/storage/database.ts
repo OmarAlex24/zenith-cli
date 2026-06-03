@@ -204,6 +204,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 6,
     sql: "",
   },
+  {
+    version: 7,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -257,6 +261,8 @@ export function runMigrations(db: Database): void {
         runStatusVocabularyMigration(db);
       } else if (migration.version === 6) {
         runFindingLinksMigration(db);
+      } else if (migration.version === 7) {
+        runPhaseDependsOnMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -278,6 +284,12 @@ function runIntegrityHardeningMigration(db: Database): void {
 
   for (const statement of INTEGRITY_HARDENING_STATEMENTS) {
     db.run(statement);
+  }
+}
+
+function runPhaseDependsOnMigration(db: Database): void {
+  if (!tableHasColumn(db, "plan_phases", "depends_on_json")) {
+    db.run("ALTER TABLE plan_phases ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'");
   }
 }
 

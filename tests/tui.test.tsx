@@ -5,7 +5,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
-import type { CompactContext, Decision, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
+import type { CompactContext, Decision, Event, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
 
 describe("OpenTUI dashboard", () => {
   test("renders sidebar shell, sections, and master-detail navigation", async () => {
@@ -173,10 +173,45 @@ describe("OpenTUI dashboard", () => {
       setup.renderer.destroy();
     });
   });
+
+  test("pressing t opens timeline overlay and numeric keys still navigate sections when closed", async () => {
+    const timeline = makeTimeline();
+    const data = makeDashboardData({ timeline });
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    // Press 't' to open timeline overlay
+    await act(async () => {
+      setup.mockInput.pressKey("t");
+    });
+    await setup.flush();
+    const overlayFrame = setup.captureCharFrame();
+    expect(overlayFrame).toContain("TIMELINE");
+    expect(overlayFrame).toContain("project.registered");
+
+    // Press 't' again to close the overlay
+    await act(async () => {
+      setup.mockInput.pressKey("t");
+    });
+    await setup.flush();
+
+    // Numeric key '3' should still navigate to Roadmap section
+    await act(async () => {
+      setup.mockInput.pressKey("3");
+    });
+    await setup.flush();
+    const roadmapFrame = setup.captureCharFrame();
+    expect(roadmapFrame).toContain("Roadmap");
+    expect(roadmapFrame).not.toContain("TIMELINE");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
 });
 
 function makeDashboardData(
-  options: { findings?: Finding[]; projectName?: string } = {},
+  options: { findings?: Finding[]; projectName?: string; timeline?: Event[] } = {},
 ): DashboardData {
   const findings = options.findings ?? [makeFinding()];
   const status = makeStatus({ findings, ...(options.projectName ? { projectName: options.projectName } : {}) });
@@ -190,7 +225,31 @@ function makeDashboardData(
     sessions: status.recentSessions,
     decisions: status.recentDecisions,
     context: makeContext(status),
+    timeline: options.timeline ?? makeTimeline(),
   };
+}
+
+function makeTimeline(): Event[] {
+  return [
+    {
+      id: "evt_1",
+      projectId: "proj_1",
+      type: "project.registered",
+      entityType: "project",
+      entityId: "proj_1",
+      payload: { rootPath: "/work/meridian" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      id: "evt_2",
+      projectId: "proj_1",
+      type: "plan.created",
+      entityType: "plan",
+      entityId: "plan_1",
+      payload: {},
+      createdAt: "2026-01-01T00:01:00.000Z",
+    },
+  ];
 }
 
 function makeStatus(options: { findings: Finding[]; projectName?: string }): ProjectStatus {
@@ -210,6 +269,7 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
         status: "todo",
         acceptanceCriteria: ["Documented acceptance"],
         evidence: [],
+        dependsOn: [],
       },
     ],
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -266,7 +326,7 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
     })),
     next: {
       recommendation: "Foundation",
-      reason: "First todo phase in the active plan.",
+      reason: "First ready todo phase in the active plan.",
       planId: "plan_1",
       phaseId: "phase_1",
       evidence: ["Zenith MVP"],

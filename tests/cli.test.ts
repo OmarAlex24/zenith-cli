@@ -608,6 +608,63 @@ describe("cli json commands", () => {
     expect((result.json as any).data.length).toBeGreaterThanOrEqual(1);
   });
 
+  test("plan update-phase dependency graph validation", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Dep Graph Plan",
+        phases: [{ title: "Phase A" }, { title: "Phase B" }],
+      },
+    });
+
+    expect(created.exitCode).toBe(0);
+    const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+    const phaseBId = (created.json as any).data.phases[1].id;
+
+    // Setting A dependsOn B should succeed
+    const setDepAonB = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { phaseId: phaseAId, dependsOn: [phaseBId] },
+    });
+    expect(setDepAonB.exitCode).toBe(0);
+    expect((setDepAonB.json as any).data.phases[0].dependsOn).toEqual([phaseBId]);
+
+    // Setting B dependsOn A creates a cycle → dependency_cycle error
+    const cyclicDep = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { phaseId: phaseBId, dependsOn: [phaseAId] },
+    });
+    expect(cyclicDep.exitCode).toBe(1);
+    expect((cyclicDep.json as any).errors[0].code).toBe("dependency_cycle");
+
+    // Self-dependency → dependency_self error
+    const selfDep = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { phaseId: phaseAId, dependsOn: [phaseAId] },
+    });
+    expect(selfDep.exitCode).toBe(1);
+    expect((selfDep.json as any).errors[0].code).toBe("dependency_self");
+
+    // Non-existent phase id → dependency_unknown_phase error
+    const unknownDep = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { phaseId: phaseAId, dependsOn: ["phase_does_not_exist"] },
+    });
+    expect(unknownDep.exitCode).toBe(1);
+    expect((unknownDep.json as any).errors[0].code).toBe("dependency_unknown_phase");
+  });
+
   test("timeline --limit 1 returns at most 1 entry", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();

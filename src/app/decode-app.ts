@@ -43,6 +43,7 @@ import type { ZenithRepository } from "../storage/repository";
 import type { FindingListStatus } from "../storage/repository";
 import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
+import { validatePhaseDependencies } from "./plan-graph";
 
 export type ProjectDetection = {
   project: Project | null;
@@ -452,6 +453,15 @@ export class ZenithApp {
       throw new ZenithError(`Plan not found: ${planId}`, { code: "plan_not_found" });
     }
 
+    if (input.dependsOn !== undefined) {
+      const targetPhase = input.phaseId
+        ? plan.phases.find((p) => p.id === input.phaseId)
+        : plan.phases.find((p) => p.title === input.phaseTitle);
+      if (targetPhase) {
+        validatePhaseDependencies(plan.phases, targetPhase.id, input.dependsOn);
+      }
+    }
+
     return this.repository.updatePhase(
       planId,
       {
@@ -464,6 +474,7 @@ export class ZenithApp {
         ...(input.status ? { status: input.status } : {}),
         ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
         ...(input.evidence ? { evidence: input.evidence.map(normalizeEvidence) } : {}),
+        ...(input.dependsOn !== undefined ? { dependsOn: input.dependsOn } : {}),
       },
     );
   }
