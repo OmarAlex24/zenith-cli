@@ -21,18 +21,11 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith roadmap create --json --input -`
 - `zenith roadmap list --json`
 - `zenith roadmap show <roadmap-id> --json`
-- `zenith roadmap workspace --json` — hierarchical view: roadmaps, items, linked plans, phase rollups, and worktree focus
 - `zenith roadmap update <roadmap-id> --json --input -`
 - `zenith roadmap add-item <roadmap-id> --json --input -`
 - `zenith roadmap update-item <roadmap-id> --json --input -`
 - `zenith roadmap import-plan <plan-id> --json --input -`
 - `zenith roadmap create-plan <roadmap-id> --json --input -`
-
-## Roadmap Focus
-
-- `zenith focus show --json` — current worktree focus, active plan, and ambiguity status
-- `zenith focus set <roadmap-id> --json` — bind the current worktree/branch to a roadmap
-- `zenith focus clear --json` — remove the focus binding for the current worktree
 
 Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan. Roadmap items use `todo / in_progress / done / deferred`; plan phases use `todo / in_progress / done / blocked`. Legacy `pending`/`planned`/`completed` inputs are still accepted and normalized.
 
@@ -44,12 +37,47 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 - `zenith plan update <plan-id> --json --input -`
 - `zenith plan update-phase <plan-id> --json --input -`
 - `zenith plan next --json`
+- `zenith plan complete <plan-id> --json` — mark plan completed (all phases must be done); advances source roadmap item to `done`
+- `zenith plan advance --json --input -` — mark a phase done + append evidence + recompute next step (one transaction); returns `AdvanceResult`
+- `zenith plan path <plan-id> --json` — topological view of phases: `orderedPhases`, `criticalPath`, `remaining`, `ready` flags
 
 `plan update-phase` JSON input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. When all remaining `todo` phases are gated by unmet dependencies, `plan next` returns a recommendation prefixed `Blocked by dependency:` with a `blockedBy` array.
 
 `plan next` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
 
-When multiple roadmaps have active plans and the current worktree has no focus binding, `plan next` returns a recommendation to `Set roadmap focus for this worktree: zenith focus set <roadmap-id>`. Use `zenith focus set` to bind the worktree before `plan next` can recommend a phase.
+### plan next — NextStep.kind discriminant
+
+`plan next --json` now returns an optional `kind` field for clean switch-dispatch in agent loops:
+
+| kind | meaning |
+|---|---|
+| `implement_phase` | Implement the identified phase (in-progress or ready todo) |
+| `create_plan` | Create a plan from the roadmap item |
+| `review_deferred` | Reactivate a deferred roadmap item |
+| `blocking_finding` | Fix or triage the critical/high finding |
+| `review_finding` | Review an open finding (no active plan) |
+| `ambiguous_focus` | Set `zenith focus set <roadmap-id>` to resolve multiple active plans |
+| `blocked_dependency` | Unblock a dependency (blocked phase or all todos gated) |
+| `review_completed` | All phases done; complete or archive the active plan |
+| `create_plan_empty` | No plan, roadmap, finding, or session — create a plan |
+
+`kind` is omitted when the fallback is a freeform session next-step.
+
+### plan advance — AdvanceResult
+
+`plan advance` payload: `{ planId, completedPhaseId?, status?, evidence[] }`
+
+Response `data`:
+```json
+{
+  "completed": { "phaseId": "phase_x", "status": "done" },
+  "planCompleted": false,
+  "roadmapItemAdvanced": null,
+  "next": { "recommendation": "...", "reason": "...", "kind": "implement_phase" }
+}
+```
+
+If all phases are done after the advance, `planCompleted` is `true` and (if linked) `roadmapItemAdvanced` contains `{ roadmapId, itemId }`.
 
 ## Context
 
@@ -57,7 +85,9 @@ When multiple roadmaps have active plans and the current worktree has no focus b
 - `zenith context compact --json`
 - `zenith resume --json`
 - `zenith phase show <phase-id> --json`
-- `zenith timeline --json` — read-only activity log; accepts `--limit <n>`
+- `zenith timeline --json` — read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`
+
+Use `--since <eventId|iso>` to return only events after a checkpoint cursor (ISO timestamp or event id). Useful for resumed sessions to diff progress without re-reading the entire timeline.
 
 ## Decisions
 

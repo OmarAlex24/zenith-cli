@@ -25,14 +25,17 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - If the user's request conflicts with `plan next`, report the conflict and ask for confirmation before implementing.
 - Always inspect the target phase with `zenith phase show <phase-id> --json` when a phase id is available.
 - When `plan next` recommends a roadmap item and no active plan exists, use `zenith roadmap create-plan <roadmap-id> --json --input -` to preserve source links.
-- When `plan next` returns a focus recommendation (`Set roadmap focus for this worktree`), use `zenith focus show --json` to inspect candidates and `zenith focus set <roadmap-id> --json` to bind the worktree to a roadmap before continuing.
 - Deferred roadmap items are parked backlog; reactivate them with `roadmap update-item` before creating executable plans.
 - Use `plan` only for executable phased work; use `brief`, `roadmap`, or `spike` for non-executable memory.
 - Prefer `zenith ...`; use `bun run zenith ...` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
-- Use `zenith timeline --json` (with optional `--limit <n>`) for a read-only view of recent project activity.
+- Use `zenith timeline --json` (with optional `--limit <n>` and `--since <eventId|iso>`) for a read-only view of recent project activity.
 - Phase prerequisites are expressed with `dependsOn` (array of phase ids) via `plan update-phase`; when all remaining phases are gated, `plan next` reports `Blocked by dependency`.
+- Use `plan next` `kind` field to dispatch in agent loops: `implement_phase` → implement; `blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty` → STOP.
+- Use `zenith plan advance --json --input -` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
+- Use `zenith plan complete <plan-id> --json` to close a completed plan and advance its source roadmap item.
+- Use `zenith plan path <plan-id> --json` to view topological phase order with dependency and readiness information.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow

@@ -21,7 +21,6 @@ Before planning:
 - If `plan next` returns a `phaseId`, run `zenith phase show <phase-id> --json`.
 - If `plan next` recommends a roadmap item and no active plan exists, use `zenith roadmap create-plan <roadmap-id> --json --input -`.
 - If `plan next` recommends deferred roadmap work, reactivate the item before creating an executable plan.
-- If `plan next` recommends `Set roadmap focus for this worktree`, run `zenith focus show --json` to see candidates, then `zenith focus set <roadmap-id> --json` to bind the current worktree to a roadmap before continuing.
 
 Prefer `zenith ... --json` and `--input -` for machine-readable commands.
 Use `plan` only for executable phased work. Use `brief`, `roadmap`, or `spike` for non-executable memory.

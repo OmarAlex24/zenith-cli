@@ -20,14 +20,6 @@ zenith phase show phase_id --json
 
 Use that phase as the implementation target. If the user's prompt names a different target than `plan next`, stop and ask for confirmation.
 
-If `plan next` recommends `Set roadmap focus for this worktree`, resolve it first:
-
-```bash
-zenith focus show --json
-zenith focus set <roadmap-id> --json
-zenith plan next --json
-```
-
 ## Before Planning
 
 Run:
@@ -267,3 +259,61 @@ Payload:
 ```
 
 Use `zenith session summarize --json --input -` as a compatibility shortcut when there is no open session id.
+
+## Long-Running Loop (multi-phase roadmap grind)
+
+Use this workflow when driving a whole roadmap across one session (or resumed sessions).
+
+### Setup — scope the work
+
+```bash
+zenith plan path plan_id --json   # topological order, criticalPath, ready flags
+zenith plan next --json           # first action
+```
+
+### Iteration — one phase at a time
+
+Read `next.kind` and dispatch:
+
+| kind | action |
+|---|---|
+| `implement_phase` | `zenith phase show <phaseId> --json` → implement → verify (`bun x tsc --noEmit && bun test && bun run build`) → `zenith plan advance --json --input -` |
+| `blocking_finding` | STOP — hand back to user |
+| `ambiguous_focus` | STOP — hand back to user |
+| `blocked_dependency` | STOP — hand back to user |
+| `review_finding` | STOP — hand back to user |
+| `review_completed` | Run `zenith plan complete <plan-id> --json` then continue to next roadmap item |
+| `create_plan` | Run `zenith roadmap create-plan <roadmap-id> --json --input -` then loop |
+| `create_plan_empty` | STOP — hand back to user |
+| `review_deferred` | STOP — hand back to user |
+
+Advance payload (mark phase done with evidence):
+
+```json
+{
+  "planId": "plan_id",
+  "completedPhaseId": "phase_id",
+  "evidence": [
+    { "kind": "command", "value": "bun x tsc --noEmit passed" },
+    { "kind": "command", "value": "bun test passed" }
+  ]
+}
+```
+
+If `planCompleted` is `true` in the `AdvanceResult`, the plan has auto-completed and `roadmapItemAdvanced` reports which roadmap item moved to `done`. `next` already points at the next roadmap item.
+
+### Checkpoint / Resume
+
+Before pausing, record the latest event id as a cursor:
+
+```bash
+zenith timeline --json --limit 1   # take data[0].id as cursor
+```
+
+When resuming, use the cursor to diff progress since the pause:
+
+```bash
+zenith timeline --json --since <cursor>   # events since pause
+zenith resume --json                       # structured context
+zenith plan next --json                    # current next step
+```
