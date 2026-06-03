@@ -3,10 +3,12 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
+import type { CapturedFrame, CapturedLine } from "@opentui/core";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
 import { buildRoadmapWorkspace } from "../src/app/roadmap-workspace";
 import type { CompactContext, Decision, Event, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
+import { palette } from "../src/tui/theme";
 
 describe("OpenTUI dashboard", () => {
   test("renders sidebar shell, sections, and master-detail navigation", async () => {
@@ -208,7 +210,90 @@ describe("OpenTUI dashboard", () => {
       setup.renderer.destroy();
     });
   });
+
+  test("roadmap pane only draws active focus border when content has focus", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressArrow("down");
+    });
+    await setup.flush();
+    await act(async () => {
+      setup.mockInput.pressArrow("down");
+    });
+    await setup.flush();
+
+    expect(setup.captureCharFrame()).toContain("Roadmaps");
+    expect(fgAtText(setup.captureSpans(), setup.captureCharFrame(), "Roadmaps")).toBe(palette.border);
+
+    await act(async () => {
+      setup.mockInput.pressArrow("right");
+    });
+    await setup.flush();
+    expect(fgAtText(setup.captureSpans(), setup.captureCharFrame(), "Roadmaps")).toBe(palette.borderActive);
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("roadmap workspace expands its left navigation columns on wide terminals", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 180, height: 32 });
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressKey("3");
+    });
+    await setup.flush();
+
+    const frame = setup.captureCharFrame();
+    const detailX = xOfText(frame, "Detail");
+    expect(detailX).toBeGreaterThanOrEqual(88);
+    expect(detailX).toBeLessThanOrEqual(100);
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
 });
+
+function fgAtText(frame: CapturedFrame, charFrame: string, text: string): string {
+  const textLines = charFrame.split("\n");
+  const y = textLines.findIndex((line) => line.includes(text));
+  expect(y).toBeGreaterThanOrEqual(0);
+  const x = textLines[y]!.indexOf(text);
+  const cell = cellsForLine(frame.lines[y]!)[x];
+  expect(cell).toBeDefined();
+  return rgbToHex(cell!.fg);
+}
+
+function xOfText(charFrame: string, text: string): number {
+  const textLines = charFrame.split("\n");
+  const y = textLines.findIndex((line) => line.includes(text));
+  expect(y).toBeGreaterThanOrEqual(0);
+  return textLines[y]!.indexOf(text);
+}
+
+function cellsForLine(line: CapturedLine) {
+  return line.spans.flatMap((span) =>
+    Array.from(span.text).map(() => ({
+      fg: span.fg,
+      bg: span.bg,
+    })),
+  );
+}
+
+function rgbToHex(color: { r: number; g: number; b: number }) {
+  return `#${hexByte(color.r)}${hexByte(color.g)}${hexByte(color.b)}`;
+}
+
+function hexByte(value: number) {
+  const byte = value <= 1 ? Math.round(value * 255) : Math.round(value);
+  return Math.max(0, Math.min(255, byte)).toString(16).padStart(2, "0");
+}
 
 function makeDashboardData(
   options: { findings?: Finding[]; projectName?: string; timeline?: Event[] } = {},
