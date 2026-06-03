@@ -1,0 +1,98 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+export function makeTempDir(prefix = "zenith-test-"): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+export function cleanupTempDir(path: string): void {
+  rmSync(path, { recursive: true, force: true });
+}
+
+type CliRunOptions = {
+  cwd: string;
+  zenithHome?: string;
+  decodeHome?: string;
+  input?: unknown;
+};
+
+export async function runZenith(args: string[], options: CliRunOptions) {
+  const entrypoint = join(process.cwd(), "src", "index.ts");
+  const storageHome = options.zenithHome ?? options.decodeHome;
+  const proc = Bun.spawn(["bun", "run", entrypoint, ...args], {
+    cwd: options.cwd,
+    env: {
+      ...Bun.env,
+      ...(storageHome ? { ZENITH_HOME: storageHome } : {}),
+    },
+    stdin: options.input === undefined ? "ignore" : "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (options.input !== undefined && proc.stdin) {
+    proc.stdin.write(JSON.stringify(options.input));
+    proc.stdin.end();
+  }
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return {
+    stdout,
+    stderr,
+    exitCode,
+    json: stdout.trim() ? (JSON.parse(stdout) as unknown) : null,
+  };
+}
+
+export async function runDecode(args: string[], options: CliRunOptions) {
+  return runZenith(args, options);
+}
+
+export async function runWithLegacyDecodeHome(args: string[], options: { cwd: string; decodeHome: string; input?: unknown }) {
+  const entrypoint = join(process.cwd(), "src", "index.ts");
+  const env: Record<string, string | undefined> = {
+    ...Bun.env,
+    DECODE_HOME: options.decodeHome,
+  };
+  delete env.ZENITH_HOME;
+
+  const proc = Bun.spawn(["bun", "run", entrypoint, ...args], {
+    cwd: options.cwd,
+    env,
+    stdin: options.input === undefined ? "ignore" : "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (options.input !== undefined && proc.stdin) {
+    proc.stdin.write(JSON.stringify(options.input));
+    proc.stdin.end();
+  }
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  return {
+    stdout,
+    stderr,
+    exitCode,
+    json: stdout.trim() ? (JSON.parse(stdout) as unknown) : null,
+  };
+}
+
+export async function runCommand(cmd: string[], cwd: string): Promise<void> {
+  const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`${cmd.join(" ")} failed: ${stderr}`);
+  }
+}

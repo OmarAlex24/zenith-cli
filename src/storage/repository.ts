@@ -1,0 +1,1111 @@
+import type { Database } from "bun:sqlite";
+import { createId, nowIso } from "../domain/ids";
+import {
+  DecisionSchema,
+  FindingSchema,
+  PlanSchema,
+  ProjectBriefSchema,
+  ProjectSchema,
+  RoadmapSchema,
+  SessionSchema,
+  SpikeSchema,
+  type Decision,
+  type Evidence,
+  type Finding,
+  type Plan,
+  type PlanPhase,
+  type PlanStatus,
+  type ProjectBrief,
+  type Project,
+  type Roadmap,
+  type RoadmapItem,
+  type RoadmapItemStatus,
+  type RoadmapStatus,
+  type Session,
+  type Spike,
+  type SpikeStatus,
+} from "../domain/schemas";
+
+type ProjectRow = {
+  id: string;
+  name: string;
+  root_path: string;
+  repository_url: string | null;
+  branch: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type PlanRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  status: PlanStatus;
+  priority: "low" | "medium" | "high" | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type PhaseRow = {
+  id: string;
+  plan_id: string;
+  position: number;
+  title: string;
+  description: string | null;
+  status: PlanPhase["status"];
+  acceptance_criteria_json: string;
+  evidence_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type DecisionRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  context: string;
+  decision: string;
+  consequences: string | null;
+  alternatives_json: string;
+  related_plan_ids_json: string;
+  created_at: string;
+};
+
+type FindingRow = {
+  id: string;
+  project_id: string;
+  type: Finding["type"];
+  severity: Finding["severity"];
+  title: string;
+  description: string;
+  status: Finding["status"];
+  related_files_json: string;
+  created_at: string;
+  closed_at: string | null;
+};
+
+type SessionRow = {
+  id: string;
+  project_id: string;
+  started_at: string;
+  ended_at: string | null;
+  branch: string | null;
+  summary: string | null;
+  changed_files_json: string;
+  related_plan_id: string | null;
+  next_steps_json: string;
+  created_at: string;
+};
+
+type ProjectBriefRow = {
+  id: string;
+  project_id: string;
+  version: number;
+  title: string;
+  summary: string;
+  body: string;
+  source: string | null;
+  status: ProjectBrief["status"];
+  created_at: string;
+  updated_at: string;
+};
+
+type RoadmapRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  status: RoadmapStatus;
+  source_plan_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type RoadmapItemRow = {
+  id: string;
+  roadmap_id: string;
+  position: number;
+  title: string;
+  description: string | null;
+  status: RoadmapItemStatus;
+  evidence_json: string;
+  source_phase_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type SpikeRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  question: string;
+  hypothesis: string | null;
+  options_json: string;
+  result: string | null;
+  recommendation: string | null;
+  evidence_json: string;
+  status: SpikeStatus;
+  created_at: string;
+  updated_at: string;
+  concluded_at: string | null;
+};
+
+export type RegisterProjectInput = {
+  name: string;
+  rootPath: string;
+  repositoryUrl?: string;
+  branch?: string;
+};
+
+export type InsertPlanInput = {
+  projectId: string;
+  title: string;
+  description?: string;
+  status: PlanStatus;
+  priority?: "low" | "medium" | "high";
+  phases: Array<Omit<PlanPhase, "id"> & { id?: string }>;
+};
+
+export type UpdatePhasePatch = {
+  title?: string;
+  description?: string;
+  status?: PlanPhase["status"];
+  acceptanceCriteria?: string[];
+  evidence?: Evidence[];
+};
+
+export type UpdatePlanPatch = {
+  title?: string;
+  description?: string;
+  status?: PlanStatus;
+  priority?: "low" | "medium" | "high";
+};
+
+export type SetProjectBriefInput = {
+  projectId: string;
+  title: string;
+  summary: string;
+  body: string;
+  source?: string;
+};
+
+export type InsertRoadmapInput = {
+  projectId: string;
+  title: string;
+  description?: string;
+  status: RoadmapStatus;
+  sourcePlanId?: string;
+  items: Array<Omit<RoadmapItem, "id" | "roadmapId"> & { id?: string }>;
+};
+
+export type UpdateRoadmapPatch = {
+  title?: string;
+  description?: string;
+  status?: RoadmapStatus;
+};
+
+export type UpdateRoadmapItemPatch = {
+  title?: string;
+  description?: string;
+  status?: RoadmapItemStatus;
+  evidence?: Evidence[];
+};
+
+export type InsertSpikeInput = {
+  projectId: string;
+  title: string;
+  question: string;
+  hypothesis?: string;
+  options: string[];
+  result?: string;
+  recommendation?: string;
+  evidence: Evidence[];
+  status: SpikeStatus;
+};
+
+export type ConcludeSpikePatch = {
+  status: "concluded" | "abandoned";
+  result?: string;
+  recommendation?: string;
+  evidence?: Evidence[];
+};
+
+export class DecodeRepository {
+  constructor(private readonly db: Database) {}
+
+  close(): void {
+    this.db.close();
+  }
+
+  registerProject(input: RegisterProjectInput): Project {
+    const existing = this.findProjectByRootPath(input.rootPath);
+    const timestamp = nowIso();
+
+    if (existing) {
+      this.db
+        .query(
+          `
+          UPDATE projects
+          SET name = ?, repository_url = ?, branch = ?, updated_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(input.name, input.repositoryUrl ?? null, input.branch ?? null, timestamp, existing.id);
+
+      this.db
+        .query("UPDATE project_paths SET last_seen_at = ? WHERE project_id = ? AND root_path = ?")
+        .run(timestamp, existing.id, input.rootPath);
+
+      return this.getProjectById(existing.id)!;
+    }
+
+    const id = createId("proj");
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO projects (id, name, root_path, repository_url, branch, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(id, input.name, input.rootPath, input.repositoryUrl ?? null, input.branch ?? null, timestamp, timestamp);
+
+      this.db
+        .query(
+          `
+          INSERT INTO project_paths (id, project_id, root_path, first_seen_at, last_seen_at)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+        )
+        .run(createId("path"), id, input.rootPath, timestamp, timestamp);
+
+      this.recordEvent(id, "project.registered", "project", id, { rootPath: input.rootPath });
+    })();
+
+    return this.getProjectById(id)!;
+  }
+
+  findProjectByRootPath(rootPath: string): Project | null {
+    const row = this.db.query<ProjectRow, [string]>("SELECT * FROM projects WHERE root_path = ?").get(rootPath);
+    return row ? mapProject(row) : null;
+  }
+
+  getProjectById(projectId: string): Project | null {
+    const row = this.db.query<ProjectRow, [string]>("SELECT * FROM projects WHERE id = ?").get(projectId);
+    return row ? mapProject(row) : null;
+  }
+
+  listProjects(): Project[] {
+    return this.db
+      .query<ProjectRow, []>("SELECT * FROM projects ORDER BY updated_at DESC")
+      .all()
+      .map(mapProject);
+  }
+
+  setProjectBrief(input: SetProjectBriefInput): ProjectBrief {
+    const timestamp = nowIso();
+    const row = this.db
+      .query<{ version: number | null }, [string]>("SELECT MAX(version) AS version FROM project_briefs WHERE project_id = ?")
+      .get(input.projectId);
+    const version = (row?.version ?? 0) + 1;
+    const id = createId("brief");
+
+    this.db.transaction(() => {
+      this.db
+        .query("UPDATE project_briefs SET status = 'archived', updated_at = ? WHERE project_id = ? AND status = 'current'")
+        .run(timestamp, input.projectId);
+
+      this.db
+        .query(
+          `
+          INSERT INTO project_briefs (
+            id, project_id, version, title, summary, body, source,
+            status, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'current', ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          version,
+          input.title,
+          input.summary,
+          input.body,
+          input.source ?? null,
+          timestamp,
+          timestamp,
+        );
+
+      this.recordEvent(input.projectId, "brief.set", "brief", id, { title: input.title, version });
+    })();
+
+    const brief = this.getProjectBriefById(id);
+    if (!brief) {
+      throw new Error(`Brief not found after insert: ${id}`);
+    }
+    return brief;
+  }
+
+  getCurrentProjectBrief(projectId: string): ProjectBrief | null {
+    const row = this.db
+      .query<ProjectBriefRow, [string]>(
+        "SELECT * FROM project_briefs WHERE project_id = ? AND status = 'current' ORDER BY version DESC LIMIT 1",
+      )
+      .get(projectId);
+    return row ? mapProjectBrief(row) : null;
+  }
+
+  listProjectBriefs(projectId: string, limit = 10): ProjectBrief[] {
+    return this.db
+      .query<ProjectBriefRow, [string, number]>(
+        "SELECT * FROM project_briefs WHERE project_id = ? ORDER BY version DESC LIMIT ?",
+      )
+      .all(projectId, limit)
+      .map(mapProjectBrief);
+  }
+
+  getProjectBriefById(briefId: string): ProjectBrief | null {
+    const row = this.db.query<ProjectBriefRow, [string]>("SELECT * FROM project_briefs WHERE id = ?").get(briefId);
+    return row ? mapProjectBrief(row) : null;
+  }
+
+  createRoadmap(input: InsertRoadmapInput): Roadmap {
+    const id = createId("roadmap");
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO roadmaps (id, project_id, title, description, status, source_plan_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.title,
+          input.description ?? null,
+          input.status,
+          input.sourcePlanId ?? null,
+          timestamp,
+          timestamp,
+        );
+
+      input.items.forEach((item, index) => {
+        this.db
+          .query(
+            `
+            INSERT INTO roadmap_items (
+              id, roadmap_id, position, title, description, status,
+              evidence_json, source_phase_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            item.id ?? createId("rmi"),
+            id,
+            index,
+            item.title,
+            item.description ?? null,
+            item.status,
+            JSON.stringify(item.evidence),
+            item.sourcePhaseId ?? null,
+            timestamp,
+            timestamp,
+          );
+      });
+
+      this.recordEvent(input.projectId, "roadmap.created", "roadmap", id, { title: input.title });
+    })();
+
+    const roadmap = this.getRoadmapById(id);
+    if (!roadmap) {
+      throw new Error(`Roadmap not found after insert: ${id}`);
+    }
+    return roadmap;
+  }
+
+  importPlanAsRoadmap(
+    plan: Plan,
+    input: { title?: string; description?: string; status: RoadmapStatus; archivePlan: boolean },
+  ): Roadmap {
+    const roadmap = this.createRoadmap({
+      projectId: plan.projectId,
+      title: input.title ?? plan.title,
+      ...((input.description ?? plan.description) ? { description: (input.description ?? plan.description)! } : {}),
+      status: input.status,
+      sourcePlanId: plan.id,
+      items: plan.phases.map((phase) => ({
+        title: phase.title,
+        ...(phase.description ? { description: phase.description } : {}),
+        status: phaseStatusToRoadmapItemStatus(phase.status),
+        evidence: phase.evidence,
+        sourcePhaseId: phase.id,
+      })),
+    });
+
+    if (input.archivePlan) {
+      this.updatePlan(plan.id, { status: "archived" });
+    }
+
+    return roadmap;
+  }
+
+  listRoadmaps(projectId: string, limit = 10): Roadmap[] {
+    return this.db
+      .query<RoadmapRow, [string, number]>("SELECT * FROM roadmaps WHERE project_id = ? ORDER BY updated_at DESC LIMIT ?")
+      .all(projectId, limit)
+      .map((row) => this.mapRoadmap(row));
+  }
+
+  getRoadmapById(roadmapId: string): Roadmap | null {
+    const row = this.db.query<RoadmapRow, [string]>("SELECT * FROM roadmaps WHERE id = ?").get(roadmapId);
+    return row ? this.mapRoadmap(row) : null;
+  }
+
+  updateRoadmap(roadmapId: string, patch: UpdateRoadmapPatch): Roadmap {
+    const roadmap = this.getRoadmapById(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap not found: ${roadmapId}`);
+    }
+
+    const timestamp = nowIso();
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          UPDATE roadmaps
+          SET title = ?, description = ?, status = ?, updated_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          patch.title ?? roadmap.title,
+          patch.description ?? roadmap.description ?? null,
+          patch.status ?? roadmap.status,
+          timestamp,
+          roadmapId,
+        );
+
+      this.recordEvent(roadmap.projectId, "roadmap.updated", "roadmap", roadmap.id, patch);
+    })();
+
+    return this.getRoadmapById(roadmapId)!;
+  }
+
+  updateRoadmapItem(
+    roadmapId: string,
+    itemIdOrTitle: { itemId?: string; itemTitle?: string },
+    patch: UpdateRoadmapItemPatch,
+  ): Roadmap {
+    const roadmap = this.getRoadmapById(roadmapId);
+    if (!roadmap) {
+      throw new Error(`Roadmap not found: ${roadmapId}`);
+    }
+
+    const item = itemIdOrTitle.itemId
+      ? roadmap.items.find((candidate) => candidate.id === itemIdOrTitle.itemId)
+      : roadmap.items.find((candidate) => candidate.title === itemIdOrTitle.itemTitle);
+
+    if (!item) {
+      throw new Error("Roadmap item not found");
+    }
+
+    const timestamp = nowIso();
+    const nextEvidence = patch.evidence === undefined ? item.evidence : [...item.evidence, ...patch.evidence];
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          UPDATE roadmap_items
+          SET title = ?, description = ?, status = ?, evidence_json = ?, updated_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          patch.title ?? item.title,
+          patch.description ?? item.description ?? null,
+          patch.status ?? item.status,
+          JSON.stringify(nextEvidence),
+          timestamp,
+          item.id,
+        );
+
+      this.db.query("UPDATE roadmaps SET updated_at = ? WHERE id = ?").run(timestamp, roadmapId);
+      this.recordEvent(roadmap.projectId, "roadmap.item_updated", "roadmap_item", item.id, patch);
+    })();
+
+    return this.getRoadmapById(roadmapId)!;
+  }
+
+  createSpike(input: InsertSpikeInput): Spike {
+    const id = createId("spike");
+    const timestamp = nowIso();
+    const concludedAt = input.status === "open" ? null : timestamp;
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO spikes (
+            id, project_id, title, question, hypothesis, options_json,
+            result, recommendation, evidence_json, status,
+            created_at, updated_at, concluded_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.title,
+          input.question,
+          input.hypothesis ?? null,
+          JSON.stringify(input.options),
+          input.result ?? null,
+          input.recommendation ?? null,
+          JSON.stringify(input.evidence),
+          input.status,
+          timestamp,
+          timestamp,
+          concludedAt,
+        );
+
+      this.recordEvent(input.projectId, "spike.created", "spike", id, { title: input.title, status: input.status });
+    })();
+
+    const spike = this.getSpikeById(id);
+    if (!spike) {
+      throw new Error(`Spike not found after insert: ${id}`);
+    }
+    return spike;
+  }
+
+  listSpikes(projectId: string, limit = 10): Spike[] {
+    return this.db
+      .query<SpikeRow, [string, number]>("SELECT * FROM spikes WHERE project_id = ? ORDER BY updated_at DESC LIMIT ?")
+      .all(projectId, limit)
+      .map(mapSpike);
+  }
+
+  listOpenSpikes(projectId: string): Spike[] {
+    return this.db
+      .query<SpikeRow, [string]>("SELECT * FROM spikes WHERE project_id = ? AND status = 'open' ORDER BY updated_at DESC")
+      .all(projectId)
+      .map(mapSpike);
+  }
+
+  getSpikeById(spikeId: string): Spike | null {
+    const row = this.db.query<SpikeRow, [string]>("SELECT * FROM spikes WHERE id = ?").get(spikeId);
+    return row ? mapSpike(row) : null;
+  }
+
+  concludeSpike(spikeId: string, patch: ConcludeSpikePatch): Spike {
+    const spike = this.getSpikeById(spikeId);
+    if (!spike) {
+      throw new Error(`Spike not found: ${spikeId}`);
+    }
+
+    const timestamp = nowIso();
+    const nextEvidence = patch.evidence === undefined ? spike.evidence : [...spike.evidence, ...patch.evidence];
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          UPDATE spikes
+          SET result = ?, recommendation = ?, evidence_json = ?, status = ?, updated_at = ?, concluded_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          patch.result ?? spike.result ?? null,
+          patch.recommendation ?? spike.recommendation ?? null,
+          JSON.stringify(nextEvidence),
+          patch.status,
+          timestamp,
+          timestamp,
+          spikeId,
+        );
+
+      this.recordEvent(spike.projectId, "spike.concluded", "spike", spike.id, patch);
+    })();
+
+    return this.getSpikeById(spikeId)!;
+  }
+
+  createPlan(input: InsertPlanInput): Plan {
+    const id = createId("plan");
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO plans (id, project_id, title, description, status, priority, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.title,
+          input.description ?? null,
+          input.status,
+          input.priority ?? null,
+          timestamp,
+          timestamp,
+        );
+
+      input.phases.forEach((phase, index) => {
+        this.db
+          .query(
+            `
+            INSERT INTO plan_phases (
+              id, plan_id, position, title, description, status,
+              acceptance_criteria_json, evidence_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            phase.id ?? createId("phase"),
+            id,
+            index,
+            phase.title,
+            phase.description ?? null,
+            phase.status,
+            JSON.stringify(phase.acceptanceCriteria),
+            JSON.stringify(phase.evidence),
+            timestamp,
+            timestamp,
+          );
+      });
+
+      this.recordEvent(input.projectId, "plan.created", "plan", id, { title: input.title });
+    })();
+
+    return this.getPlanById(id)!;
+  }
+
+  listPlans(projectId: string): Plan[] {
+    return this.db
+      .query<PlanRow, [string]>("SELECT * FROM plans WHERE project_id = ? ORDER BY updated_at DESC")
+      .all(projectId)
+      .map((row) => this.mapPlan(row));
+  }
+
+  getPlanById(planId: string): Plan | null {
+    const row = this.db.query<PlanRow, [string]>("SELECT * FROM plans WHERE id = ?").get(planId);
+    return row ? this.mapPlan(row) : null;
+  }
+
+  getPlanByPhaseId(phaseId: string): { plan: Plan; phase: PlanPhase } | null {
+    const row = this.db
+      .query<{ plan_id: string }, [string]>("SELECT plan_id FROM plan_phases WHERE id = ?")
+      .get(phaseId);
+
+    if (!row) {
+      return null;
+    }
+
+    const plan = this.getPlanById(row.plan_id);
+    const phase = plan?.phases.find((candidate) => candidate.id === phaseId);
+    return plan && phase ? { plan, phase } : null;
+  }
+
+  getActivePlan(projectId: string): Plan | null {
+    const row = this.db
+      .query<PlanRow, [string]>(
+        "SELECT * FROM plans WHERE project_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
+      )
+      .get(projectId);
+
+    return row ? this.mapPlan(row) : null;
+  }
+
+  updatePlan(planId: string, patch: UpdatePlanPatch): Plan {
+    const plan = this.getPlanById(planId);
+    if (!plan) {
+      throw new Error(`Plan not found: ${planId}`);
+    }
+
+    const timestamp = nowIso();
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          UPDATE plans
+          SET title = ?, description = ?, status = ?, priority = ?, updated_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          patch.title ?? plan.title,
+          patch.description ?? plan.description ?? null,
+          patch.status ?? plan.status,
+          patch.priority ?? plan.priority ?? null,
+          timestamp,
+          planId,
+        );
+
+      this.recordEvent(plan.projectId, "plan.updated", "plan", plan.id, patch);
+    })();
+
+    return this.getPlanById(planId)!;
+  }
+
+  updatePhase(planId: string, phaseIdOrTitle: { phaseId?: string; phaseTitle?: string }, patch: UpdatePhasePatch): Plan {
+    const plan = this.getPlanById(planId);
+    if (!plan) {
+      throw new Error(`Plan not found: ${planId}`);
+    }
+
+    const phase = phaseIdOrTitle.phaseId
+      ? plan.phases.find((candidate) => candidate.id === phaseIdOrTitle.phaseId)
+      : plan.phases.find((candidate) => candidate.title === phaseIdOrTitle.phaseTitle);
+
+    if (!phase) {
+      throw new Error("Phase not found");
+    }
+
+    const timestamp = nowIso();
+    const nextEvidence = patch.evidence === undefined ? phase.evidence : [...phase.evidence, ...patch.evidence];
+    const nextAcceptance =
+      patch.acceptanceCriteria === undefined ? phase.acceptanceCriteria : patch.acceptanceCriteria;
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          UPDATE plan_phases
+          SET title = ?, description = ?, status = ?, acceptance_criteria_json = ?, evidence_json = ?, updated_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          patch.title ?? phase.title,
+          patch.description ?? phase.description ?? null,
+          patch.status ?? phase.status,
+          JSON.stringify(nextAcceptance),
+          JSON.stringify(nextEvidence),
+          timestamp,
+          phase.id,
+        );
+
+      this.db.query("UPDATE plans SET updated_at = ? WHERE id = ?").run(timestamp, planId);
+      this.recordEvent(plan.projectId, "plan.phase_updated", "phase", phase.id, patch);
+    })();
+
+    return this.getPlanById(planId)!;
+  }
+
+  recordDecision(input: Omit<Decision, "id" | "createdAt">): Decision {
+    const id = createId("dec");
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO decisions (
+            id, project_id, title, context, decision, consequences,
+            alternatives_json, related_plan_ids_json, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.title,
+          input.context,
+          input.decision,
+          input.consequences ?? null,
+          JSON.stringify(input.alternatives),
+          JSON.stringify(input.relatedPlanIds),
+          timestamp,
+        );
+
+      this.recordEvent(input.projectId, "decision.recorded", "decision", id, { title: input.title });
+    })();
+
+    const decision = this.getDecisionById(id);
+    if (!decision) {
+      throw new Error(`Decision not found after insert: ${id}`);
+    }
+    return decision;
+  }
+
+  listDecisions(projectId: string, limit = 10): Decision[] {
+    return this.db
+      .query<DecisionRow, [string, number]>(
+        "SELECT * FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ?",
+      )
+      .all(projectId, limit)
+      .map(mapDecision);
+  }
+
+  getDecisionById(decisionId: string): Decision | null {
+    const row = this.db.query<DecisionRow, [string]>("SELECT * FROM decisions WHERE id = ?").get(decisionId);
+    return row ? mapDecision(row) : null;
+  }
+
+  listOpenFindings(projectId: string): Finding[] {
+    return this.db
+      .query<FindingRow, [string]>("SELECT * FROM findings WHERE project_id = ? AND status = 'open' ORDER BY created_at DESC")
+      .all(projectId)
+      .map(mapFinding);
+  }
+
+  recordSessionSummary(input: Omit<Session, "id">): Session {
+    const id = createId("sess");
+    const timestamp = nowIso();
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
+          INSERT INTO sessions (
+            id, project_id, started_at, ended_at, branch, summary,
+            changed_files_json, related_plan_id, next_steps_json, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.startedAt,
+          input.endedAt ?? null,
+          input.branch ?? null,
+          input.summary ?? null,
+          JSON.stringify(input.changedFiles),
+          input.relatedPlanId ?? null,
+          JSON.stringify(input.nextSteps),
+          timestamp,
+        );
+
+      this.recordEvent(input.projectId, "session.summarized", "session", id, {
+        summary: input.summary,
+        nextSteps: input.nextSteps,
+      });
+    })();
+
+    const session = this.getSessionById(id);
+    if (!session) {
+      throw new Error(`Session not found after insert: ${id}`);
+    }
+    return session;
+  }
+
+  listRecentSessions(projectId: string, limit = 5): Session[] {
+    return this.db
+      .query<SessionRow, [string, number]>("SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(projectId, limit)
+      .map(mapSession);
+  }
+
+  getSessionById(sessionId: string): Session | null {
+    const row = this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+    return row ? mapSession(row) : null;
+  }
+
+  private getPhases(planId: string): PlanPhase[] {
+    return this.db
+      .query<PhaseRow, [string]>("SELECT * FROM plan_phases WHERE plan_id = ? ORDER BY position ASC")
+      .all(planId)
+      .map(mapPhase);
+  }
+
+  private mapPlan(row: PlanRow): Plan {
+    return PlanSchema.parse({
+      id: row.id,
+      projectId: row.project_id,
+      title: row.title,
+      ...(row.description === null ? {} : { description: row.description }),
+      status: row.status,
+      ...(row.priority === null ? {} : { priority: row.priority }),
+      phases: this.getPhases(row.id),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  private getRoadmapItems(roadmapId: string): RoadmapItem[] {
+    return this.db
+      .query<RoadmapItemRow, [string]>("SELECT * FROM roadmap_items WHERE roadmap_id = ? ORDER BY position ASC")
+      .all(roadmapId)
+      .map(mapRoadmapItem);
+  }
+
+  private mapRoadmap(row: RoadmapRow): Roadmap {
+    return RoadmapSchema.parse({
+      id: row.id,
+      projectId: row.project_id,
+      title: row.title,
+      ...(row.description === null ? {} : { description: row.description }),
+      status: row.status,
+      ...(row.source_plan_id === null ? {} : { sourcePlanId: row.source_plan_id }),
+      items: this.getRoadmapItems(row.id),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  private recordEvent(
+    projectId: string | null,
+    type: string,
+    entityType: string,
+    entityId: string,
+    payload: unknown,
+  ): void {
+    this.db
+      .query(
+        `
+        INSERT INTO events (id, project_id, type, entity_type, entity_id, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(createId("evt"), projectId, type, entityType, entityId, JSON.stringify(payload), nowIso());
+  }
+}
+
+function mapProject(row: ProjectRow): Project {
+  return ProjectSchema.parse({
+    id: row.id,
+    name: row.name,
+    rootPath: row.root_path,
+    ...(row.repository_url === null ? {} : { repositoryUrl: row.repository_url }),
+    ...(row.branch === null ? {} : { branch: row.branch }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapPhase(row: PhaseRow): PlanPhase {
+  return {
+    id: row.id,
+    title: row.title,
+    ...(row.description === null ? {} : { description: row.description }),
+    status: row.status,
+    acceptanceCriteria: parseJsonArray<string>(row.acceptance_criteria_json),
+    evidence: parseJsonArray<PlanPhase["evidence"][number]>(row.evidence_json),
+  };
+}
+
+function mapDecision(row: DecisionRow): Decision {
+  return DecisionSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    context: row.context,
+    decision: row.decision,
+    ...(row.consequences === null ? {} : { consequences: row.consequences }),
+    alternatives: parseJsonArray<string>(row.alternatives_json),
+    relatedPlanIds: parseJsonArray<string>(row.related_plan_ids_json),
+    createdAt: row.created_at,
+  });
+}
+
+function mapProjectBrief(row: ProjectBriefRow): ProjectBrief {
+  return ProjectBriefSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    version: row.version,
+    title: row.title,
+    summary: row.summary,
+    body: row.body,
+    ...(row.source === null ? {} : { source: row.source }),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapRoadmapItem(row: RoadmapItemRow): RoadmapItem {
+  return {
+    id: row.id,
+    roadmapId: row.roadmap_id,
+    title: row.title,
+    ...(row.description === null ? {} : { description: row.description }),
+    status: row.status,
+    evidence: parseJsonArray<RoadmapItem["evidence"][number]>(row.evidence_json),
+    ...(row.source_phase_id === null ? {} : { sourcePhaseId: row.source_phase_id }),
+  };
+}
+
+function mapSpike(row: SpikeRow): Spike {
+  return SpikeSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    question: row.question,
+    ...(row.hypothesis === null ? {} : { hypothesis: row.hypothesis }),
+    options: parseJsonArray<string>(row.options_json),
+    ...(row.result === null ? {} : { result: row.result }),
+    ...(row.recommendation === null ? {} : { recommendation: row.recommendation }),
+    evidence: parseJsonArray<Spike["evidence"][number]>(row.evidence_json),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.concluded_at === null ? {} : { concludedAt: row.concluded_at }),
+  });
+}
+
+function mapFinding(row: FindingRow): Finding {
+  return FindingSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    type: row.type,
+    severity: row.severity,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    relatedFiles: parseJsonArray<string>(row.related_files_json),
+    createdAt: row.created_at,
+    ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
+  });
+}
+
+function mapSession(row: SessionRow): Session {
+  return SessionSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    startedAt: row.started_at,
+    ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
+    ...(row.branch === null ? {} : { branch: row.branch }),
+    ...(row.summary === null ? {} : { summary: row.summary }),
+    changedFiles: parseJsonArray<string>(row.changed_files_json),
+    ...(row.related_plan_id === null ? {} : { relatedPlanId: row.related_plan_id }),
+    nextSteps: parseJsonArray<string>(row.next_steps_json),
+  });
+}
+
+function parseJsonArray<T>(value: string): T[] {
+  const parsed = JSON.parse(value) as unknown;
+  return Array.isArray(parsed) ? (parsed as T[]) : [];
+}
+
+function phaseStatusToRoadmapItemStatus(status: PlanPhase["status"]): RoadmapItemStatus {
+  if (status === "completed") {
+    return "done";
+  }
+
+  if (status === "in_progress") {
+    return "in_progress";
+  }
+
+  if (status === "blocked") {
+    return "deferred";
+  }
+
+  return "planned";
+}
+
+export { DecodeRepository as ZenithRepository };

@@ -1,0 +1,30 @@
+{
+  "name": "zenith-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "zenith": "./src/index.ts",
+    "decode": "./src/index.ts"
+  },
+  "scripts": {
+    "zenith": "bun run src/index.ts",
+    "decode": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "bun x tsc --noEmit",
+    "build": "bun build ./src/index.ts --target=bun --outdir=dist",
+    "compile": "bun build ./src/index.ts --compile --outfile dist/zenith"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.3.1",
+    "@opentui/react": "^0.3.1",
+    "commander": "^14.0.2",
+    "react": "^19.2.3",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.3",
+    "@types/react": "^19.2.7",
+    "typescript": "^5.9.3"
+  }
+}
