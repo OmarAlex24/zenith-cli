@@ -97,3 +97,23 @@ export function truncateMiddle(value: string, max: number): string {
   const half = Math.floor((max - 1) / 2);
   return `${value.slice(0, half)}…${value.slice(value.length - half)}`;
 }
+
+const eventGlyphMap: Record<string, string> = {
+  "project.registered": "◆",
+  "plan.created": "●",
+  "plan.updated": "◐",
+  "phase.updated": "◐",
+  "decision.recorded": "📌",
+  "finding.recorded": "⚠",
+  "finding.closed": "✓",
+  "session.started": "▷",
+  "session.ended": "■",
+  "roadmap.created": "◈",
+  "spike.created": "◆",
+  "spike.concluded": "✓",
+  "brief.set": "📄",
+};
+
+export function eventGlyph(type: string): string {
+  return eventGlyphMap[type] ?? "·";
+}

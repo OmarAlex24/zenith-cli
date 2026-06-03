@@ -489,6 +489,55 @@ describe("sqlite repository", () => {
     repo.close();
   });
 
+  test("listEvents returns events newest-first, respects limit, and isolates by project", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+
+    // Two projects — registerProject writes a project.registered event for each
+    const projectA = repo.registerProject({ name: "alpha", rootPath: "/work/alpha" });
+    const projectB = repo.registerProject({ name: "beta", rootPath: "/work/beta" });
+
+    // Generate extra events for projectA by recording a decision and a finding
+    repo.recordDecision({
+      projectId: projectA.id,
+      title: "Use SQLite",
+      context: "Need local storage.",
+      decision: "SQLite.",
+      alternatives: [],
+      relatedPlanIds: [],
+    });
+    repo.recordFinding({
+      projectId: projectA.id,
+      type: "bug",
+      severity: "low",
+      title: "Test finding",
+      description: "Checking events.",
+      relatedFiles: [],
+    });
+
+    const allA = repo.listEvents(projectA.id);
+    const allB = repo.listEvents(projectB.id);
+
+    // projectA should have at least 3 events (registered + decision + finding)
+    expect(allA.length).toBeGreaterThanOrEqual(3);
+    // Events are newest-first
+    for (let i = 1; i < allA.length; i++) {
+      expect(allA[i - 1]!.createdAt >= allA[i]!.createdAt).toBe(true);
+    }
+
+    // Events from projectB are not included in projectA results
+    expect(allA.every((e) => e.projectId === projectA.id)).toBe(true);
+    expect(allB.every((e) => e.projectId === projectB.id)).toBe(true);
+
+    // limit: 1 returns exactly 1 event
+    const limited = repo.listEvents(projectA.id, { limit: 1 });
+    expect(limited).toHaveLength(1);
+
+    repo.close();
+  });
+
   test("openDecodeDatabase remains a legacy compatibility alias", () => {
     const root = makeTempDir();
     const decodeHome = join(root, ".decode");

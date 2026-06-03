@@ -6,6 +6,7 @@ import type { ProjectStatus } from "../app/decode-app";
 import type {
   CompactContext,
   Decision,
+  Event,
   Finding,
   Plan,
   ProjectBrief,
@@ -14,6 +15,7 @@ import type {
   Spike,
 } from "../domain/schemas";
 import {
+  eventGlyph,
   palette,
   progressBar,
   severityBadge,
@@ -34,6 +36,7 @@ export type DashboardData = {
   sessions: Session[];
   decisions: Decision[];
   context: CompactContext;
+  timeline: Event[];
 };
 
 export type DashboardProps = {
@@ -70,6 +73,8 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
   const [activeSection, setActiveSection] = useState<SectionId>("home");
   const [selectionBySection, setSelectionBySection] = useState<SelectionState>(initialSelection);
   const [refreshing, setRefreshing] = useState(false);
+  const [overlay, setOverlay] = useState<"timeline" | null>(null);
+  const [timelineScrollIndex, setTimelineScrollIndex] = useState(0);
   const renderer = useRenderer();
   const { height } = useTerminalDimensions();
 
@@ -81,8 +86,35 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
   useKeyboard((key) => {
     const token = key.name || key.raw || key.sequence;
 
+    // Overlay mode: intercept all keys when timeline is open
+    if (overlay === "timeline") {
+      if (key.name === "t" || key.name === "escape") {
+        setOverlay(null);
+        return;
+      }
+      if (key.name === "up" || key.name === "k") {
+        setTimelineScrollIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+      if (key.name === "down" || key.name === "j") {
+        setTimelineScrollIndex((prev) => Math.min(Math.max(0, data.timeline.length - 1), prev + 1));
+        return;
+      }
+      if (key.name === "q") {
+        renderer.destroy();
+        return;
+      }
+      return;
+    }
+
     if (key.name === "q" || key.name === "escape") {
       renderer.destroy();
+      return;
+    }
+
+    if (key.name === "t") {
+      setOverlay("timeline");
+      setTimelineScrollIndex(0);
       return;
     }
 
@@ -129,10 +161,14 @@ export function Dashboard({ initialData, reload }: DashboardProps) {
       <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
         <Sidebar data={data} activeSection={activeSection} />
         <box style={{ flexDirection: "column", flexGrow: 1 }}>
-          <Main data={data} section={activeSection} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />
+          {overlay === "timeline" ? (
+            <TimelineOverlay timeline={data.timeline} scrollIndex={timelineScrollIndex} bodyHeight={bodyHeight} />
+          ) : (
+            <Main data={data} section={activeSection} selectedIndex={selectedIndex} bodyHeight={bodyHeight} />
+          )}
         </box>
       </box>
-      <Footer status={data.status} />
+      <Footer status={data.status} overlayOpen={overlay !== null} />
     </box>
   );
 }
@@ -204,7 +240,7 @@ function Sidebar({ data, activeSection }: { data: DashboardData; activeSection: 
   );
 }
 
-function Footer({ status }: { status: ProjectStatus }) {
+function Footer({ status, overlayOpen }: { status: ProjectStatus; overlayOpen: boolean }) {
   return (
     <box style={{ flexDirection: "column", height: 2 }}>
       <text>
@@ -212,7 +248,57 @@ function Footer({ status }: { status: ProjectStatus }) {
         <span fg={palette.text}>{truncate(status.next.recommendation ?? "nothing pending", 60)}</span>
         <span fg={palette.faint}>{`  — ${truncate(status.next.reason, 50)}`}</span>
       </text>
-      <text fg={palette.faint}>1-9 section · ←→ switch · ↑↓ select · r refresh · q quit</text>
+      {overlayOpen ? (
+        <text fg={palette.faint}>t/esc close timeline · ↑↓ scroll · q quit</text>
+      ) : (
+        <text fg={palette.faint}>1-9 section · ←→ switch · ↑↓ select · t timeline · r refresh · q quit</text>
+      )}
+    </box>
+  );
+}
+
+function TimelineOverlay({
+  timeline,
+  scrollIndex,
+  bodyHeight,
+}: {
+  timeline: Event[];
+  scrollIndex: number;
+  bodyHeight: number;
+}) {
+  const visibleCount = Math.max(1, bodyHeight - 2);
+  const start = Math.max(0, scrollIndex - Math.floor(visibleCount / 2));
+  const visible = timeline.slice(start, start + visibleCount);
+
+  return (
+    <box
+      border
+      borderColor={palette.borderActive}
+      backgroundColor={palette.panel}
+      style={{ flexDirection: "column", flexGrow: 1, padding: 1 }}
+    >
+      <text>
+        <span fg={palette.accent}>{"TIMELINE  "}</span>
+        <span fg={palette.faint}>{`${timeline.length} events`}</span>
+      </text>
+      {timeline.length === 0 ? (
+        <text fg={palette.muted}>{"No events recorded yet."}</text>
+      ) : (
+        visible.map((event, idx) => {
+          const absoluteIdx = start + idx;
+          const active = absoluteIdx === scrollIndex;
+          const glyph = eventGlyph(event.type);
+          return (
+            <text key={event.id}>
+              <span fg={active ? palette.accent : palette.faint}>{active ? "▸ " : "  "}</span>
+              <span fg={palette.muted}>{`${glyph} `}</span>
+              <span fg={active ? palette.text : palette.muted}>{truncate(event.type, 28)}</span>
+              <span fg={palette.faint}>{`  ${event.entityType}:${truncate(event.entityId, 16)}`}</span>
+              <span fg={palette.faint}>{`  ${event.createdAt}`}</span>
+            </text>
+          );
+        })
+      )}
     </box>
   );
 }

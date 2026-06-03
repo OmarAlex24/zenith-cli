@@ -592,4 +592,37 @@ describe("cli json commands", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.errors[0].code).toBe("invalid_json_input");
   });
+
+  test("timeline --json returns ok envelope with array", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+
+    const result = await runDecode(["timeline", "--json"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).ok).toBe(true);
+    expect(Array.isArray((result.json as any).data)).toBe(true);
+    // After init there should be at least one event
+    expect((result.json as any).data.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("timeline --limit 1 returns at most 1 entry", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    // Create an extra event
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { title: "Timeline Test Plan", phases: [{ title: "Phase 1" }] },
+    });
+
+    const result = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, decodeHome });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data).toHaveLength(1);
+  });
 });

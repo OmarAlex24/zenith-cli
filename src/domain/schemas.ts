@@ -667,3 +667,4 @@ export type UpdateFindingInput = z.infer<typeof UpdateFindingInputSchema>;
 export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
 export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;
+export type Event = z.infer<typeof EventSchema>;

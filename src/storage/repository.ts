@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { createId, nowIso } from "../domain/ids";
 import {
   DecisionSchema,
+  EventSchema,
   FindingSchema,
   PlanSchema,
   ProjectBriefSchema,
@@ -10,6 +11,7 @@ import {
   SessionSchema,
   SpikeSchema,
   type Decision,
+  type Event,
   type Evidence,
   type Finding,
   type Plan,
@@ -154,6 +156,16 @@ type SpikeRow = {
   created_at: string;
   updated_at: string;
   concluded_at: string | null;
+};
+
+type EventRow = {
+  id: string;
+  project_id: string | null;
+  type: string;
+  entity_type: string;
+  entity_id: string;
+  payload_json: string;
+  created_at: string;
 };
 
 export type RegisterProjectInput = {
@@ -1318,6 +1330,31 @@ export class ZenithRepository {
     });
   }
 
+  listEvents(
+    projectId: string,
+    options: { types?: string[]; limit?: number; before?: { createdAt: string; id: string } } = {},
+  ): Event[] {
+    const MAX_LIMIT = 500;
+    const limit = Math.min(options.limit ?? 50, MAX_LIMIT);
+    const params: (string | number)[] = [projectId];
+    let sql = "SELECT * FROM events WHERE project_id = ?";
+
+    if (options.types && options.types.length > 0) {
+      sql += ` AND type IN (${options.types.map(() => "?").join(", ")})`;
+      params.push(...options.types);
+    }
+
+    if (options.before) {
+      sql += " AND (created_at, id) < (?, ?)";
+      params.push(options.before.createdAt, options.before.id);
+    }
+
+    sql += " ORDER BY created_at DESC, id DESC LIMIT ?";
+    params.push(limit);
+
+    return this.db.query<EventRow, (string | number)[]>(sql).all(...params).map(mapEvent);
+  }
+
   private recordEvent(
     projectId: string | null,
     type: string,
@@ -1447,6 +1484,21 @@ function mapSession(row: SessionRow): Session {
     changedFiles: parseJsonArray<string>(row.changed_files_json),
     ...(row.related_plan_id === null ? {} : { relatedPlanId: row.related_plan_id }),
     nextSteps: parseJsonArray<string>(row.next_steps_json),
+  });
+}
+
+function mapEvent(row: EventRow): Event {
+  return EventSchema.parse({
+    id: row.id,
+    // EventRow.project_id is string | null, but listEvents always filters
+    // WHERE project_id = ?, so every row reaching here is project-scoped and
+    // project_id is non-null.
+    projectId: row.project_id,
+    type: row.type,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    payload: JSON.parse(row.payload_json) as unknown,
+    createdAt: row.created_at,
   });
 }
 

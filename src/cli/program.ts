@@ -18,6 +18,7 @@ type CommandOptions = {
   input?: string;
   phase?: string;
   status?: string;
+  limit?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -429,6 +430,15 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.resume(), humanMarkdown);
     });
 
+  program
+    .command("timeline")
+    .description("Show recent project activity (read-only event log)")
+    .option("--json", "Emit stable JSON")
+    .option("--limit <n>", "Max number of events (default 50)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.timeline(parseLimitOption(commandOptions.limit)), humanTimeline);
+    });
+
   const agents = program.command("agents").description("Agent pack installer");
 
   agents
@@ -723,4 +733,19 @@ function parseFindingStatus(status: string | undefined): FindingListStatus {
 
 function toContextOptions(commandOptions: CommandOptions): { phaseId?: string } {
   return commandOptions.phase ? { phaseId: commandOptions.phase } : {};
+}
+
+function parseLimitOption(value?: string): { limit?: number } {
+  if (value === undefined) return {};
+  const n = parseInt(value, 10);
+  return isNaN(n) ? {} : { limit: n };
+}
+
+function humanTimeline(
+  events: Array<{ createdAt: string; type: string; entityType: string; entityId: string }>,
+): string {
+  if (events.length === 0) {
+    return "No events recorded for this project yet.";
+  }
+  return events.map((e) => `${e.createdAt}  ${e.type}  ${e.entityType}:${e.entityId}`).join("\n");
 }

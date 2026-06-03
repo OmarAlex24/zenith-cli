@@ -26,6 +26,7 @@ import {
   UpdateRoadmapInputSchema,
   UpdateRoadmapItemInputSchema,
   type Decision,
+  type Event,
   type Finding,
   type Plan,
   type PlanPhase,
@@ -486,6 +487,11 @@ export class ZenithApp {
 
   async resume(): Promise<ResumeContext> {
     return this.contextEngine.resume();
+  }
+
+  async timeline(options: { limit?: number } = {}): Promise<Event[]> {
+    const project = await this.requireProject();
+    return this.repository.listEvents(project.id, { ...(options.limit ? { limit: options.limit } : {}) });
   }
 
   async showPhase(phaseId: string): Promise<PhaseDetail> {
