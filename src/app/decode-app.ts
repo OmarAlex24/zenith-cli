@@ -49,6 +49,19 @@ import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next"
 import { computePlanPath, validatePhaseDependencies } from "./plan-graph";
 import { resolveActivePlan, type FocusCandidate, type FocusResolution } from "./focus";
 import { buildRoadmapWorkspace, type RoadmapWorkspace } from "./roadmap-workspace";
+import {
+  activePlanSummary,
+  completionMetrics,
+  eventStatsFromSummary,
+  findingSignals,
+  roadmapProgress,
+  windowFromDays,
+  type CompletionMetrics,
+  type EventStats,
+  type FindingSignals,
+  type RoadmapProgress,
+  type TelemetryWindow,
+} from "./telemetry";
 
 export type ProjectDetection = {
   project: Project | null;
@@ -88,6 +101,65 @@ export type FocusStatus = {
   ambiguous: boolean;
   candidates: FocusCandidate[];
   activePlan: { id: string; title: string } | null;
+};
+
+export type StandupDigest = {
+  window: TelemetryWindow;
+  next: PlanNextResult;
+  activePlan: { id: string; title: string; phase?: string } | null;
+  events: EventStats;
+  completions: CompletionMetrics;
+  roadmaps: RoadmapProgress[];
+  findings: FindingSignals;
+};
+
+export type DiffDigest = {
+  window: TelemetryWindow;
+  cursor: { value: string; source: TelemetryWindow["source"] };
+  events: Event[];
+  eventStats: EventStats;
+  completions: CompletionMetrics;
+  latestEndedSession: Session | null;
+};
+
+export type DriftIssue = {
+  severity: "low" | "medium" | "high";
+  title: string;
+  detail: string;
+  evidence: string[];
+};
+
+export type DriftReport = {
+  generatedAt: string;
+  activePlan: PlanSummaryForTelemetry | null;
+  sourceRoadmap: RoadmapProgress | null;
+  sourceRoadmapItem: { id: string; title: string; status: RoadmapItem["status"] } | null;
+  next: PlanNextResult;
+  aligned: boolean;
+  issues: DriftIssue[];
+};
+
+export type AdherenceReport = {
+  window: TelemetryWindow;
+  events: EventStats;
+  completions: CompletionMetrics;
+  activeDayCount: number;
+  eventsPerDay: number;
+  completionEventsPerDay: number;
+};
+
+type PlanSummaryForTelemetry = {
+  id: string;
+  title: string;
+  status: Plan["status"];
+  sourceRoadmapId?: string;
+  sourceRoadmapItemId?: string;
+};
+
+type ResolvedEventSince = {
+  since: { createdAt: string; id?: string };
+  value: string;
+  source: TelemetryWindow["source"];
 };
 
 export type { PlanNextResult } from "./plan-next";
@@ -685,17 +757,188 @@ export class ZenithApp {
     );
   }
 
-  async nextPlanStep(): Promise<PlanNextResult> {
+  async nextPlanStep(options: { staleAfterDays?: number } = {}): Promise<PlanNextResult> {
     const project = await this.requireProject();
+    return this.computeNextForProject(project, options);
+  }
+
+  async standup(options: { days?: number } = {}): Promise<StandupDigest> {
+    const project = await this.requireProject();
+    const now = nowIso();
+    const days = options.days ?? 1;
+    const window = windowFromDays(days, now);
+    const since = { createdAt: window.since };
+    const events = this.repository.listEvents(project.id, { since, limit: 500 });
+    const eventSummary = this.repository.summarizeEvents(project.id, { since });
+    const recentSessions = this.repository.listRecentSessions(project.id, 5);
+    const openFindings = this.repository.listOpenFindings(project.id);
+    const roadmaps = this.repository.listRoadmaps(project.id, 5);
+    const { resolution } = this.resolveFocus(project.id, (await this.git.inspect(this.cwd)).worktreeRoot);
+
+    return {
+      window,
+      next: computeNext(resolution.activePlan, recentSessions, openFindings, roadmaps),
+      activePlan: activePlanSummary(resolution.activePlan),
+      events: eventStatsFromSummary(eventSummary),
+      completions: completionMetrics(events),
+      roadmaps: roadmapProgress(roadmaps),
+      findings: findingSignals(openFindings),
+    };
+  }
+
+  async diff(options: { since?: string; limit?: number } = {}): Promise<DiffDigest> {
+    const project = await this.requireProject();
+    const now = nowIso();
+    const latestEndedSession = this.repository.getLatestEndedSession(project.id);
+    const resolved = options.since
+      ? this.resolveEventSince(project.id, options.since)
+      : this.defaultDiffSince(latestEndedSession, now);
+    const events = this.repository.listEvents(project.id, { since: resolved.since, limit: options.limit ?? 50 });
+    const eventSummary = this.repository.summarizeEvents(project.id, { since: resolved.since });
+
+    return {
+      window: {
+        since: resolved.since.createdAt,
+        until: now,
+        source: resolved.source,
+      },
+      cursor: {
+        value: resolved.value,
+        source: resolved.source,
+      },
+      events,
+      eventStats: eventStatsFromSummary(eventSummary),
+      completions: completionMetrics(events),
+      latestEndedSession,
+    };
+  }
+
+  async drift(options: { staleAfterDays?: number } = {}): Promise<DriftReport> {
+    const project = await this.requireProject();
+    const now = nowIso();
+    const git = await this.git.inspect(this.cwd);
+    const roadmaps = this.repository.listRoadmaps(project.id);
+    const recentRoadmaps = roadmaps.slice(0, 5);
+    const recentSessions = this.repository.listRecentSessions(project.id, 5);
+    const openFindings = this.repository.listOpenFindings(project.id);
+    const { resolution } = this.resolveFocus(project.id, git.worktreeRoot);
+    const activePlan = resolution.activePlan;
+    const next = computeNext(
+      activePlan,
+      recentSessions,
+      openFindings,
+      recentRoadmaps,
+      { now, staleAfterDays: options.staleAfterDays ?? 7 },
+      { ambiguous: resolution.ambiguous, candidates: resolution.candidates },
+    );
+    const sourceRoadmap = activePlan?.sourceRoadmapId
+      ? roadmaps.find((roadmap) => roadmap.id === activePlan.sourceRoadmapId) ?? null
+      : null;
+    const sourceItem =
+      sourceRoadmap && activePlan?.sourceRoadmapItemId
+        ? sourceRoadmap.items.find((item) => item.id === activePlan.sourceRoadmapItemId) ?? null
+        : null;
+    const issues = driftIssues(activePlan, sourceRoadmap, sourceItem);
+    const sourceProgress = sourceRoadmap ? roadmapProgress([sourceRoadmap])[0] ?? null : null;
+
+    return {
+      generatedAt: now,
+      activePlan: activePlan ? planSummaryForTelemetry(activePlan) : null,
+      sourceRoadmap: sourceProgress,
+      sourceRoadmapItem: sourceItem
+        ? {
+            id: sourceItem.id,
+            title: sourceItem.title,
+            status: sourceItem.status,
+          }
+        : null,
+      next,
+      aligned: issues.length === 0,
+      issues,
+    };
+  }
+
+  async adherence(options: { days?: number } = {}): Promise<AdherenceReport> {
+    const project = await this.requireProject();
+    const now = nowIso();
+    const days = options.days ?? 14;
+    const window = windowFromDays(days, now);
+    const since = { createdAt: window.since };
+    const events = this.repository.listEvents(project.id, { since, limit: 500 });
+    const eventSummary = this.repository.summarizeEvents(project.id, { since });
+    const stats = eventStatsFromSummary(eventSummary);
+    const completions = completionMetrics(events);
+    const completionEvents = completions.plansCompleted + completions.phasesCompleted + completions.roadmapItemsAdvanced;
+
+    return {
+      window,
+      events: stats,
+      completions,
+      activeDayCount: stats.activeDays.length,
+      eventsPerDay: roundMetric(stats.total / days),
+      completionEventsPerDay: roundMetric(completionEvents / days),
+    };
+  }
+
+  private async computeNextForProject(project: Project, options: { staleAfterDays?: number } = {}): Promise<PlanNextResult> {
     const git = await this.git.inspect(this.cwd);
     const recentSessions = this.repository.listRecentSessions(project.id, 5);
     const openFindings = this.repository.listOpenFindings(project.id);
     const recentRoadmaps = this.repository.listRoadmaps(project.id, 5);
     const { resolution } = this.resolveFocus(project.id, git.worktreeRoot);
-    return computeNext(resolution.activePlan, recentSessions, openFindings, recentRoadmaps, {}, {
-      ambiguous: resolution.ambiguous,
-      candidates: resolution.candidates,
-    });
+    return computeNext(
+      resolution.activePlan,
+      recentSessions,
+      openFindings,
+      recentRoadmaps,
+      options.staleAfterDays ? { now: nowIso(), staleAfterDays: options.staleAfterDays } : {},
+      {
+        ambiguous: resolution.ambiguous,
+        candidates: resolution.candidates,
+      },
+    );
+  }
+
+  private resolveEventSince(projectId: string, since: string): ResolvedEventSince {
+    const isIso = /^\d{4}-\d{2}-\d{2}T/.test(since);
+    if (isIso) {
+      return {
+        since: { createdAt: since },
+        value: since,
+        source: "iso",
+      };
+    }
+
+    const event = this.repository.getEventById(since);
+    if (!event || event.projectId !== projectId) {
+      throw new ZenithError(`Event not found: ${since}`, {
+        code: "event_not_found",
+        details: { eventId: since },
+      });
+    }
+
+    return {
+      since: { createdAt: event.createdAt, id: event.id },
+      value: event.id,
+      source: "event_id",
+    };
+  }
+
+  private defaultDiffSince(latestEndedSession: Session | null, now: string): ResolvedEventSince {
+    if (latestEndedSession?.endedAt) {
+      return {
+        since: { createdAt: latestEndedSession.endedAt },
+        value: latestEndedSession.endedAt,
+        source: "latest_session",
+      };
+    }
+
+    const window = windowFromDays(1, now, "fallback");
+    return {
+      since: { createdAt: window.since },
+      value: window.since,
+      source: "fallback",
+    };
   }
 
   async getContext(options: ContextOptions = {}): Promise<ContextSnapshot> {
@@ -1068,6 +1311,90 @@ function normalizeEvidence(evidence: {
     value: evidence.value,
     createdAt: evidence.createdAt ?? nowIso(),
   };
+}
+
+function driftIssues(
+  activePlan: Plan | null,
+  sourceRoadmap: Roadmap | null,
+  sourceItem: RoadmapItem | null,
+): DriftIssue[] {
+  const issues: DriftIssue[] = [];
+
+  if (!activePlan) {
+    return [
+      {
+        severity: "high",
+        title: "No active plan",
+        detail: "The active roadmap has no executable plan selected for this worktree.",
+        evidence: [],
+      },
+    ];
+  }
+
+  if (!activePlan.sourceRoadmapId) {
+    issues.push({
+      severity: "medium",
+      title: "Active plan is not linked to a roadmap",
+      detail: "Roadmap-driven work should preserve sourceRoadmapId so progress can be reconciled.",
+      evidence: [activePlan.id],
+    });
+    return issues;
+  }
+
+  if (!sourceRoadmap) {
+    issues.push({
+      severity: "high",
+      title: "Source roadmap is missing",
+      detail: "The active plan references a roadmap that is not present in project memory.",
+      evidence: [activePlan.sourceRoadmapId],
+    });
+    return issues;
+  }
+
+  if (!activePlan.sourceRoadmapItemId || !sourceItem) {
+    issues.push({
+      severity: "high",
+      title: "Source roadmap item is missing",
+      detail: "The active plan cannot be reconciled to a concrete roadmap item.",
+      evidence: [activePlan.id, sourceRoadmap.id],
+    });
+    return issues;
+  }
+
+  if (sourceItem.status !== "in_progress") {
+    issues.push({
+      severity: sourceItem.status === "done" ? "high" : "medium",
+      title: "Roadmap item status does not match active plan",
+      detail: `Expected source roadmap item to be in_progress while its plan is active; found ${sourceItem.status}.`,
+      evidence: [sourceItem.id],
+    });
+  }
+
+  const expectedItem = sourceRoadmap.items.find((item) => item.status === "in_progress") ?? sourceRoadmap.items.find((item) => item.status === "todo");
+  if (expectedItem && expectedItem.id !== activePlan.sourceRoadmapItemId) {
+    issues.push({
+      severity: "medium",
+      title: "Active plan is not the roadmap's next actionable item",
+      detail: `Roadmap next item is ${expectedItem.title}; active plan is linked to ${sourceItem.title}.`,
+      evidence: [expectedItem.id, activePlan.sourceRoadmapItemId],
+    });
+  }
+
+  return issues;
+}
+
+function planSummaryForTelemetry(plan: Plan): PlanSummaryForTelemetry {
+  return {
+    id: plan.id,
+    title: plan.title,
+    status: plan.status,
+    ...(plan.sourceRoadmapId ? { sourceRoadmapId: plan.sourceRoadmapId } : {}),
+    ...(plan.sourceRoadmapItemId ? { sourceRoadmapItemId: plan.sourceRoadmapItemId } : {}),
+  };
+}
+
+function roundMetric(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 export { ZenithApp as DecodeApp };

@@ -113,10 +113,11 @@ bun run zenith plan show <plan-id> --json
 bun run zenith plan update <plan-id> --json --input -
 bun run zenith plan update-phase <plan-id> --json --input -
 bun run zenith plan next --json
+bun run zenith plan next --json --stale-after-days 7
 bun run zenith phase show <phase-id> --json
 ```
 
-`plan update-phase` input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. `plan next` skips phases whose dependencies are not yet `done` and returns a recommendation prefixed `Blocked by dependency:` (with a `blockedBy` array) when all remaining todo phases are gated.
+`plan update-phase` input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. `plan next` skips phases whose dependencies are not yet `done` and returns a recommendation prefixed `Blocked by dependency:` (with a `blockedBy` array) when all remaining todo phases are gated. `--stale-after-days <n>` adds `staleness` metadata to the next-step JSON without changing the default response shape.
 
 Context:
 
@@ -125,9 +126,14 @@ bun run zenith context get --json
 bun run zenith context compact --json
 bun run zenith resume --json
 bun run zenith timeline --json
+bun run zenith standup --json
+bun run zenith diff --json
+bun run zenith diff --json --since <event-id-or-iso>
+bun run zenith drift --json
+bun run zenith adherence --json
 ```
 
-`zenith timeline` is a read-only activity log; accepts `--limit <n>`.
+`zenith timeline` is a read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`. Self-tracking telemetry commands are also read-only: `standup` gives a daily digest, `diff` shows changes since a cursor or the latest ended session, `drift` compares roadmap and active plan alignment, and `adherence` reports event-derived velocity.
 
 Long-running memory:
 
@@ -190,9 +196,10 @@ Use Zenith as the source of truth before planning or continuing work:
 zenith context compact --json
 zenith plan next --json
 zenith timeline --json
+zenith standup --json
 ```
 
-`zenith timeline` shows recent project activity (read-only event log); accepts `--limit <n>`.
+`zenith timeline` shows recent project activity (read-only event log); accepts `--limit <n>` and `--since <eventId|iso>`. Use `zenith standup --json`, `zenith diff --json`, `zenith drift --json`, and `zenith adherence --json` when you need read-only self-tracking telemetry before choosing the next work.
 
 When working from this source checkout and the `zenith` binary is not on `PATH`, use `bun run zenith ...` for the same commands.
 
@@ -280,7 +287,7 @@ Phase progress is recorded with evidence:
 zenith plan update-phase <plan-id> --json --input -
 ```
 
-`plan update-phase` input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. `plan next` skips phases whose dependencies are not yet `done` and returns a recommendation prefixed `Blocked by dependency:` (with a `blockedBy` array) when all remaining todo phases are gated.
+`plan update-phase` input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. `plan next` skips phases whose dependencies are not yet `done` and returns a recommendation prefixed `Blocked by dependency:` (with a `blockedBy` array) when all remaining todo phases are gated. Add `--stale-after-days <n>` to include next-step staleness metadata.
 
 Use `decode` only as a legacy alias when `zenith` is not available.
 

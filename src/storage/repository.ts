@@ -197,6 +197,20 @@ export type RoadmapFocus = {
   updatedAt: string;
 };
 
+export type EventGroupCount = {
+  key: string;
+  count: number;
+};
+
+export type EventWindowSummary = {
+  total: number;
+  byType: EventGroupCount[];
+  byEntityType: EventGroupCount[];
+  activeDays: EventGroupCount[];
+  firstEventAt?: string;
+  lastEventAt?: string;
+};
+
 export type InsertPlanInput = {
   projectId: string;
   title: string;
@@ -1334,6 +1348,20 @@ export class ZenithRepository {
     return this.listRecentSessions(projectId, limit);
   }
 
+  getLatestEndedSession(projectId: string): Session | null {
+    const row = this.db
+      .query<SessionRow, [string]>(
+        `
+        SELECT * FROM sessions
+        WHERE project_id = ? AND ended_at IS NOT NULL
+        ORDER BY ended_at DESC, created_at DESC
+        LIMIT 1
+      `,
+      )
+      .get(projectId);
+    return row ? mapSession(row) : null;
+  }
+
   getSessionById(sessionId: string): Session | null {
     const row = this.db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
     return row ? mapSession(row) : null;
@@ -1578,6 +1606,66 @@ export class ZenithRepository {
     return this.db.query<EventRow, (string | number)[]>(sql).all(...params).map(mapEvent);
   }
 
+  summarizeEvents(
+    projectId: string,
+    options: {
+      since?: { createdAt: string; id?: string };
+    } = {},
+  ): EventWindowSummary {
+    const { where, params } = buildEventWindowWhere(projectId, options.since);
+    const summary = this.db
+      .query<{ total: number; first_event_at: string | null; last_event_at: string | null }, (string | number)[]>(
+        `
+        SELECT COUNT(*) AS total, MIN(created_at) AS first_event_at, MAX(created_at) AS last_event_at
+        FROM events
+        ${where}
+      `,
+      )
+      .get(...params);
+    const byType = this.db
+      .query<EventGroupCount, (string | number)[]>(
+        `
+        SELECT type AS key, COUNT(*) AS count
+        FROM events
+        ${where}
+        GROUP BY type
+        ORDER BY count DESC, key ASC
+      `,
+      )
+      .all(...params);
+    const byEntityType = this.db
+      .query<EventGroupCount, (string | number)[]>(
+        `
+        SELECT entity_type AS key, COUNT(*) AS count
+        FROM events
+        ${where}
+        GROUP BY entity_type
+        ORDER BY count DESC, key ASC
+      `,
+      )
+      .all(...params);
+    const activeDays = this.db
+      .query<EventGroupCount, (string | number)[]>(
+        `
+        SELECT substr(created_at, 1, 10) AS key, COUNT(*) AS count
+        FROM events
+        ${where}
+        GROUP BY substr(created_at, 1, 10)
+        ORDER BY key DESC
+      `,
+      )
+      .all(...params);
+
+    return {
+      total: summary?.total ?? 0,
+      byType,
+      byEntityType,
+      activeDays,
+      ...(summary?.first_event_at ? { firstEventAt: summary.first_event_at } : {}),
+      ...(summary?.last_event_at ? { lastEventAt: summary.last_event_at } : {}),
+    };
+  }
+
   private recordEvent(
     projectId: string | null,
     type: string,
@@ -1594,6 +1682,26 @@ export class ZenithRepository {
       )
       .run(createId("evt"), projectId, type, entityType, entityId, JSON.stringify(payload), nowIso());
   }
+}
+
+function buildEventWindowWhere(
+  projectId: string,
+  since?: { createdAt: string; id?: string },
+): { where: string; params: (string | number)[] } {
+  const params: (string | number)[] = [projectId];
+  let where = "WHERE project_id = ?";
+
+  if (since) {
+    if (since.id) {
+      where += " AND (created_at, id) > (?, ?)";
+      params.push(since.createdAt, since.id);
+    } else {
+      where += " AND created_at > ?";
+      params.push(since.createdAt);
+    }
+  }
+
+  return { where, params };
 }
 
 function mapProject(row: ProjectRow): Project {

@@ -101,6 +101,7 @@ Use the zenith-memory skill at ${skillPath} when:
 - recording and closing findings
 - starting, capturing, ending, or summarizing a coding session
 - viewing recent project activity (\`zenith timeline --json\`)
+- viewing self-tracking telemetry (\`zenith standup/diff/drift/adherence --json\`)
 - sequencing plan phases with dependencies (\`dependsOn\` via \`plan update-phase\`; \`plan next\` reports \`Blocked by dependency\` when gated)
 
 Before planning:
@@ -126,7 +127,7 @@ description: Use when working in a repository that uses Zenith CLI to read local
 
 # Zenith Memory
 
-Use this skill when the user asks to plan, resume, record project intent, maintain roadmap direction, record research spikes, store technical decisions, record findings, or close a meaningful coding session.
+Use this skill when the user asks to plan, resume, record project intent, maintain roadmap direction, record research spikes, store technical decisions, record findings, view self-tracking telemetry, or close a meaningful coding session.
 
 Zenith CLI is the source of truth for private local project memory. It stores data locally, not in the repository.
 
@@ -152,6 +153,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
 - Use \`zenith timeline --json\` (with optional \`--limit <n>\` and \`--since <eventId|iso>\`) for a read-only view of recent project activity.
+- Use \`zenith standup --json\`, \`zenith diff --json\`, \`zenith drift --json\`, and \`zenith adherence --json\` for read-only self-tracking telemetry when auditing progress or resuming work.
 - Phase prerequisites are expressed with \`dependsOn\` (array of phase ids) via \`plan update-phase\`; when all remaining phases are gated, \`plan next\` reports \`Blocked by dependency\`.
 - Use \`plan next\` \`kind\` field to dispatch in agent loops: \`implement_phase\` → implement; \`blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty\` → STOP.
 - Use \`zenith plan advance --json --input -\` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
@@ -165,6 +167,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
    \`zenith context compact --json\`
 2. Ask Zenith what should happen next:
    \`zenith plan next --json\`
+   Use \`zenith plan next --json --stale-after-days <n>\` when stale-work metadata matters.
 3. If a phase id is returned, inspect it:
    \`zenith phase show <phase-id> --json\`
 4. For non-executable memory, use the right category:
@@ -246,6 +249,7 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith plan update <plan-id> --json --input -\`
 - \`zenith plan update-phase <plan-id> --json --input -\`
 - \`zenith plan next --json\`
+- \`zenith plan next --json --stale-after-days <n>\` — include optional \`staleness\` metadata on the next step
 - \`zenith plan complete <plan-id> --json\` — mark plan completed (all phases must be done); advances source roadmap item to \`done\`
 - \`zenith plan advance --json --input -\` — mark a phase done + append evidence + recompute next step (one transaction); returns \`AdvanceResult\`
 - \`zenith plan path <plan-id> --json\` — topological view of phases: \`orderedPhases\`, \`criticalPath\`, \`remaining\`, \`ready\` flags
@@ -272,6 +276,8 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 
 \`kind\` is omitted when the fallback is a freeform session next-step.
 
+When \`--stale-after-days <n>\` is provided, \`NextStep\` may include \`staleness\`: \`{ stale, ageDays, staleAfterDays, lastUpdatedAt }\`. The default \`plan next --json\` response omits it for compatibility.
+
 ### plan advance — AdvanceResult
 
 \`plan advance\` payload: \`{ planId, completedPhaseId?, status?, evidence[] }\`
@@ -297,6 +303,13 @@ If all phases are done after the advance, \`planCompleted\` is \`true\` and (if 
 - \`zenith timeline --json\` — read-only activity log; accepts \`--limit <n>\` and \`--since <eventId|iso>\`
 
 Use \`--since <eventId|iso>\` to return only events after a checkpoint cursor (ISO timestamp or event id). Useful for resumed sessions to diff progress without re-reading the entire timeline.
+
+## Self-Tracking Telemetry
+
+- \`zenith standup --json [--days <n>]\` — daily digest of next step, events, completions, roadmap progress, and findings; default 1 day
+- \`zenith diff --json [--since <eventId|iso>] [--limit <n>]\` — events since a cursor, or since the latest ended session by default
+- \`zenith drift --json [--stale-after-days <n>]\` — roadmap-vs-active-plan alignment report; default stale threshold 7 days
+- \`zenith adherence --json [--days <n>]\` — event-derived velocity and completion metrics; default 14 days
 
 ## Decisions
 
@@ -383,6 +396,21 @@ zenith plan list --json
 \`\`\`
 
 If the project is not registered, ask whether to run \`zenith init --json\`.
+
+## Self-Tracking Telemetry
+
+Use these read-only commands when choosing or auditing the next work:
+
+\`\`\`bash
+zenith standup --json                 # daily digest; accepts --days <n>
+zenith diff --json                    # changes since latest ended session
+zenith diff --json --since <cursor>   # event id or ISO timestamp
+zenith drift --json                   # roadmap-vs-active-plan alignment
+zenith adherence --json               # velocity/adherence; accepts --days <n>
+zenith plan next --json --stale-after-days 7
+\`\`\`
+
+Telemetry is derived from existing events and memory records. It must stay read-only; record progress with \`plan advance\`, sessions, findings, or decisions instead.
 
 ## Create A Plan
 

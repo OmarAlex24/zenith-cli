@@ -63,8 +63,14 @@ describe("agent installer", () => {
     expect(cliReference).toContain("relatedPlanId");
     expect(cliReference).toContain("relatedPhaseId");
     expect(skill).toContain("zenith timeline");
+    expect(skill).toContain("zenith standup");
     expect(skill).toContain("dependsOn");
+    expect(cliReference).toContain("Self-Tracking Telemetry");
+    expect(cliReference).toContain("zenith drift");
+    expect(cliReference).toContain("staleness");
     expect(workflows).toContain("Sequence Phases With Dependencies");
+    expect(workflows).toContain("Self-Tracking Telemetry");
+    expect(workflows).toContain("zenith adherence");
     expect(workflows).toContain("dependsOn");
     expect(workflows).toContain("Blocked by dependency");
     expect(workflows).toContain("relatedPlanId");

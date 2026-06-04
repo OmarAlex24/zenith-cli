@@ -226,6 +226,30 @@ describe("computeNext — characterization tests", () => {
     expect(result.recommendation).toBe("Create an active plan");
   });
 
+  test("staleness metadata is included only when staleAfterDays and now are provided", () => {
+    const phase = makePhase({ id: "phase_stale_1", title: "Ship telemetry", status: "todo" });
+    const plan = makePlan({
+      id: "plan_stale_1",
+      title: "Telemetry Plan",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      phases: [phase],
+    });
+
+    const withoutOption = computeNext(plan, [], []);
+    const withOption = computeNext(plan, [], [], [], {
+      now: "2025-01-10T12:00:00.000Z",
+      staleAfterDays: 7,
+    });
+
+    expect(withoutOption.staleness).toBeUndefined();
+    expect(withOption.staleness).toEqual({
+      stale: true,
+      ageDays: 9.5,
+      staleAfterDays: 7,
+      lastUpdatedAt: "2025-01-01T00:00:00.000Z",
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // F2: NextStep.kind discriminant — assert kind at each return site
   // ---------------------------------------------------------------------------

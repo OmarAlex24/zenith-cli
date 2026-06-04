@@ -37,6 +37,7 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 - `zenith plan update <plan-id> --json --input -`
 - `zenith plan update-phase <plan-id> --json --input -`
 - `zenith plan next --json`
+- `zenith plan next --json --stale-after-days <n>` — include optional `staleness` metadata on the next step
 - `zenith plan complete <plan-id> --json` — mark plan completed (all phases must be done); advances source roadmap item to `done`
 - `zenith plan advance --json --input -` — mark a phase done + append evidence + recompute next step (one transaction); returns `AdvanceResult`
 - `zenith plan path <plan-id> --json` — topological view of phases: `orderedPhases`, `criticalPath`, `remaining`, `ready` flags
@@ -63,6 +64,8 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 
 `kind` is omitted when the fallback is a freeform session next-step.
 
+When `--stale-after-days <n>` is provided, `NextStep` may include `staleness`: `{ stale, ageDays, staleAfterDays, lastUpdatedAt }`. The default `plan next --json` response omits it for compatibility.
+
 ### plan advance — AdvanceResult
 
 `plan advance` payload: `{ planId, completedPhaseId?, status?, evidence[] }`
@@ -88,6 +91,13 @@ If all phases are done after the advance, `planCompleted` is `true` and (if link
 - `zenith timeline --json` — read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`
 
 Use `--since <eventId|iso>` to return only events after a checkpoint cursor (ISO timestamp or event id). Useful for resumed sessions to diff progress without re-reading the entire timeline.
+
+## Self-Tracking Telemetry
+
+- `zenith standup --json [--days <n>]` — daily digest of next step, events, completions, roadmap progress, and findings; default 1 day
+- `zenith diff --json [--since <eventId|iso>] [--limit <n>]` — events since a cursor, or since the latest ended session by default
+- `zenith drift --json [--stale-after-days <n>]` — roadmap-vs-active-plan alignment report; default stale threshold 7 days
+- `zenith adherence --json [--days <n>]` — event-derived velocity and completion metrics; default 14 days
 
 ## Decisions
 

@@ -5,7 +5,7 @@ description: Use when working in a repository that uses Zenith CLI to read local
 
 # Zenith Memory
 
-Use this skill when the user asks to plan, resume, record project intent, maintain roadmap direction, record research spikes, store technical decisions, record findings, or close a meaningful coding session.
+Use this skill when the user asks to plan, resume, record project intent, maintain roadmap direction, record research spikes, store technical decisions, record findings, view self-tracking telemetry, or close a meaningful coding session.
 
 Zenith CLI is the source of truth for private local project memory. It stores data locally, not in the repository.
 
@@ -31,6 +31,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
 - Use `zenith timeline --json` (with optional `--limit <n>` and `--since <eventId|iso>`) for a read-only view of recent project activity.
+- Use `zenith standup --json`, `zenith diff --json`, `zenith drift --json`, and `zenith adherence --json` for read-only self-tracking telemetry when auditing progress or resuming work.
 - Phase prerequisites are expressed with `dependsOn` (array of phase ids) via `plan update-phase`; when all remaining phases are gated, `plan next` reports `Blocked by dependency`.
 - Use `plan next` `kind` field to dispatch in agent loops: `implement_phase` → implement; `blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty` → STOP.
 - Use `zenith plan advance --json --input -` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
@@ -44,6 +45,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
    `zenith context compact --json`
 2. Ask Zenith what should happen next:
    `zenith plan next --json`
+   Use `zenith plan next --json --stale-after-days <n>` when stale-work metadata matters.
 3. If a phase id is returned, inspect it:
    `zenith phase show <phase-id> --json`
 4. For non-executable memory, use the right category:

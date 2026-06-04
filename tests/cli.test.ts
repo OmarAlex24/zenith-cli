@@ -1120,6 +1120,100 @@ describe("cli json commands", () => {
     expect((result.json as any).errors[0].code).toBe("event_not_found");
   });
 
+  test("self-tracking telemetry commands emit stable json", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Product Roadmap",
+        items: [{ title: "Telemetry", status: "todo" }],
+      },
+    });
+    const roadmapId = (roadmap.json as any).data.id as string;
+    await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        itemTitle: "Telemetry",
+        phases: [{ title: "Read model" }],
+      },
+    });
+    const session = await runDecode(["session", "start", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        summary: "Checkpoint",
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const sessionId = (session.json as any).data.id as string;
+    await runDecode(["session", "end", sessionId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        summary: "Checkpoint done",
+        endedAt: "2026-01-01T01:00:00.000Z",
+      },
+    });
+    await runDecode(["decision", "record", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Use telemetry",
+        context: "Need daily operational visibility.",
+        decision: "Aggregate existing events.",
+      },
+    });
+
+    const cursorTimeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, decodeHome });
+    const cursorId = (cursorTimeline.json as any).data[0].id as string;
+    await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        type: "test_gap",
+        severity: "low",
+        title: "Telemetry tests",
+        description: "Cover telemetry commands.",
+        relatedFiles: [],
+      },
+    });
+
+    const standup = await runDecode(["standup", "--json", "--days", "7"], { cwd, decodeHome });
+    const diffDefault = await runDecode(["diff", "--json"], { cwd, decodeHome });
+    const diff = await runDecode(["diff", "--json", "--since", cursorId, "--limit", "10"], { cwd, decodeHome });
+    const drift = await runDecode(["drift", "--json"], { cwd, decodeHome });
+    const adherence = await runDecode(["adherence", "--json", "--days", "7"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json", "--stale-after-days", "1"], { cwd, decodeHome });
+
+    expect(standup.exitCode).toBe(0);
+    expect((standup.json as any).data.events.total).toBeGreaterThan(0);
+    expect((standup.json as any).data.findings.openTotal).toBe(1);
+
+    expect(diffDefault.exitCode).toBe(0);
+    expect((diffDefault.json as any).data.cursor.source).toBe("latest_session");
+
+    expect(diff.exitCode).toBe(0);
+    expect((diff.json as any).data.cursor.source).toBe("event_id");
+    expect(((diff.json as any).data.events as any[]).some((event) => event.type === "finding.recorded")).toBe(true);
+
+    expect(drift.exitCode).toBe(0);
+    expect((drift.json as any).data.aligned).toBe(true);
+    expect((drift.json as any).data.sourceRoadmapItem.status).toBe("in_progress");
+
+    expect(adherence.exitCode).toBe(0);
+    expect((adherence.json as any).data.activeDayCount).toBeGreaterThan(0);
+    expect((adherence.json as any).data.completions.sessionsEnded).toBe(1);
+
+    expect(next.exitCode).toBe(0);
+    expect((next.json as any).data.staleness.staleAfterDays).toBe(1);
+  });
+
   test("completePlan is idempotent: second call is a no-op and does not emit duplicate events", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();

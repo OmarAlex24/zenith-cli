@@ -32,6 +32,21 @@ zenith plan list --json
 
 If the project is not registered, ask whether to run `zenith init --json`.
 
+## Self-Tracking Telemetry
+
+Use these read-only commands when choosing or auditing the next work:
+
+```bash
+zenith standup --json                 # daily digest; accepts --days <n>
+zenith diff --json                    # changes since latest ended session
+zenith diff --json --since <cursor>   # event id or ISO timestamp
+zenith drift --json                   # roadmap-vs-active-plan alignment
+zenith adherence --json               # velocity/adherence; accepts --days <n>
+zenith plan next --json --stale-after-days 7
+```
+
+Telemetry is derived from existing events and memory records. It must stay read-only; record progress with `plan advance`, sessions, findings, or decisions instead.
+
 ## Create A Plan
 
 Use plans only for executable phased work. For direction, use `zenith roadmap create`. For investigation, use `zenith spike create` or `zenith spike record`.

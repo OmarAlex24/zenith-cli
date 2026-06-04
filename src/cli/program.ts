@@ -20,6 +20,8 @@ type CommandOptions = {
   status?: string;
   limit?: string;
   since?: string;
+  days?: string;
+  staleAfterDays?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -313,8 +315,13 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
   plan
     .command("next")
     .option("--json", "Emit stable JSON")
+    .option("--stale-after-days <n>", "Include staleness metadata when the next step is older than n days")
     .action(async (commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.nextPlanStep(), (next) =>
+      await handle(commandOptions, options, async (app) =>
+        app.nextPlanStep({
+          ...parseStaleAfterDaysOption(commandOptions.staleAfterDays),
+        }),
+      (next) =>
         `${next.recommendation ?? "No recommendation"}\nReason: ${next.reason}`,
       );
     });
@@ -533,6 +540,56 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
         async (app) => app.timeline({ ...parseLimitOption(commandOptions.limit), ...(commandOptions.since ? { since: commandOptions.since } : {}) }),
         humanTimeline,
       );
+    });
+
+  program
+    .command("standup")
+    .description("Show a daily project telemetry digest")
+    .option("--json", "Emit stable JSON")
+    .option("--days <n>", "Number of days to include (default 1)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.standup({ ...parseDaysOption(commandOptions.days) }), humanStandup);
+    });
+
+  program
+    .command("diff")
+    .description("Show project memory changes since a cursor or the latest ended session")
+    .option("--json", "Emit stable JSON")
+    .option("--since <cursor>", "Event id or ISO timestamp")
+    .option("--limit <n>", "Max number of events (default 50)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.diff({
+            ...(commandOptions.since ? { since: commandOptions.since } : {}),
+            ...parseLimitOption(commandOptions.limit),
+          }),
+        humanDiff,
+      );
+    });
+
+  program
+    .command("drift")
+    .description("Report roadmap-vs-active-plan alignment")
+    .option("--json", "Emit stable JSON")
+    .option("--stale-after-days <n>", "Mark next-step work stale after n days (default 7)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.drift({
+          ...parseStaleAfterDaysOption(commandOptions.staleAfterDays),
+        }),
+      humanDrift);
+    });
+
+  program
+    .command("adherence")
+    .description("Show event-derived velocity and adherence metrics")
+    .option("--json", "Emit stable JSON")
+    .option("--days <n>", "Number of days to include (default 14)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.adherence({ ...parseDaysOption(commandOptions.days) }), humanAdherence);
     });
 
   const agents = program.command("agents").description("Agent pack installer");
@@ -889,6 +946,28 @@ function parseLimitOption(value?: string): { limit?: number } {
   return isNaN(n) ? {} : { limit: n };
 }
 
+function parseDaysOption(value?: string): { days?: number } {
+  const days = parsePositiveIntegerOption(value, "days");
+  return days === undefined ? {} : { days };
+}
+
+function parseStaleAfterDaysOption(value?: string): { staleAfterDays?: number } {
+  const staleAfterDays = parsePositiveIntegerOption(value, "stale-after-days");
+  return staleAfterDays === undefined ? {} : { staleAfterDays };
+}
+
+function parsePositiveIntegerOption(value: string | undefined, optionName: string): number | undefined {
+  if (value === undefined) return undefined;
+  const n = parseInt(value, 10);
+  if (!Number.isInteger(n) || n <= 0 || String(n) !== value) {
+    throw new ZenithError(`--${optionName} must be a positive integer.`, {
+      code: "invalid_option",
+      details: { optionName, value },
+    });
+  }
+  return n;
+}
+
 function humanTimeline(
   events: Array<{ createdAt: string; type: string; entityType: string; entityId: string }>,
 ): string {
@@ -896,4 +975,66 @@ function humanTimeline(
     return "No events recorded for this project yet.";
   }
   return events.map((e) => `${e.createdAt}  ${e.type}  ${e.entityType}:${e.entityId}`).join("\n");
+}
+
+function humanStandup(digest: {
+  window: { since: string; until: string };
+  next: { recommendation: string | null };
+  events: { total: number };
+  completions: { plansCompleted: number; phasesCompleted: number };
+  findings: { openTotal: number };
+}): string {
+  return [
+    `Window: ${digest.window.since} → ${digest.window.until}`,
+    `Next: ${digest.next.recommendation ?? "none"}`,
+    `Events: ${digest.events.total}`,
+    `Completed: ${digest.completions.plansCompleted} plans, ${digest.completions.phasesCompleted} phases`,
+    `Open findings: ${digest.findings.openTotal}`,
+  ].join("\n");
+}
+
+function humanDiff(diff: {
+  window: { since: string; until: string; source: string };
+  events: Array<{ createdAt: string; type: string; entityType: string; entityId: string }>;
+}): string {
+  if (diff.events.length === 0) {
+    return `No events since ${diff.window.since} (${diff.window.source}).`;
+  }
+  return [
+    `Since: ${diff.window.since} (${diff.window.source})`,
+    ...diff.events.map((event) => `${event.createdAt}  ${event.type}  ${event.entityType}:${event.entityId}`),
+  ].join("\n");
+}
+
+function humanDrift(report: {
+  aligned: boolean;
+  activePlan: { title: string } | null;
+  sourceRoadmap: { title: string } | null;
+  issues: Array<{ severity: string; title: string; detail: string }>;
+}): string {
+  const lines = [
+    `Aligned: ${report.aligned ? "yes" : "no"}`,
+    `Plan: ${report.activePlan?.title ?? "none"}`,
+    `Roadmap: ${report.sourceRoadmap?.title ?? "none"}`,
+  ];
+  if (report.issues.length > 0) {
+    lines.push(...report.issues.map((issue) => `${issue.severity}: ${issue.title} - ${issue.detail}`));
+  }
+  return lines.join("\n");
+}
+
+function humanAdherence(report: {
+  window: { since: string; until: string };
+  events: { total: number };
+  activeDayCount: number;
+  eventsPerDay: number;
+  completionEventsPerDay: number;
+}): string {
+  return [
+    `Window: ${report.window.since} → ${report.window.until}`,
+    `Events: ${report.events.total}`,
+    `Active days: ${report.activeDayCount}`,
+    `Events/day: ${report.eventsPerDay}`,
+    `Completion events/day: ${report.completionEventsPerDay}`,
+  ].join("\n");
 }

@@ -1,4 +1,13 @@
-import type { Finding, NextStep, NextStepKind, Plan, PlanPhase, Roadmap, Session } from "../domain/schemas";
+import type {
+  Finding,
+  NextStep,
+  NextStepKind,
+  NextStepStaleness,
+  Plan,
+  PlanPhase,
+  Roadmap,
+  Session,
+} from "../domain/schemas";
 import type { FocusCandidate } from "./focus";
 
 export type PlanNextResult = NextStep;
@@ -8,6 +17,8 @@ export type PlanNextResult = NextStep;
 export type ComputeNextOptions = { now?: string; staleAfterDays?: number; top?: number };
 
 export type FocusState = { ambiguous: boolean; candidates: FocusCandidate[] };
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export function computeNext(
   activePlan: Plan | null,
@@ -39,40 +50,40 @@ export function computeNext(
 
   const inProgress = activePlan?.phases.find((phase) => phase.status === "in_progress");
   if (activePlan && inProgress) {
-    return {
+    return withStaleness({
       recommendation: inProgress.title,
       reason: "Active plan has an in-progress phase.",
       planId: activePlan.id,
       phaseId: inProgress.id,
       evidence: [activePlan.title],
       kind: "implement_phase" satisfies NextStepKind,
-    };
+    }, activePlan.updatedAt, options);
   }
 
   const blocked = activePlan?.phases.find((phase) => phase.status === "blocked");
   if (activePlan && blocked) {
-    return {
+    return withStaleness({
       recommendation: `Unblock phase: ${blocked.title}`,
       reason: "Active plan has a blocked phase.",
       planId: activePlan.id,
       phaseId: blocked.id,
       evidence: [activePlan.title],
       kind: "blocked_dependency" satisfies NextStepKind,
-    };
+    }, activePlan.updatedAt, options);
   }
 
   if (activePlan) {
     const todoPhasesInOrder = activePlan.phases.filter((phase) => phase.status === "todo");
     const readyPhase = todoPhasesInOrder.find((phase) => isPhaseReady(phase, activePlan));
     if (readyPhase) {
-      return {
+      return withStaleness({
         recommendation: readyPhase.title,
         reason: "First ready todo phase in the active plan.",
         planId: activePlan.id,
         phaseId: readyPhase.id,
         evidence: [activePlan.title],
         kind: "implement_phase" satisfies NextStepKind,
-      };
+      }, activePlan.updatedAt, options);
     }
     const firstTodo = todoPhasesInOrder[0];
     if (firstTodo) {
@@ -85,7 +96,7 @@ export function computeNext(
         const depPhase = activePlan.phases.find((p) => p.id === depId);
         return depPhase ? depPhase.title : depId;
       });
-      return {
+      return withStaleness({
         recommendation: `Blocked by dependency: ${firstTodo.title}`,
         reason: `Unmet prerequisites: ${unmetDepTitles.join(", ")}`,
         planId: activePlan.id,
@@ -93,29 +104,29 @@ export function computeNext(
         evidence: unmetDepIds,
         blockedBy: unmetDepIds,
         kind: "blocked_dependency" satisfies NextStepKind,
-      };
+      }, activePlan.updatedAt, options);
     }
   }
 
   if (!activePlan) {
     const roadmapTarget = findRoadmapTarget(recentRoadmaps);
     if (roadmapTarget) {
-      return {
+      return withStaleness({
         recommendation: `Create plan from roadmap: ${roadmapTarget.item.title}`,
         reason: "No active plan exists; active roadmap has the next product direction.",
         evidence: [roadmapTarget.roadmap.id, roadmapTarget.item.id],
         kind: "create_plan" satisfies NextStepKind,
-      };
+      }, roadmapTarget.roadmap.updatedAt, options);
     }
 
     const deferredTarget = findDeferredRoadmapTarget(recentRoadmaps);
     if (deferredTarget) {
-      return {
+      return withStaleness({
         recommendation: `Review deferred roadmap work: ${deferredTarget.item.title}`,
         reason: "No active plan exists and active roadmap work is deferred; reactivate a roadmap item before creating a plan.",
         evidence: [deferredTarget.roadmap.id, deferredTarget.item.id],
         kind: "review_deferred" satisfies NextStepKind,
-      };
+      }, deferredTarget.roadmap.updatedAt, options);
     }
 
     const openFinding = openFindings[0];
@@ -131,20 +142,52 @@ export function computeNext(
 
   const sessionStep = recentSessions.flatMap((session) => session.nextSteps).find(Boolean);
   if (sessionStep) {
-    return {
+    const latestSession = recentSessions[0];
+    return withStaleness({
       recommendation: sessionStep,
       reason: "Latest session included an explicit next step.",
       evidence: [recentSessions[0]?.id ?? "latest_session"],
       // kind intentionally omitted: freeform guidance with no plan/roadmap/finding context
-    };
+    }, latestSession?.endedAt ?? latestSession?.startedAt, options);
   }
 
-  return {
+  return withStaleness({
     recommendation: activePlan ? "Review completed active plan" : "Create an active plan",
     reason: activePlan ? "No pending, blocked, or in-progress phases remain." : "No active plan exists.",
     evidence: activePlan ? [activePlan.id] : [],
     kind: (activePlan ? "review_completed" : "create_plan_empty") satisfies NextStepKind,
+  }, activePlan?.updatedAt, options);
+}
+
+function withStaleness<T extends NextStep>(step: T, lastUpdatedAt: string | undefined, options: ComputeNextOptions): T {
+  if (!lastUpdatedAt || !options.now || !options.staleAfterDays) {
+    return step;
+  }
+
+  const ageDays = roundedAgeDays(options.now, lastUpdatedAt);
+  if (ageDays === null) {
+    return step;
+  }
+
+  const staleness: NextStepStaleness = {
+    stale: ageDays >= options.staleAfterDays,
+    ageDays,
+    staleAfterDays: options.staleAfterDays,
+    lastUpdatedAt,
   };
+
+  return { ...step, staleness };
+}
+
+function roundedAgeDays(now: string, lastUpdatedAt: string): number | null {
+  const nowMs = Date.parse(now);
+  const lastMs = Date.parse(lastUpdatedAt);
+  if (Number.isNaN(nowMs) || Number.isNaN(lastMs)) {
+    return null;
+  }
+
+  const ageDays = Math.max(0, (nowMs - lastMs) / MS_PER_DAY);
+  return Math.round(ageDays * 100) / 100;
 }
 
 /**

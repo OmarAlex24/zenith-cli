@@ -538,6 +538,41 @@ describe("sqlite repository", () => {
     repo.close();
   });
 
+  test("summarizeEvents groups events and latest ended session provides a diff cursor", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "alpha", rootPath: "/work/alpha" });
+
+    repo.recordDecision({
+      projectId: project.id,
+      title: "Use event telemetry",
+      context: "Need usage visibility.",
+      decision: "Aggregate events read-only.",
+      alternatives: [],
+      relatedPlanIds: [],
+    });
+    repo.startSession({
+      projectId: project.id,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: "2026-01-01T01:00:00.000Z",
+      changedFiles: [],
+      nextSteps: [],
+    });
+
+    const summary = repo.summarizeEvents(project.id);
+    const latestEnded = repo.getLatestEndedSession(project.id);
+
+    expect(summary.total).toBeGreaterThanOrEqual(3);
+    expect(summary.byType.some((entry) => entry.key === "decision.recorded" && entry.count === 1)).toBe(true);
+    expect(summary.byEntityType.some((entry) => entry.key === "decision" && entry.count === 1)).toBe(true);
+    expect(summary.activeDays.length).toBeGreaterThanOrEqual(1);
+    expect(latestEnded?.endedAt).toBe("2026-01-01T01:00:00.000Z");
+
+    repo.close();
+  });
+
   test("v7 migration adds depends_on_json column to plan_phases", () => {
     const root = makeTempDir();
     tempDirs.push(root);

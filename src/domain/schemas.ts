@@ -202,6 +202,13 @@ export const NextStepKindSchema = z.enum([
   "create_plan_empty",
 ]);
 
+export const NextStepStalenessSchema = z.object({
+  stale: z.boolean(),
+  ageDays: z.number().nonnegative(),
+  staleAfterDays: z.number().int().positive(),
+  lastUpdatedAt: z.string().min(1),
+});
+
 export const NextStepSchema = z.object({
   recommendation: z.string().min(1).nullable(),
   reason: z.string().min(1),
@@ -210,6 +217,7 @@ export const NextStepSchema = z.object({
   evidence: z.array(z.string().min(1)).default([]),
   blockedBy: z.array(z.string().min(1)).optional(),
   kind: NextStepKindSchema.optional(),
+  staleness: NextStepStalenessSchema.optional(),
 });
 
 export const AdvancePlanInputSchema = z.object({
@@ -727,6 +735,7 @@ export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;
 export type Event = z.infer<typeof EventSchema>;
 export type NextStepKind = z.infer<typeof NextStepKindSchema>;
+export type NextStepStaleness = z.infer<typeof NextStepStalenessSchema>;
 export type AdvancePlanInput = z.infer<typeof AdvancePlanInputSchema>;
 export type AdvanceResult = z.infer<typeof AdvanceResultSchema>;
 export type PlanPathPhase = z.infer<typeof PlanPathPhaseSchema>;
