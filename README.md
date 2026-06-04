@@ -188,6 +188,8 @@ bun run zenith agents install codex --json
 bun run zenith agents install claude --json
 ```
 
+The agent pack installs `zenith-memory` for project memory workflows and `zenith-pr-review` for PR, MR, diff, branch, staged-change, committed-change, and pre-merge reviews that can record validated findings back into Zenith.
+
 ## Agent Workflow
 
 Use Zenith as the source of truth before planning or continuing work:
@@ -208,6 +210,8 @@ If `plan next` returns a `planId` and `phaseId`, inspect the phase before implem
 ```bash
 zenith phase show <phase-id> --json
 ```
+
+For code reviews, use the installed `zenith-pr-review` skill. It reads Zenith context and decisions before reviewing, runs focused review passes, and records only validated actionable issues with `zenith finding record --json --input -`.
 
 Plan metadata can be updated without touching SQLite directly:
 

@@ -22,14 +22,22 @@ export function installAgentPack(agent: AgentKind, rootPath: string): AgentInsta
   const rootFile = agent === "codex" ? "AGENTS.md" : "CLAUDE.md";
   const rootFilePath = join(rootPath, rootFile);
   const skillRoot = agent === "codex" ? ".codex" : ".claude";
-  const skillDir = join(rootPath, skillRoot, "skills", "zenith-memory");
+  const skillsDir = join(rootPath, skillRoot, "skills");
+  const memorySkillDir = join(skillsDir, "zenith-memory");
+  const reviewSkillDir = join(skillsDir, "zenith-pr-review");
 
   files.push(writeMarkedFile(rootFilePath, rootInstructions(agent)));
 
-  mkdirSync(join(skillDir, "references"), { recursive: true });
-  files.push(writeCompleteFile(join(skillDir, "SKILL.md"), skillTemplate(agent)));
-  files.push(writeCompleteFile(join(skillDir, "references", "cli-reference.md"), cliReferenceTemplate()));
-  files.push(writeCompleteFile(join(skillDir, "references", "workflows.md"), workflowsTemplate()));
+  mkdirSync(join(memorySkillDir, "references"), { recursive: true });
+  files.push(writeCompleteFile(join(memorySkillDir, "SKILL.md"), skillTemplate(agent)));
+  files.push(writeCompleteFile(join(memorySkillDir, "references", "cli-reference.md"), cliReferenceTemplate()));
+  files.push(writeCompleteFile(join(memorySkillDir, "references", "workflows.md"), workflowsTemplate()));
+
+  mkdirSync(join(reviewSkillDir, "references"), { recursive: true });
+  files.push(writeCompleteFile(join(reviewSkillDir, "SKILL.md"), prReviewSkillTemplate(agent)));
+  for (const reference of prReviewReferenceTemplates()) {
+    files.push(writeCompleteFile(join(reviewSkillDir, "references", reference.file), reference.content));
+  }
 
   return { agent, rootPath, files };
 }
@@ -84,14 +92,15 @@ function findMarkedBlock(previous: string, startMarker: string, endMarker: strin
 }
 
 function rootInstructions(agent: AgentKind): string {
-  const skillPath = agent === "codex" ? ".codex/skills/zenith-memory/SKILL.md" : ".claude/skills/zenith-memory/SKILL.md";
+  const memorySkillPath = agent === "codex" ? ".codex/skills/zenith-memory/SKILL.md" : ".claude/skills/zenith-memory/SKILL.md";
+  const reviewSkillPath = agent === "codex" ? ".codex/skills/zenith-pr-review/SKILL.md" : ".claude/skills/zenith-pr-review/SKILL.md";
 
   return `
 # Zenith Memory
 
 This repository uses Zenith CLI as private local project memory.
 
-Use the zenith-memory skill at ${skillPath} when:
+Use the zenith-memory skill at ${memorySkillPath} when:
 - recording the project brief or long-running roadmap
 - creating implementation plans
 - recording bounded research spikes
@@ -103,6 +112,12 @@ Use the zenith-memory skill at ${skillPath} when:
 - viewing recent project activity (\`zenith timeline --json\`)
 - viewing self-tracking telemetry (\`zenith standup/diff/drift/adherence --json\`)
 - sequencing plan phases with dependencies (\`dependsOn\` via \`plan update-phase\`; \`plan next\` reports \`Blocked by dependency\` when gated)
+
+Use the zenith-pr-review skill at ${reviewSkillPath} when:
+- reviewing a PR, MR, branch, diff, staged changes, committed changes, or pre-merge changes
+- checking whether code is safe to merge
+- synthesizing existing PR comments with fresh review passes
+- recording validated actionable review findings into Zenith memory
 
 Before planning:
 - Run \`zenith context compact --json\`.
@@ -116,6 +131,333 @@ Use \`plan\` only for executable phased work. Use \`brief\`, \`roadmap\`, or \`s
 Use \`bun run zenith ...\` from this source checkout if the \`zenith\` binary is not on PATH.
 Use \`decode\` only as a legacy alias when \`zenith\` is unavailable.
 Do not store secrets, full diffs, or long transcripts in Zenith.
+`;
+}
+
+function prReviewSkillTemplate(agent: AgentKind): string {
+  return `---
+name: zenith-pr-review
+description: Use when reviewing a PR, MR, diff, branch, staged changes, committed changes, or pre-merge code changes in a Zenith project; orchestrates focused review passes and records validated actionable findings in Zenith memory.
+---
+
+# Zenith PR Review
+
+Use this skill to review a pull request, merge request, branch, local diff, staged change set, or committed change set. It adapts the PR review orchestrator workflow for Zenith projects: gather one shared snapshot, run focused review passes, synthesize findings, then record only validated actionable issues in Zenith memory.
+
+This skill reviews; it does not implement fixes unless the user explicitly asks for follow-up implementation.
+
+## Core Workflow
+
+1. Read Zenith context first:
+   - \`zenith context compact --json\`
+   - \`zenith plan next --json\`
+   - \`zenith finding list --status all --json\`
+   - \`zenith decision list --json\`
+   - Optional when useful: \`zenith diff --json\`, \`zenith timeline --json --since <cursor>\`, \`zenith standup --json\`
+2. Put the reviewed code on disk safely. Local staged/branch diffs can use the current checkout. Remote PRs should use a temporary worktree at the PR head when possible so surrounding file reads match the diff.
+3. Gather shared review context once: base/head SHAs, diff, PR description or commit messages, touched modules, project conventions, and relevant surrounding code.
+4. Run focused review passes. Scale to the change size: small patches usually need correctness plus docs/consistency; larger features/refactors should use all relevant passes.
+5. Synthesize, do not concatenate. Stress-test blocker and should-fix findings, deduplicate overlapping concerns, resolve reviewer conflicts, and prioritize by severity.
+6. Record only validated actionable findings in Zenith with \`zenith finding record --json --input -\`. Do not record nits, speculative concerns, full diffs, secrets, or long transcripts.
+
+## Review Pass References
+
+Read only the reference files needed for the current review:
+
+- Correctness and bugs: \`references/correctness.md\`
+- Simplification: \`references/simplification.md\`
+- Docs and convention compliance: \`references/docs-compliance.md\`
+- Design quality: \`references/design-quality.md\`
+- Consistency and API surface: \`references/consistency.md\`
+- Existing PR comments: \`references/pr-comments.md\`
+- Resolving addressed threads after fixes: \`references/post-fix-resolution.md\`
+
+## Finding Recording
+
+Use existing Zenith finding types:
+
+- \`bug\`: correctness, regression, error handling, data integrity, security footgun
+- \`risk\`: operational, release, compatibility, or uncertainty that can cause harm
+- \`tech_debt\`: maintainability issue with concrete cost
+- \`architecture\`: boundary, coupling, cohesion, or design issue with a concrete consequence
+- \`docs_gap\`: missing or stale required docs/convention updates
+- \`test_gap\`: missing tests for behavior that should be covered
+- \`simplification\`: unnecessary complexity, dead code, duplicate logic, premature abstraction
+
+Map review severity to Zenith severity conservatively:
+
+- Review blocker -> \`critical\` or \`high\`
+- Review should-fix -> \`medium\` or \`high\`
+- Review nit -> do not record unless the user explicitly asks to track it
+
+When an active plan or phase is relevant, include \`relatedPlanId\` and \`relatedPhaseId\` in the finding payload. Keep descriptions concise and actionable.
+
+## Output Shape
+
+Lead with findings, ordered by severity. Use this structure:
+
+\`\`\`
+## PR Review: <title or branch>
+
+Verdict: <Approve / Approve with nits / Request changes / Blocked>
+Scope reviewed: <N files, subsystems, base..head>
+
+### Blockers
+<must-fix findings or "None">
+
+### Should Fix
+<worth addressing before merge>
+
+### Nits And Suggestions
+<minor optional issues>
+
+### Design Notes
+<judgment-call structure observations>
+
+### Convention Compliance
+<docs/convention status and deviations>
+
+### Existing PR Comments
+<only for real PRs with comments to triage>
+\`\`\`
+
+Each finding should be concrete: \`file:line - problem - consequence - suggested fix or question\`. If the reviewed change is clean, say so directly and do not invent concerns.
+
+Generated for ${agent}.
+`;
+}
+
+type PrReviewReference = {
+  file: string;
+  content: string;
+};
+
+function prReviewReferenceTemplates(): PrReviewReference[] {
+  return [
+    { file: "correctness.md", content: prReviewCorrectnessTemplate() },
+    { file: "simplification.md", content: prReviewSimplificationTemplate() },
+    { file: "docs-compliance.md", content: prReviewDocsComplianceTemplate() },
+    { file: "design-quality.md", content: prReviewDesignQualityTemplate() },
+    { file: "consistency.md", content: prReviewConsistencyTemplate() },
+    { file: "pr-comments.md", content: prReviewCommentsTemplate() },
+    { file: "post-fix-resolution.md", content: prReviewPostFixResolutionTemplate() },
+  ];
+}
+
+function prReviewCorrectnessTemplate(): string {
+  return `
+# Reviewer Mandate: Correctness And Bugs
+
+Review for correctness only. Ignore style, architecture, and elegance unless they directly cause broken behavior. The question is: will this code do the wrong thing, break, corrupt data, or create an exploitable path for some realistic input or runtime state?
+
+## Hunt For
+
+- Logic errors: off-by-one, inverted condition, wrong operator, swapped arguments, incorrect boolean short-circuit.
+- Edge cases: empty input, null/undefined, zero, negative values, single item, large input, unicode, timezones, DST, leap years.
+- Error handling: swallowed errors, resources not released, cleanup skipped on failure, unhandled promise rejections.
+- State and lifecycle: stale caches, shared mutable state, order assumptions, partial writes, non-atomic check-then-act.
+- Data integrity: missing transaction, missing rollback, lossy serialization, unsafe type coercion.
+- Security footguns: injection, path traversal, unsafe deserialization, secrets in code/logs, broken authz checks, SSRF.
+- Tests: risky paths without tests, tests that assert the wrong behavior, tests that cannot fail.
+
+## How To Work
+
+Read the diff and enough surrounding code to understand the intended contract. Use the PR description or commit messages to identify intent. Trace risky paths by hand and prefer concrete reproductions over broad concerns.
+
+## Output
+
+Return findings as: \`severity - file:line - what breaks and under what condition - suggested fix or question\`.
+
+Use \`blocker\` for security issues, data loss/corruption, or behavior that makes the change unsafe to merge. Use \`should-fix\` for real defects with bounded impact. Use \`nit\` rarely for correctness-adjacent details. If no correctness issues are found, return no findings.
+`;
+}
+
+function prReviewSimplificationTemplate(): string {
+  return `
+# Reviewer Mandate: Simplification
+
+Review for ways to make the change simpler without losing correctness or clarity. The question is: what is more complicated than the problem requires?
+
+## Hunt For
+
+- Dead code: unused imports, variables, params, branches, functions, or commented-out blocks.
+- Redundancy: duplicated logic or helpers that duplicate standard library, dependencies, or local utilities.
+- Over-engineering: speculative abstraction, configuration nobody sets, generic machinery for one concrete use.
+- Needless complexity: deep nesting that could be guard clauses, state machines for two states, classes that should be functions.
+- Verbosity: many lines saying what fewer lines would say just as clearly.
+
+## Judgment
+
+Simpler is not the same as shorter or cleverer. Do not suggest dense rewrites that make intent harder to read. Only recommend abstractions when there is a concrete present second use or a documented near-term need.
+
+## Output
+
+Return findings as: \`severity - file:line - what is more complex than needed - simpler version\`.
+
+Simplification findings are usually \`should-fix\` or \`nit\`, not blockers. If the change is already lean, return no findings.
+`;
+}
+
+function prReviewDocsComplianceTemplate(): string {
+  return `
+# Reviewer Mandate: Docs And Convention Compliance
+
+Review whether the change follows the project's documented conventions and architecture, and whether deviations are justified.
+
+## Sources Of Truth
+
+Check the relevant sources for the touched code:
+
+- \`AGENTS.md\`, \`CLAUDE.md\`
+- \`CONTRIBUTING.md\`, lint/type configs, style guides
+- \`docs/\`, ADRs, RFCs, decisions
+- READMEs in touched directories
+- Established neighboring code patterns when docs are silent
+- Zenith decisions from \`zenith decision list --json\` and \`zenith decision show <id> --json\` when relevant
+
+## Check
+
+- Naming, structure, file placement, and module boundaries.
+- Error handling, logging, config, migration, test, and documentation patterns.
+- Whether new public behavior, commands, env vars, or user-facing workflows are documented where this project expects them to be.
+- Whether a deviation has a justification in PR text, code comments, docs, ADRs, or Zenith decisions.
+
+If docs are stale and code is following the healthier current pattern, the finding should be to update docs, not blindly revert code.
+
+## Output
+
+Return findings as: \`severity - file:line or doc reference - convention involved - deviation and required justification or update\`.
+
+If the change complies or all deviations are justified, return no findings.
+`;
+}
+
+function prReviewDesignQualityTemplate(): string {
+  return `
+# Reviewer Mandate: Design Quality
+
+Review software design quality: the structural properties that determine how easy the code is to change, test, and reason about later. Do not duplicate the correctness pass.
+
+## Assess
+
+- Coupling: concrete dependencies where a narrow interface is needed, circular dependencies, provider/vendor details leaking into policy code.
+- Cohesion: modules or functions mixing unrelated responsibilities.
+- Abstraction: leaky, premature, too generic, too specific, or missing boundaries that block testing or change.
+- Separation of concerns: business logic, I/O, persistence, presentation, config, and orchestration belong in appropriate places.
+- Design patterns: useful when they solve a present problem; harmful when they add indirection without value.
+
+## Judgment
+
+Tie each design concern to a concrete cost in this codebase. "Violates DIP" is not useful. "This instantiates the network client inside business logic, so tests need live network and provider swaps require editing policy code" is useful.
+
+Design issues are usually \`should-fix\` or design notes. Use \`blocker\` only when structure makes the change unsafe to merge.
+
+## Output
+
+Return findings as: \`severity - file:line - structural issue - concrete consequence - suggested direction\`.
+
+Separate defects from judgment calls. If the design is sound, return no findings.
+`;
+}
+
+function prReviewConsistencyTemplate(): string {
+  return `
+# Reviewer Mandate: Consistency And API Surface
+
+Review whether the change fits the surrounding codebase and whether it changes contracts that others depend on.
+
+## Consistency
+
+Check local conventions for:
+
+- Naming and vocabulary.
+- Error and return style.
+- Module structure, imports, exports, and test placement.
+- Existing helpers and dependencies.
+- Validation, logging, config, and serialization patterns.
+
+The bar is consistency with this codebase, not personal preference.
+
+## API Surface
+
+Identify additions, removals, or behavior changes in:
+
+- Public functions, methods, types, schemas, and enum values.
+- CLI commands, options, JSON envelopes, and output shapes.
+- Events, database schema, config, and env vars.
+- User-facing generated files or agent workflows.
+
+For each surface change, ask whether it is backward compatible and whether the change is documented or intentionally called out.
+
+## Output
+
+Return findings as: \`severity - file:line - inconsistency or contract change - expected convention or compatibility action\`.
+
+If the change is consistent and has no surprising surface changes, return no findings.
+`;
+}
+
+function prReviewCommentsTemplate(): string {
+  return `
+# Reviewer Mandate: Existing PR Comments
+
+Triage comments already on a real PR. Do not review the code itself in this pass; other passes do that. The goal is to keep unresolved actionable human and bot feedback from getting lost.
+
+## Fetch
+
+Use the platform CLI when available. For GitHub:
+
+- \`gh pr view <n> --comments\`
+- \`gh api repos/{owner}/{repo}/pulls/<n>/comments --paginate\`
+- \`gh api repos/{owner}/{repo}/pulls/<n>/reviews --paginate\`
+- GraphQL review threads for resolved/unresolved state
+
+If there is no real PR or the platform CLI is unavailable, return no findings for this pass.
+
+## Triage
+
+- Keep comments that point to real defects or reasonable concerns.
+- Drop greetings, summaries, duplicate bot noise, stale comments, and resolved threads.
+- Verify comments against the current PR head, not the old code where the comment was created.
+- Deduplicate against findings from other passes.
+- Judge bot comments; do not relay unverified suggestions as facts.
+
+## Output
+
+Return findings as: \`source - severity - file:line if anchored - comment summary - your call\`.
+
+Mention only surviving actionable comments. A brief skipped-count summary is enough for noise.
+`;
+}
+
+function prReviewPostFixResolutionTemplate(): string {
+  return `
+# Post-fix: Resolve Addressed PR Review Threads
+
+Use this only after fixes have been committed and pushed to the PR head branch. Review threads should be resolved only when the feedback is fully addressed.
+
+## Preconditions
+
+- \`gh\` is installed and authenticated.
+- You have write access to the PR.
+- Fixes are already pushed to the PR's real head branch.
+- You have inspected each thread individually.
+
+## GitHub Flow
+
+1. Identify owner, repo, and PR number:
+   \`gh pr view <n> --json number,url\`
+2. Fetch unresolved review threads with GraphQL \`reviewThreads\`, including \`id\`, \`isResolved\`, \`isOutdated\`, \`path\`, \`line\`, and recent comments.
+3. Match each unresolved thread to the fix. Resolve only if the same concern is fully handled and no follow-up remains.
+4. Resolve one thread at a time with GraphQL \`resolveReviewThread(input: { threadId })\`.
+5. Re-fetch threads and verify only intended threads were resolved.
+
+## Safety Rules
+
+- Never bulk-resolve without per-thread inspection.
+- Leave partial, unclear, contested, or still-relevant threads open.
+- If permissions or GraphQL fail, report that instead of silently continuing.
+- If unsure, leave the thread open and explain the status.
 `;
 }
 

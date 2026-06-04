@@ -19,11 +19,26 @@ describe("agent installer", () => {
     const result = installAgentPack("codex", dir);
 
     expect(result.files.some((file) => file.path.endsWith("AGENTS.md") && file.action === "created")).toBe(true);
-    expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toContain("BEGIN ZENITH CLI");
+    expect(result.files.some((file) => file.path.endsWith(join(".codex", "skills", "zenith-pr-review", "SKILL.md")))).toBe(true);
+    const rootInstructions = readFileSync(join(dir, "AGENTS.md"), "utf8");
+    expect(rootInstructions).toContain("BEGIN ZENITH CLI");
     const skill = readFileSync(join(dir, ".codex", "skills", "zenith-memory", "SKILL.md"), "utf8");
     const cliReference = readFileSync(join(dir, ".codex", "skills", "zenith-memory", "references", "cli-reference.md"), "utf8");
     const workflows = readFileSync(join(dir, ".codex", "skills", "zenith-memory", "references", "workflows.md"), "utf8");
-    const generated = [readFileSync(join(dir, "AGENTS.md"), "utf8"), skill, cliReference, workflows].join("\n");
+    const prReviewSkill = readFileSync(join(dir, ".codex", "skills", "zenith-pr-review", "SKILL.md"), "utf8");
+    const prReviewReferenceFiles = [
+      "correctness.md",
+      "simplification.md",
+      "docs-compliance.md",
+      "design-quality.md",
+      "consistency.md",
+      "pr-comments.md",
+      "post-fix-resolution.md",
+    ];
+    const prReviewReferences = prReviewReferenceFiles.map((file) =>
+      readFileSync(join(dir, ".codex", "skills", "zenith-pr-review", "references", file), "utf8"),
+    );
+    const generated = [rootInstructions, skill, cliReference, workflows, prReviewSkill, ...prReviewReferences].join("\n");
 
     expect(skill).toContain("name: zenith-memory");
     expect(skill).toContain("description: Use when working in a repository that uses Zenith CLI");
@@ -34,6 +49,23 @@ describe("agent installer", () => {
     expect(skill).toContain("bun run zenith");
     expect(skill).toContain("bun x tsc --noEmit");
     expect(skill).toContain("propose committing the completed change set");
+    expect(rootInstructions).toContain("Use the zenith-pr-review skill");
+    expect(rootInstructions).toContain(".codex/skills/zenith-pr-review/SKILL.md");
+    expect(rootInstructions).toContain("reviewing a PR, MR, branch, diff, staged changes");
+    expect(prReviewSkill).toContain("name: zenith-pr-review");
+    expect(prReviewSkill).toContain("description: Use when reviewing a PR, MR, diff, branch");
+    expect(prReviewSkill).toContain("zenith context compact --json");
+    expect(prReviewSkill).toContain("zenith finding record --json --input -");
+    expect(prReviewSkill).toContain("references/correctness.md");
+    expect(prReviewSkill).toContain("bug");
+    expect(prReviewSkill).toContain("simplification");
+    expect(prReviewReferences[0]).toContain("Reviewer Mandate: Correctness");
+    expect(prReviewReferences[1]).toContain("Reviewer Mandate: Simplification");
+    expect(prReviewReferences[2]).toContain("zenith decision list --json");
+    expect(prReviewReferences[3]).toContain("concrete consequence");
+    expect(prReviewReferences[4]).toContain("API Surface");
+    expect(prReviewReferences[5]).toContain("Existing PR Comments");
+    expect(prReviewReferences[6]).toContain("resolveReviewThread");
     expect(cliReference).toContain("zenith plan update <plan-id> --json --input -");
     expect(cliReference).toContain("zenith decision list --json");
     expect(cliReference).toContain("zenith finding show <finding-id> --json");
@@ -112,6 +144,25 @@ describe("agent installer", () => {
     expect(content).not.toContain("\nold\n");
     expect(content).toContain("zenith context compact --json");
     expect(content).toContain("zenith plan next --json");
+    expect(content).toContain("zenith-pr-review");
+  });
+
+  test("creates claude root instructions and PR review skill files", () => {
+    const dir = makeTempDir();
+    tempDirs.push(dir);
+    const result = installAgentPack("claude", dir);
+
+    expect(result.files.some((file) => file.path.endsWith("CLAUDE.md") && file.action === "created")).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".claude", "skills", "zenith-pr-review", "SKILL.md")))).toBe(true);
+
+    const rootInstructions = readFileSync(join(dir, "CLAUDE.md"), "utf8");
+    const prReviewSkill = readFileSync(join(dir, ".claude", "skills", "zenith-pr-review", "SKILL.md"), "utf8");
+    const correctness = readFileSync(join(dir, ".claude", "skills", "zenith-pr-review", "references", "correctness.md"), "utf8");
+
+    expect(rootInstructions).toContain(".claude/skills/zenith-memory/SKILL.md");
+    expect(rootInstructions).toContain(".claude/skills/zenith-pr-review/SKILL.md");
+    expect(prReviewSkill).toContain("Generated for claude.");
+    expect(correctness).toContain("Security footguns");
   });
 
   test("installAgentPack is idempotent: second run returns all unchanged", () => {

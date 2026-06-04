@@ -16,6 +16,12 @@ Use the zenith-memory skill at .codex/skills/zenith-memory/SKILL.md when:
 - viewing self-tracking telemetry (`zenith standup/diff/drift/adherence --json`)
 - sequencing plan phases with dependencies (`dependsOn` via `plan update-phase`; `plan next` reports `Blocked by dependency` when gated)
 
+Use the zenith-pr-review skill at .codex/skills/zenith-pr-review/SKILL.md when:
+- reviewing a PR, MR, branch, diff, staged changes, committed changes, or pre-merge changes
+- checking whether code is safe to merge
+- synthesizing existing PR comments with fresh review passes
+- recording validated actionable review findings into Zenith memory
+
 Before planning:
 - Run `zenith context compact --json`.
 - Run `zenith plan next --json`.
