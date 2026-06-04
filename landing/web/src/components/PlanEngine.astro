@@ -1,0 +1,37 @@
+---
+// Split module: deterministic plan-next engine + JSON terminal.
+---
+<section id="engine" style="padding:8px 0 96px">
+  <div class="wrap">
+    <div class="split reveal" style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border)">
+      <div style="background:var(--card);padding:48px 44px;display:flex;flex-direction:column;justify-content:center">
+        <span class="eyebrow mono">Deterministic engine</span>
+        <h2 style="font-size:clamp(1.7rem,3vw,2.4rem);margin-top:16px">It always knows what to do next.</h2>
+        <p style="margin-top:18px;color:var(--subtle);font-size:1.02rem;max-width:42ch">
+          <span class="mono" style="color:var(--accent)">zenith plan next</span> walks the phase graph, skips anything whose dependencies are not done yet, and returns the single next step. When everything is blocked, it tells you exactly what is blocking.
+        </p>
+        <div style="margin-top:26px;display:flex;gap:24px;flex-wrap:wrap">
+          <div><div class="mono" style="color:var(--fg);font-size:20px">0</div><div style="color:var(--faint);font-size:13px">external calls</div></div>
+          <div><div class="mono" style="color:var(--fg);font-size:20px">SQLite</div><div style="color:var(--faint);font-size:13px">on your machine</div></div>
+          <div><div class="mono" style="color:var(--fg);font-size:20px">JSON</div><div style="color:var(--faint);font-size:13px">stable for agents</div></div>
+        </div>
+      </div>
+      <div style="background:#0a0f17;padding:0">
+        <div class="term" style="border:0;height:100%">
+          <div class="term-bar"><span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span><span class="mono" style="margin-left:8px">plan next</span></div>
+          <div class="term-body mono">
+            <div><span class="c-green">$</span> <span class="c-fg">zenith plan next --json</span></div>
+            <div style="margin-top:14px;color:var(--faint)">&#123;</div>
+            <div style="padding-left:18px"><span class="c-blue">"planId"</span>: <span class="c-amber">"pl_3f2a"</span>,</div>
+            <div style="padding-left:18px"><span class="c-blue">"phaseId"</span>: <span class="c-amber">"ph_07"</span>,</div>
+            <div style="padding-left:18px"><span class="c-blue">"title"</span>: <span class="c-amber">"Wire next-step engine"</span>,</div>
+            <div style="padding-left:18px"><span class="c-blue">"status"</span>: <span class="c-amber">"in_progress"</span>,</div>
+            <div style="padding-left:18px"><span class="c-blue">"blockedBy"</span>: []</div>
+            <div style="color:var(--faint)">&#125;</div>
+            <div style="margin-top:14px;color:var(--faint)">// dependency-aware, deterministic, offline</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

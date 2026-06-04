@@ -1,0 +1,120 @@
+/*
+  Zenith CLI - design system
+  Visual language faithfully cloned from supermemory.ai's real design system:
+    fonts  : DM Sans (400/500/700) + DM Mono (400/500), tracking -0.01em, line-height 1.35
+    theme  : dark navy  bg #0b1119 / card #101822 / hairline border #263348
+    accent : #4ba0fa (single, locked)
+    corners: square (radius 0)
+  Fonts are self-hosted via @fontsource (imported in Base.astro).
+*/
+:root{
+  --bg:#0b1119; --card:#101822; --hover:#131b28; --skeleton:#1a2030;
+  --border:#263348; --border-soft:#1b2535;
+  --fg:#fafafa; --fg2:#e2e8f0; --muted:#d0dae7; --subtle:#b5c2d3; --faint:#a0aec4;
+  --pill:#0d121a; --pill-border:#161f2c; --pill-active:#00173c;
+  --accent:#4ba0fa; --accent-ink:#0b1119;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;overflow-x:hidden}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:"DM Sans",system-ui,-apple-system,sans-serif;
+  letter-spacing:-0.01em; line-height:1.35;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  overflow-x:hidden;
+}
+.mono{font-family:"DM Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+h1,h2,h3{letter-spacing:-0.03em;line-height:1.04;font-weight:500;margin:0}
+p{margin:0}
+a{color:inherit;text-decoration:none}
+
+/* hairline grid backdrop for hero (static fallback layer; dot-field canvas renders on top) */
+.grid-bg{
+  position:absolute;inset:0;pointer-events:none;
+  background-image:
+    linear-gradient(to right, rgba(38,51,72,.5) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(38,51,72,.5) 1px, transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 30%, #000 0%, transparent 75%);
+  mask-image:radial-gradient(ellipse 80% 60% at 50% 30%, #000 0%, transparent 75%);
+  opacity:.35;
+}
+.glow{
+  position:absolute;left:50%;top:-120px;transform:translateX(-50%);
+  width:900px;height:520px;pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(75,160,250,.18), rgba(75,160,250,0) 60%);
+  filter:blur(8px);
+}
+
+/* buttons - square */
+.btn{display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 18px;
+  font-weight:500;font-size:14px;border:1px solid transparent;transition:.16s ease;white-space:nowrap;cursor:pointer}
+.btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn-primary:hover{background:#6fb4fb;border-color:#6fb4fb}
+.btn-primary:active{transform:translateY(1px)}
+.btn-ghost{background:transparent;color:var(--fg);border-color:var(--border)}
+.btn-ghost:hover{background:var(--hover);border-color:#33455f}
+
+.pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 12px;
+  background:var(--pill);border:1px solid var(--pill-border);color:var(--subtle);
+  font-size:12px;font-weight:400;letter-spacing:0}
+.pill .dot{width:6px;height:6px;background:var(--accent);box-shadow:0 0 8px rgba(75,160,250,.8)}
+
+.eyebrow{font-size:12px;letter-spacing:.04em;color:var(--faint);text-transform:uppercase}
+
+/* bordered module */
+.panel{background:var(--card);border:1px solid var(--border)}
+.divide-grid{display:grid;gap:1px;background:var(--border);border:1px solid var(--border)}
+.divide-grid > *{background:var(--card)}
+.cell{padding:26px 24px;transition:background .16s ease}
+.cell:hover{background:var(--hover)}
+
+/* terminal */
+.term{background:#0a0f17;border:1px solid var(--border)}
+.term-bar{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-bottom:1px solid var(--border);color:var(--faint);font-size:12px}
+.term-dot{width:9px;height:9px;border:1px solid #2a3a52}
+.term-body{padding:18px 18px;font-size:13px;line-height:1.7}
+.c-blue{color:var(--accent)} .c-green{color:#46d07a} .c-muted{color:var(--faint)}
+.c-amber{color:#f5a97f} .c-fg{color:var(--fg2)}
+
+/* heatmap */
+.heat{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,1fr);gap:3px}
+.heat span{width:11px;height:11px;background:var(--lvl0,#1a2030);display:block}
+
+/* reveal */
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+.reveal.in{opacity:1;transform:none}
+
+nav.bar{position:sticky;top:0;z-index:50;background:rgba(11,17,25,.72);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+
+.link{color:var(--subtle);font-size:14px;transition:color .15s}
+.link:hover{color:var(--fg)}
+.nav-links{display:flex;align-items:center;gap:30px}
+
+/* hero shader canvas: sits behind hero content, above the page bg */
+.hero-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:block}
+
+/* hero terminal: scroll internally on narrow screens instead of breaking the page */
+.hero-term-scroll{width:100%;max-width:920px;margin:0 auto;overflow-x:auto;min-width:0}
+.hero-term{min-width:560px}
+
+@media (max-width:860px){
+  .nav-links{display:none!important}
+  .hero-h1{font-size:clamp(1.9rem,7.4vw,2.8rem)!important;max-width:100%!important}
+  .hero-sub{font-size:1rem!important;max-width:100%!important}
+  .split{grid-template-columns:1fr!important}
+  .mtypes{grid-template-columns:1fr!important}
+  .mtypes-2{grid-template-columns:1fr!important}
+  .footcols{grid-template-columns:1fr 1fr!important}
+  .works-cmd{display:none!important}
+  .cell{padding:24px 22px!important}
+  /* terminal: drop the fixed sidebar, single column, fits the phone */
+  .hero-term{min-width:0!important}
+  .hero-term .term-grid{grid-template-columns:1fr!important}
+  .hero-term .term-grid > div:first-child{display:none!important}
+}
+@media (prefers-reduced-motion:reduce){
+  .reveal{opacity:1;transform:none;transition:none}
+  *{scroll-behavior:auto}
+}

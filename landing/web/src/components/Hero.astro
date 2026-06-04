@@ -1,0 +1,63 @@
+---
+import HeroShader from './HeroShader.astro';
+---
+<header id="top" style="position:relative;overflow:hidden">
+  <!-- fallback texture (shows if WebGL is unavailable) -->
+  <div class="grid-bg"></div>
+  <div class="glow"></div>
+  <!-- subtle dot-field shader, on top of the fallback, behind content -->
+  <HeroShader />
+
+  <div class="wrap" style="position:relative;z-index:1;padding-top:96px;padding-bottom:64px;text-align:center;display:flex;flex-direction:column;align-items:center">
+    <span class="pill mono" style="margin-bottom:26px"><span class="dot"></span>Local-first · agent-native</span>
+    <h1 class="hero-h1" style="font-size:clamp(2.6rem,6vw,4.6rem);max-width:16ch">The memory layer for your coding agents.</h1>
+    <p class="hero-sub" style="margin-top:22px;font-size:clamp(1.05rem,1.6vw,1.22rem);color:var(--subtle);max-width:56ch">
+      Local-first project memory and agent coordination, right in your terminal. Private by default.
+    </p>
+    <div style="margin-top:32px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+      <a class="btn btn-primary" href="#install">Get started</a>
+      <a class="btn btn-ghost" href="https://github.com" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.8c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <!-- product panel: faithful Zenith TUI / terminal -->
+    <div class="hero-term-scroll reveal" style="margin-top:64px;text-align:left">
+     <div class="term hero-term">
+      <div class="term-bar">
+        <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span>
+        <span class="mono" style="margin-left:8px">zenith</span>
+        <span class="mono" style="margin-left:auto">~/projects/atlas</span>
+      </div>
+      <div class="term-body term-grid mono" style="display:grid;grid-template-columns:184px 1fr;gap:0;padding:0">
+        <!-- sidebar -->
+        <div style="border-right:1px solid var(--border);padding:16px 14px;color:var(--faint)">
+          <div style="color:var(--accent)">▸ Roadmap</div>
+          <div style="margin-top:8px">  Plan</div>
+          <div style="margin-top:8px">  Findings</div>
+          <div style="margin-top:8px">  Decisions</div>
+          <div style="margin-top:8px">  Sessions</div>
+          <div style="margin-top:8px">  Pulse</div>
+        </div>
+        <!-- content -->
+        <div style="padding:16px 18px">
+          <div class="c-muted" style="font-size:12px;letter-spacing:.06em">ACTIVE PLAN</div>
+          <div class="c-fg" style="margin-top:6px">Dependency-aware scheduler</div>
+          <div style="margin-top:14px;display:flex;flex-direction:column;gap:7px">
+            <div><span class="c-green">✓</span> <span class="c-muted">Model phase graph</span></div>
+            <div><span class="c-green">✓</span> <span class="c-muted">Topological ordering</span></div>
+            <div><span class="c-blue">◐</span> <span class="c-fg">Wire next-step engine</span></div>
+            <div><span class="c-muted">○ Surface blockedBy</span></div>
+            <div><span class="c-muted">○ Stale-after-days flag</span></div>
+          </div>
+          <div style="margin-top:14px;color:var(--accent)">▰▰▰▰▰▰▱▱▱▱ <span class="c-muted">60%</span></div>
+          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+            <span class="c-blue">▶ NEXT</span> <span class="c-fg">zenith phase show ph_07</span>
+          </div>
+        </div>
+      </div>
+     </div>
+    </div>
+  </div>
+</header>

@@ -1,0 +1,37 @@
+---
+// Self-hosted fonts (replaces the Google Fonts CDN from the prototype).
+// Static weights keep the CSS family names "DM Sans" / "DM Mono" unchanged.
+import '@fontsource/dm-sans/400.css';
+import '@fontsource/dm-sans/500.css';
+import '@fontsource/dm-sans/700.css';
+import '@fontsource/dm-mono/400.css';
+import '@fontsource/dm-mono/500.css';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+const {
+  title = 'Zenith - The memory layer for your coding agents',
+  description = 'Local-first project memory and agent coordination, right in your terminal. Private by default.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0b1119" />
+    <link rel="icon" href="/assets/zenith-logo-white-cropped.png" />
+    <title>{title}</title>
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
