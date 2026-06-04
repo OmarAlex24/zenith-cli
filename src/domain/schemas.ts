@@ -418,6 +418,160 @@ export const ResumeContextSchema = z.object({
   recentDecisions: z.array(DecisionCompactSchema),
   openFindings: z.array(FindingSummarySchema),
   next: NextStepSchema,
+  readiness: z.lazy(() => ContinuityReadinessSchema).optional(),
+  roi: z.lazy(() => ContextRoiReportSchema).optional(),
+  markdown: z.string().min(1),
+});
+
+export const ContinuityReadinessSchema = z.object({
+  score: z.number().int().min(0).max(100),
+  status: z.enum(["ready", "needs_plan", "needs_cleanup", "blocked", "ambiguous"]),
+  strengths: z.array(z.string().min(1)),
+  gaps: z.array(z.string().min(1)),
+});
+
+export const ContextRoiReportSchema = z.object({
+  sourceEvents: z.number().int().nonnegative(),
+  sourceSessions: z.number().int().nonnegative(),
+  sourceDecisions: z.number().int().nonnegative(),
+  sourceFindings: z.number().int().nonnegative(),
+  sourcePhases: z.number().int().nonnegative(),
+  estimatedRawTokens: z.number().int().nonnegative(),
+  compactTokens: z.number().int().nonnegative(),
+  compressionRatio: z.number().nonnegative(),
+  continuitySignals: z.array(z.string().min(1)),
+  missingSignals: z.array(z.string().min(1)),
+});
+
+export const ContinueResultSchema = z.object({
+  context: CompactContextSchema,
+  next: NextStepSchema,
+  phase: PhaseDetailSchema.nullable(),
+  roadmapItem: RoadmapItemSchema.nullable(),
+  latestSession: SessionSchema.nullable(),
+  openSession: SessionSchema.nullable(),
+  newSession: SessionSchema.nullable(),
+  closedSession: SessionSchema.nullable(),
+  warnings: z.array(z.string().min(1)),
+  readiness: ContinuityReadinessSchema,
+  roi: ContextRoiReportSchema,
+  markdown: z.string().min(1),
+});
+
+export const CheckpointInputSchema = z.object({
+  summary: z.string().min(1),
+  changedFiles: z.array(z.string().min(1)).optional(),
+  nextSteps: z.array(z.string().min(1)).default([]),
+  relatedPlanId: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  startedAt: z.string().min(1).optional(),
+  endedAt: z.string().min(1).optional(),
+});
+
+export const NoteInputSchema = z.object({
+  text: z.string().min(1),
+  changedFiles: z.array(z.string().min(1)).optional(),
+  nextSteps: z.array(z.string().min(1)).default([]),
+  relatedPlanId: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+});
+
+export const DecideInputSchema = z.object({
+  title: z.string().min(1),
+  context: z.string().min(1),
+  decision: z.string().min(1),
+  consequences: z.string().optional(),
+  alternatives: z.array(z.string().min(1)).default([]),
+  relatedPlanIds: z.array(z.string().min(1)).default([]),
+});
+
+export const DoneInputSchema = z
+  .object({
+    planId: z.string().min(1).optional(),
+    phaseId: z.string().min(1).optional(),
+    findingId: z.string().min(1).optional(),
+    evidence: z.array(EvidenceSchema).default([]),
+  })
+  .refine((value) => !(value.findingId && (value.planId || value.phaseId || value.evidence.length > 0)), {
+    message: "Provide either findingId or plan/phase completion options",
+  });
+
+export const BlockedInputSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    description: z.string().min(1).optional(),
+    type: FindingTypeSchema.default("risk"),
+    severity: FindingSeveritySchema.default("high"),
+    relatedFiles: z.array(z.string().min(1)).default([]),
+    relatedPlanId: z.string().min(1).optional(),
+    relatedPhaseId: z.string().min(1).optional(),
+    markPhaseId: z.string().min(1).optional(),
+    evidence: z.array(EvidenceSchema).default([]),
+  })
+  .refine((value) => Boolean(value.markPhaseId) || (Boolean(value.title) && Boolean(value.description)), {
+    message: "Provide markPhaseId or both title and description",
+  });
+
+export const DoneResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("phase"), result: AdvanceResultSchema }),
+  z.object({ kind: z.literal("finding"), finding: FindingSchema }),
+]);
+
+export const BlockedResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("phase"), result: AdvanceResultSchema }),
+  z.object({ kind: z.literal("finding"), finding: FindingSchema }),
+]);
+
+export const PromptFormatSchema = z.enum(["markdown", "agent", "codex", "claude"]);
+
+export const PromptSectionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  priority: z.number().int().nonnegative(),
+  estimatedTokens: z.number().int().nonnegative(),
+  included: z.boolean(),
+});
+
+export const PromptResultSchema = z.object({
+  format: PromptFormatSchema,
+  content: z.string().min(1),
+  estimatedTokens: z.number().int().nonnegative(),
+  maxTokens: z.number().int().positive().optional(),
+  truncated: z.boolean(),
+  sections: z.array(PromptSectionSchema),
+  metadata: z
+    .object({
+      projectId: z.string().min(1).optional(),
+      planId: z.string().min(1).optional(),
+      phaseId: z.string().min(1).optional(),
+      nextKind: NextStepKindSchema.optional(),
+      readinessStatus: ContinuityReadinessSchema.shape.status,
+    })
+    .optional(),
+});
+
+export const DemoStepSchema = z.object({
+  title: z.string().min(1),
+  purpose: z.string().min(1),
+  commands: z.array(z.string().min(1)).min(1),
+  expected: z.string().min(1),
+  durationMinutes: z.number().int().positive(),
+});
+
+export const DemoGuideSummarySchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  durationMinutes: z.number().int().positive(),
+  tags: z.array(z.string().min(1)),
+});
+
+export const DemoGuideSchema = DemoGuideSummarySchema.extend({
+  whenItHelps: z.array(z.string().min(1)),
+  privacy: z.array(z.string().min(1)),
+  prerequisites: z.array(z.string().min(1)),
+  steps: z.array(DemoStepSchema).min(1),
+  nextSteps: z.array(z.string().min(1)),
   markdown: z.string().min(1),
 });
 
@@ -780,6 +934,22 @@ export type DecisionCompact = z.infer<typeof DecisionCompactSchema>;
 export type ContextSnapshot = z.infer<typeof ContextSnapshotSchema>;
 export type CompactContext = z.infer<typeof CompactContextSchema>;
 export type ResumeContext = z.infer<typeof ResumeContextSchema>;
+export type ContinuityReadiness = z.infer<typeof ContinuityReadinessSchema>;
+export type ContextRoiReport = z.infer<typeof ContextRoiReportSchema>;
+export type ContinueResult = z.infer<typeof ContinueResultSchema>;
+export type CheckpointInput = z.infer<typeof CheckpointInputSchema>;
+export type NoteInput = z.infer<typeof NoteInputSchema>;
+export type DecideInput = z.infer<typeof DecideInputSchema>;
+export type DoneInput = z.infer<typeof DoneInputSchema>;
+export type BlockedInput = z.infer<typeof BlockedInputSchema>;
+export type DoneResult = z.infer<typeof DoneResultSchema>;
+export type BlockedResult = z.infer<typeof BlockedResultSchema>;
+export type PromptFormat = z.infer<typeof PromptFormatSchema>;
+export type PromptSection = z.infer<typeof PromptSectionSchema>;
+export type PromptResult = z.infer<typeof PromptResultSchema>;
+export type DemoStep = z.infer<typeof DemoStepSchema>;
+export type DemoGuideSummary = z.infer<typeof DemoGuideSummarySchema>;
+export type DemoGuide = z.infer<typeof DemoGuideSchema>;
 export type CreatePlanInput = z.infer<typeof CreatePlanInputSchema>;
 export type UpdatePlanInput = z.infer<typeof UpdatePlanInputSchema>;
 export type UpdatePhaseInput = z.infer<typeof UpdatePhaseInputSchema>;

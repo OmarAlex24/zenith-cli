@@ -1,7 +1,7 @@
 
 # Zenith CLI Reference
 
-All agent-facing commands should use `--json`.
+Use `--json` for scripts, tests, integrations, and agent steps that need exact fields.
 If the `zenith` binary is not on PATH while working inside this source checkout, use `bun run zenith ...`.
 
 ## Project
@@ -27,7 +27,7 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith roadmap import-plan <plan-id> --json --input -`
 - `zenith roadmap create-plan <roadmap-id> --json --input -`
 
-Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan; `discarded` is an auditable no-longer-planned scope decision and is not recommended as future work. Roadmap items use `todo / in_progress / done / deferred / discarded`; plan phases use `todo / in_progress / done / blocked`. Legacy `pending`/`planned`/`completed` inputs are still accepted and normalized; `canceled`/`cancelled` normalize to `discarded`.
+Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan; `discarded` is an auditable out-of-scope decision and is not recommended as future work. Roadmap items use `todo / in_progress / done / deferred / discarded`; plan phases use `todo / in_progress / done / blocked`.
 
 ## Plans
 
@@ -64,7 +64,7 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 
 `kind` is omitted when the fallback is a freeform session next-step.
 
-When `--stale-after-days <n>` is provided, `NextStep` may include `staleness`: `{ stale, ageDays, staleAfterDays, lastUpdatedAt }`. The default `plan next --json` response omits it for compatibility.
+When `--stale-after-days <n>` is provided, `NextStep` may include `staleness`: `{ stale, ageDays, staleAfterDays, lastUpdatedAt }`. The default `plan next --json` response omits staleness unless the flag is provided.
 
 ### plan advance — AdvanceResult
 
@@ -95,13 +95,43 @@ Installed role skills use this same protocol: `zenith-planner` creates/selects e
 
 ## Context
 
+- `zenith continue --json` — preferred read-only resume briefing with context, next step, phase detail, roadmap candidate, sessions, warnings, readiness, and markdown
+- `zenith continue --start-session --json` — start a session only when no session is open
+- `zenith continue --close-open-session --start-session --json` — close the open session before starting a new one
+- `zenith continue --auto-capture --json` — capture current git changes into the open session
 - `zenith context get --json`
 - `zenith context compact --json`
 - `zenith resume --json`
+- `zenith roi --json [--since <eventId|iso>]` — deterministic context compression and continuity signal report
+- `zenith prompt --format markdown|agent|codex|claude --json [--max-tokens <n>] [--metadata]` — read-only prompt context for handoff or copy/paste
+- `zenith demo list --json` — list read-only onboarding/demo guides
+- `zenith demo show <demo-id> --json` — return typed guide data plus copyable markdown; built-ins include `continuity`, `daily-loop`, and `benchmark-proof`
 - `zenith phase show <phase-id> --json`
 - `zenith timeline --json` — read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`
 
 Use `--since <eventId|iso>` to return only events after a checkpoint cursor (ISO timestamp or event id). Useful for resumed sessions to diff progress without re-reading the entire timeline.
+
+## Low-Friction Writes
+
+- `zenith checkpoint "Summary" --next "Next step" --json` — record a closed session checkpoint
+- `zenith note "Short note" --json` — record a lightweight session note
+- `zenith decide "Title" --context "Context" --decision "Decision" --json` — record a decision
+- `zenith done --json` — mark the inferred current phase done; use `--plan <plan-id> --phase <phase-id>` when focus is ambiguous
+- `zenith done --finding <finding-id> --json` — close a finding
+- `zenith blocked "Title" --description "Why blocked" --plan <plan-id> --phase <phase-id> --json` — record a blocking finding
+- `zenith blocked --mark-phase <phase-id> --plan <plan-id> --json` — explicitly mark a phase blocked
+
+These commands are intentional writes. Read-only commands such as `continue`, `roi`, `resume`, `prompt`, `demo`, TUI, and telemetry must remain side-effect free.
+
+## Benchmarks
+
+- `zenith benchmark list --json` — list tracked scenarios
+- `zenith benchmark task <scenario-id> --variant <variant> --json` — render a copyable benchmark task
+- `zenith benchmark record --json --input -` — record strict run metadata under Zenith home
+- `zenith benchmark runs --json` — list recorded runs
+- `zenith benchmark compare --json [--scenario <scenario-id>]` — compare runs by variant
+
+Benchmark records must not store transcripts, prompts, outputs, secrets, tokens, credentials, or full diffs. Repo-local ad hoc results belong under gitignored `benchmarks/results/`.
 
 ## Self-Tracking Telemetry
 

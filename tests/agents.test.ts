@@ -62,6 +62,16 @@ describe("agent installer", () => {
     expect(skill).toContain("name: zenith-memory");
     expect(skill).toContain("description: Use when working in a repository that uses Zenith CLI");
     expect(skill).toContain("Zenith Memory");
+    expect(skill).toContain("zenith continue");
+    expect(skill).toContain("zenith roi");
+    expect(skill).toContain("zenith prompt --format codex --max-tokens 800");
+    expect(skill).toContain("zenith demo show continuity");
+    expect(skill).not.toContain("zenith continue --json");
+    expect(skill).not.toContain("zenith prompt --format codex --json");
+    expect(skill).toContain("zenith benchmark");
+    expect(skill).toContain("zenith checkpoint");
+    expect(skill).toContain("zenith done");
+    expect(skill).toContain("zenith blocked");
     expect(skill).toContain("zenith context compact --json");
     expect(skill).toContain("zenith plan next --json");
     expect(skill).toContain("zenith phase show <phase-id> --json");
@@ -80,6 +90,11 @@ describe("agent installer", () => {
     expect(rootInstructions).toContain(".codex/skills/zenith-implementer/SKILL.md");
     expect(rootInstructions).toContain("Use the zenith-reviewer skill");
     expect(rootInstructions).toContain(".codex/skills/zenith-reviewer/SKILL.md");
+    expect(rootInstructions).toContain("Run `zenith continue`.");
+    expect(rootInstructions).toContain("zenith prompt --format codex --max-tokens 800");
+    expect(rootInstructions).not.toContain("Run `zenith continue --json`.");
+    expect(rootInstructions).toContain("viewing continuity ROI");
+    expect(rootInstructions).toContain("viewing onboarding demos");
     expect(rootInstructions).toContain("reviewing a PR, MR, branch, diff, staged changes");
     expect(prReviewSkill).toContain("name: zenith-pr-review");
     expect(prReviewSkill).toContain("description: Use when reviewing a PR, MR, diff, branch");
@@ -141,6 +156,15 @@ describe("agent installer", () => {
     expect(cliReference).toContain("zenith finding update <finding-id> --json --input -");
     expect(cliReference).toContain("zenith session start --json --input -");
     expect(cliReference).toContain("zenith session show <session-id> --json");
+    expect(cliReference).toContain("zenith prompt --format markdown|agent|codex|claude --json");
+    expect(cliReference).toContain("zenith demo list --json");
+    expect(cliReference).toContain("zenith demo show <demo-id> --json");
+    expect(cliReference).toContain("zenith benchmark list --json");
+    expect(cliReference).toContain("zenith benchmark compare --json");
+    expect(cliReference).toContain("Low-Friction Writes");
+    expect(cliReference).toContain('zenith checkpoint "Summary" --next "Next step" --json');
+    expect(cliReference).toContain("zenith done --finding <finding-id> --json");
+    expect(cliReference).toContain("zenith blocked --mark-phase <phase-id> --plan <plan-id> --json");
     expect(cliReference).toContain("Memory Discovery");
     expect(cliReference).toContain("zenith search --json --query <text>");
     expect(cliReference).toContain("zenith tag set <entity-type> <entity-id> --json --input -");
@@ -149,6 +173,10 @@ describe("agent installer", () => {
     expect(cliReference).toContain("discarded");
     expect(cliReference).toContain("bun run zenith");
     expect(workflows).toContain("Continue With Minimal Prompt");
+    expect(workflows).toContain("zenith prompt --format codex --max-tokens 800");
+    expect(workflows).toContain("zenith demo show continuity");
+    expect(workflows).not.toContain("zenith prompt --format codex --json");
+    expect(workflows).not.toContain("zenith demo show continuity --json");
     expect(workflows).toContain("Discover Existing Memory");
     expect(workflows).toContain('zenith search --json --query "release docs"');
     expect(workflows).toContain("zenith tag set plan plan_id --json --input -");
@@ -157,12 +185,9 @@ describe("agent installer", () => {
     expect(workflows).toContain("Targeted insertions");
     expect(workflows).toContain("Use that phase as the implementation target");
     expect(workflows).toContain("zenith session end session_id --json --input -");
+    expect(workflows).toContain('zenith checkpoint "Verified current phase" --next "Next action"');
     expect(workflows).toContain("bun run zenith");
-    expect(generated).not.toContain("Decode CLI");
-    expect(generated).not.toContain("decode-memory");
-    expect(generated.replace("Use `decode` only as a legacy alias when `zenith` is unavailable.", "")).not.toMatch(
-      /`(?:bun run )?decode\s+[^`]+`/,
-    );
+    expect(generated).not.toMatch(/\bdecode\b/i);
 
     // New capability assertions
     expect(cliReference).toContain("zenith timeline");
@@ -225,14 +250,13 @@ describe("agent installer", () => {
     const dir = makeTempDir();
     tempDirs.push(dir);
     const target = join(dir, "AGENTS.md");
-    writeFileSync(target, "# Existing\n\nKeep this.\n\n<!-- BEGIN DECODE CLI -->\nold\n<!-- END DECODE CLI -->\n", "utf8");
+    writeFileSync(target, "# Existing\n\nKeep this.\n\n<!-- BEGIN ZENITH CLI -->\nold\n<!-- END ZENITH CLI -->\n", "utf8");
 
     installAgentPack("codex", dir);
     const content = readFileSync(target, "utf8");
 
     expect(content).toContain("Keep this.");
     expect(content).toContain("BEGIN ZENITH CLI");
-    expect(content).not.toContain("BEGIN DECODE CLI");
     expect(content).not.toContain("\nold\n");
     expect(content).toContain("zenith context compact --json");
     expect(content).toContain("zenith plan next --json");
@@ -241,6 +265,27 @@ describe("agent installer", () => {
     expect(content).toContain("zenith-planner");
     expect(content).toContain("zenith-implementer");
     expect(content).toContain("zenith-reviewer");
+  });
+
+  test("README quick path stays markdown-first and links to machine reference", () => {
+    const readme = readFileSync(join(process.cwd(), "README.md"), "utf8");
+    const reference = readFileSync(join(process.cwd(), "docs", "reference.md"), "utf8");
+    const dailyFlow = sectionBetween(readme, "## Daily Flow", "## Agent Workflow");
+
+    expect(dailyFlow).toContain("zenith continue");
+    expect(dailyFlow).toContain("zenith prompt --format codex --max-tokens 800");
+    expect(dailyFlow).toContain('zenith checkpoint "What changed" --next "What should happen next"');
+    expect(dailyFlow).toContain("zenith done");
+    expect(dailyFlow).toContain('zenith blocked "What is blocked" --description "Why"');
+    expect(dailyFlow).not.toContain("continue --json");
+    expect(dailyFlow).not.toMatch(/prompt[^\n]*--json/);
+    expect(dailyFlow).not.toContain("session start");
+    expect(dailyFlow).not.toContain("decision record");
+    expect(dailyFlow).not.toContain("finding record");
+    expect(readme).toContain("[docs/reference.md](docs/reference.md)");
+    expect(reference).toContain("# Zenith Machine/API Reference");
+    expect(reference).toContain("zenith continue --json");
+    expect(reference).toContain("zenith prompt --format codex --max-tokens 800 --json");
   });
 
   test("creates claude root instructions and role skill files", () => {
@@ -291,3 +336,11 @@ describe("agent installer", () => {
     expect(result2.files.every((f) => f.action === "unchanged")).toBe(true);
   });
 });
+
+function sectionBetween(content: string, startHeading: string, endHeading: string): string {
+  const start = content.indexOf(startHeading);
+  const end = content.indexOf(endHeading, start + startHeading.length);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return content.slice(start, end);
+}

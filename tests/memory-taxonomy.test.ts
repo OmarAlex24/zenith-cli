@@ -170,25 +170,25 @@ describe("memory taxonomy", () => {
 
   test("new CLI commands emit stable JSON envelopes", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const brief = await runDecode(["brief", "set", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Zenith Brief",
         summary: "Local-first memory.",
         body: "Keep project intent separate from executable plans.",
       },
     });
-    const briefShow = await runDecode(["brief", "show", "--json"], { cwd, decodeHome });
-    const briefList = await runDecode(["brief", "list", "--json"], { cwd, decodeHome });
+    const briefShow = await runDecode(["brief", "show", "--json"], { cwd, zenithHome });
+    const briefList = await runDecode(["brief", "list", "--json"], { cwd, zenithHome });
 
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Product Roadmap",
         items: [{ title: "Brief memory" }],
@@ -196,22 +196,22 @@ describe("memory taxonomy", () => {
     });
     const roadmapId = (roadmap.json as any).data.id as string;
     const itemId = (roadmap.json as any).data.items[0].id as string;
-    const roadmapList = await runDecode(["roadmap", "list", "--json"], { cwd, decodeHome });
-    const roadmapShow = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    const roadmapList = await runDecode(["roadmap", "list", "--json"], { cwd, zenithHome });
+    const roadmapShow = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, zenithHome });
     const roadmapUpdate = await runDecode(["roadmap", "update", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { status: "paused" },
     });
     const roadmapItemUpdate = await runDecode(["roadmap", "update-item", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId, status: "done" },
     });
 
     const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Implementation Roadmap",
         status: "paused",
@@ -221,13 +221,13 @@ describe("memory taxonomy", () => {
     const planId = (plan.json as any).data.id as string;
     const imported = await runDecode(["roadmap", "import-plan", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { archivePlan: true },
     });
 
     const spike = await runDecode(["spike", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Storage spike",
         question: "Which store should Zenith use?",
@@ -236,18 +236,18 @@ describe("memory taxonomy", () => {
     const spikeId = (spike.json as any).data.id as string;
     const spikeRecord = await runDecode(["spike", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         question: "Should roadmaps be plans?",
         result: "No.",
         recommendation: "Use roadmaps.",
       },
     });
-    const spikeList = await runDecode(["spike", "list", "--json"], { cwd, decodeHome });
-    const spikeShow = await runDecode(["spike", "show", spikeId, "--json"], { cwd, decodeHome });
+    const spikeList = await runDecode(["spike", "list", "--json"], { cwd, zenithHome });
+    const spikeShow = await runDecode(["spike", "show", spikeId, "--json"], { cwd, zenithHome });
     const spikeConclude = await runDecode(["spike", "conclude", spikeId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         result: "SQLite is sufficient.",
         recommendation: "Use SQLite.",

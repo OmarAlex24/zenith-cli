@@ -1,0 +1,55 @@
+{
+  "id": "review-handoff",
+  "title": "Review Handoff And Findings",
+  "category": "review",
+  "difficulty": "intermediate",
+  "description": "Measure whether an agent can review a handoff, separate actionable findings from notes, and choose the correct Zenith mutation.",
+  "prompt": "Review the current handoff. Identify any actionable correctness issues, decide whether the phase can advance, and specify which Zenith command should record the result.",
+  "setup": [
+    "Create a plan with a phase ready for review.",
+    "Record a recent session summary that names changed files.",
+    "Optionally seed one open medium finding to test triage."
+  ],
+  "successCriteria": [
+    "Leads with actionable findings or clearly says there are none.",
+    "Does not record speculative nits as findings.",
+    "Uses relatedPlanId and relatedPhaseId when a finding should be recorded.",
+    "Advances the phase only when review is clean."
+  ],
+  "expectedSignals": [
+    "active_plan",
+    "current_phase",
+    "sessions",
+    "findings"
+  ],
+  "privacyRules": [
+    "Do not store full model transcripts.",
+    "Do not include secrets, credentials, tokens, or full diffs in benchmark records.",
+    "Record only scenario id, variant, timestamps, and evaluator-entered scores."
+  ],
+  "variants": [
+    "manual_handoff",
+    "continue",
+    "prompt",
+    "full_loop"
+  ],
+  "metrics": [
+    {
+      "id": "finding_quality",
+      "label": "Finding quality",
+      "kind": "score",
+      "description": "Evaluator score from 1 to 5 for actionable, deduplicated findings."
+    },
+    {
+      "id": "safe_advance",
+      "label": "Safe advance decision",
+      "kind": "boolean",
+      "description": "Whether the response chooses phase advancement only when appropriate."
+    }
+  ],
+  "tags": [
+    "review",
+    "findings",
+    "handoff"
+  ]
+}

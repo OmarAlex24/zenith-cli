@@ -1,6 +1,9 @@
 import { Command } from "commander";
 import { installAgentPack, type AgentKind } from "../agents/installer";
 import { createZenithApp } from "../app/factory";
+import { listBenchmarkScenarios, loadBenchmarkScenarios, renderBenchmarkTask } from "../benchmarks/scenarios";
+import { compareBenchmarkRuns, listBenchmarkRuns, recordBenchmarkRun } from "../benchmarks/store";
+import { getDemoGuide, listDemoGuides } from "../demo/guides";
 import { GitAdapter } from "../integrations/git/git-adapter";
 import type { FindingListStatus } from "../storage/repository";
 import { exitCodeFor, fail, ok, ZenithError } from "./json-output";
@@ -9,7 +12,6 @@ import { readJsonInput } from "./input";
 export type RunCliOptions = {
   cwd?: string;
   zenithHome?: string;
-  decodeHome?: string;
   dbPath?: string;
 };
 
@@ -17,6 +19,9 @@ type CommandOptions = {
   json?: boolean;
   input?: string;
   phase?: string;
+  plan?: string;
+  finding?: string;
+  markPhase?: string;
   status?: string;
   limit?: string;
   since?: string;
@@ -28,6 +33,24 @@ type CommandOptions = {
   query?: string;
   tag?: string;
   entityType?: string;
+  startSession?: boolean;
+  closeOpenSession?: boolean;
+  autoCapture?: boolean;
+  context?: string;
+  decision?: string;
+  consequences?: string;
+  description?: string;
+  severity?: string;
+  type?: string;
+  next?: string[];
+  alternative?: string[];
+  file?: string[];
+  evidence?: string[];
+  format?: string;
+  maxTokens?: string;
+  metadata?: boolean;
+  variant?: string;
+  scenario?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -537,11 +560,190 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   program
+    .command("checkpoint")
+    .description("Record a closed session checkpoint")
+    .argument("[summary]")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .option("--next <step>", "Add a next step", collectValues, [])
+    .option("--plan <plan-id>", "Related plan id")
+    .action(async (summary: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.checkpoint(
+          await readJsonInputOr(commandOptions.input, {
+            summary: summary ?? "",
+            nextSteps: commandOptions.next ?? [],
+            ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
+          }),
+        ),
+      humanSession);
+    });
+
+  program
+    .command("note")
+    .description("Record a lightweight session note")
+    .argument("[text]")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .option("--next <step>", "Add a next step", collectValues, [])
+    .option("--plan <plan-id>", "Related plan id")
+    .action(async (text: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.note(
+          await readJsonInputOr(commandOptions.input, {
+            text: text ?? "",
+            nextSteps: commandOptions.next ?? [],
+            ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
+          }),
+        ),
+      humanSession);
+    });
+
+  program
+    .command("decide")
+    .description("Record a technical decision")
+    .argument("[title]")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .option("--context <text>", "Decision context")
+    .option("--decision <text>", "Decision made")
+    .option("--consequences <text>", "Consequences")
+    .option("--alternative <text>", "Alternative considered", collectValues, [])
+    .option("--plan <plan-id>", "Related plan id")
+    .action(async (title: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.decide(
+          await readJsonInputOr(commandOptions.input, {
+            title: title ?? "",
+            context: commandOptions.context ?? "",
+            decision: commandOptions.decision ?? "",
+            ...(commandOptions.consequences ? { consequences: commandOptions.consequences } : {}),
+            alternatives: commandOptions.alternative ?? [],
+            relatedPlanIds: commandOptions.plan ? [commandOptions.plan] : [],
+          }),
+        ),
+      humanDecision);
+    });
+
+  program
+    .command("done")
+    .description("Complete the current or explicit phase, or close a finding")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .option("--plan <plan-id>", "Plan id for phase completion")
+    .option("--phase <phase-id>", "Phase id to complete")
+    .option("--finding <finding-id>", "Finding id to close")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.done(
+          await readJsonInputOr(commandOptions.input, {
+            ...(commandOptions.plan ? { planId: commandOptions.plan } : {}),
+            ...(commandOptions.phase ? { phaseId: commandOptions.phase } : {}),
+            ...(commandOptions.finding ? { findingId: commandOptions.finding } : {}),
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
+          }),
+        ),
+      humanDone);
+    });
+
+  program
+    .command("blocked")
+    .description("Record a blocking finding or explicitly mark a phase blocked")
+    .argument("[title]")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .option("--description <text>", "Finding description")
+    .option("--severity <severity>", "Finding severity: low, medium, high, or critical")
+    .option("--type <type>", "Finding type")
+    .option("--file <path>", "Related file", collectValues, [])
+    .option("--plan <plan-id>", "Related plan id")
+    .option("--phase <phase-id>", "Related phase id for a finding")
+    .option("--mark-phase <phase-id>", "Mark an explicit phase blocked instead of recording a finding")
+    .option("--evidence <text>", "Append note evidence when marking a phase", collectValues, [])
+    .action(async (title: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.blocked(
+          await readJsonInputOr(commandOptions.input, {
+            ...(title ? { title } : {}),
+            ...(commandOptions.description ? { description: commandOptions.description } : {}),
+            ...(commandOptions.type ? { type: commandOptions.type } : {}),
+            ...(commandOptions.severity ? { severity: commandOptions.severity } : {}),
+            relatedFiles: commandOptions.file ?? [],
+            ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
+            ...(commandOptions.phase ? { relatedPhaseId: commandOptions.phase } : {}),
+            ...(commandOptions.markPhase ? { markPhaseId: commandOptions.markPhase } : {}),
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
+          }),
+        ),
+      humanBlocked);
+    });
+
+  program
     .command("resume")
     .description("Show compact context for resuming work")
     .option("--json", "Emit stable JSON")
     .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) => app.resume(), humanMarkdown);
+    });
+
+  program
+    .command("continue")
+    .description("Show the full continuity briefing for resuming work")
+    .option("--json", "Emit stable JSON")
+    .option("--start-session", "Start a new session only when no session is open")
+    .option("--close-open-session", "Close the open session before optionally starting a new one")
+    .option("--auto-capture", "Capture current git changes into the open session")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.continueWork({
+            ...(commandOptions.startSession ? { startSession: true } : {}),
+            ...(commandOptions.closeOpenSession ? { closeOpenSession: true } : {}),
+            ...(commandOptions.autoCapture ? { autoCapture: true } : {}),
+          }),
+        humanMarkdown,
+      );
+    });
+
+  program
+    .command("roi")
+    .description("Report deterministic context compression and continuity signals")
+    .option("--json", "Emit stable JSON")
+    .option("--since <cursor>", "Event id or ISO timestamp")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.contextRoi({
+            ...(commandOptions.since ? { since: commandOptions.since } : {}),
+          }),
+        humanRoi,
+      );
+    });
+
+  program
+    .command("prompt")
+    .description("Render read-only agent prompt context")
+    .option("--json", "Emit stable JSON")
+    .option("--format <format>", "Prompt format: markdown, agent, codex, or claude")
+    .option("--max-tokens <n>", "Approximate token budget for deterministic truncation")
+    .option("--metadata", "Include ids and internal routing metadata")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.prompt({
+            ...(commandOptions.format ? { format: parsePromptFormat(commandOptions.format) } : {}),
+            ...parseMaxTokensOption(commandOptions.maxTokens),
+            ...(commandOptions.metadata ? { includeMetadata: true } : {}),
+          }),
+        humanPrompt,
+      );
     });
 
   program
@@ -615,6 +817,90 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .option("--json", "Emit stable JSON")
     .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) => app.activity(), humanActivity);
+    });
+
+  const benchmark = program.command("benchmark").description("Local benchmark scenarios and runs");
+
+  benchmark
+    .command("list")
+    .description("List benchmark scenarios")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handleStandalone(commandOptions, async () => listBenchmarkScenarios(), humanBenchmarkScenarioList);
+    });
+
+  benchmark
+    .command("task")
+    .description("Render a copyable benchmark task")
+    .argument("<scenario-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--variant <variant>", "Benchmark variant")
+    .action(async (scenarioId: string, commandOptions: CommandOptions) => {
+      await handleStandalone(
+        commandOptions,
+        async () =>
+          renderBenchmarkTask(requireBenchmarkScenario(scenarioId), {
+            ...(commandOptions.variant ? { variant: parseBenchmarkVariant(commandOptions.variant) } : {}),
+          }),
+        humanBenchmarkTask,
+      );
+    });
+
+  benchmark
+    .command("record")
+    .description("Record benchmark run metadata under Zenith home")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (commandOptions: CommandOptions) => {
+      await handleStandalone(
+        commandOptions,
+        async () => recordBenchmarkRun(await readJsonInput(commandOptions.input), storageHomeOptions(options)),
+        humanBenchmarkRun,
+      );
+    });
+
+  benchmark
+    .command("runs")
+    .description("List recorded benchmark runs")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handleStandalone(commandOptions, async () => listBenchmarkRuns(storageHomeOptions(options)), humanBenchmarkRunList);
+    });
+
+  benchmark
+    .command("compare")
+    .description("Compare benchmark runs by variant")
+    .option("--json", "Emit stable JSON")
+    .option("--scenario <scenario-id>", "Filter to one scenario id")
+    .action(async (commandOptions: CommandOptions) => {
+      await handleStandalone(
+        commandOptions,
+        async () =>
+          compareBenchmarkRuns({
+            ...storageHomeOptions(options),
+            ...(commandOptions.scenario ? { scenarioId: commandOptions.scenario } : {}),
+          }),
+        humanBenchmarkCompare,
+      );
+    });
+
+  const demo = program.command("demo").description("Read-only onboarding demos");
+
+  demo
+    .command("list")
+    .description("List copyable Zenith demo guides")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handleStandalone(commandOptions, async () => listDemoGuides(), humanDemoGuideList);
+    });
+
+  demo
+    .command("show")
+    .description("Show a copyable Zenith demo guide")
+    .argument("<demo-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (demoId: string, commandOptions: CommandOptions) => {
+      await handleStandalone(commandOptions, async () => requireDemoGuide(demoId), humanDemoGuide);
     });
 
   const tag = program.command("tag").description("Tag project memory entities");
@@ -731,13 +1017,21 @@ async function handle<T>(
   }
 }
 
-async function handleStandalone<T>(commandOptions: CommandOptions, action: () => Promise<T>): Promise<void> {
+async function handleStandalone<T>(
+  commandOptions: CommandOptions,
+  action: () => Promise<T>,
+  human: (data: T) => string = (data) => JSON.stringify(data, null, 2),
+): Promise<void> {
   try {
     const data = await action();
-    emit(commandOptions, data, () => JSON.stringify(data, null, 2));
+    emit(commandOptions, data, human);
   } catch (error) {
     emitError(commandOptions, error);
   }
+}
+
+async function readJsonInputOr(input: string | undefined, fallback: unknown): Promise<unknown> {
+  return input ? readJsonInput(input) : fallback;
 }
 
 function emit<T>(commandOptions: CommandOptions, data: T, human: (data: T) => string): void {
@@ -936,6 +1230,67 @@ function humanMarkdown(data: { markdown: string }): string {
   return data.markdown;
 }
 
+function humanRoi(report: {
+  sourceEvents: number;
+  estimatedRawTokens: number;
+  compactTokens: number;
+  compressionRatio: number;
+  continuitySignals: string[];
+  missingSignals: string[];
+}): string {
+  return [
+    `Source events: ${report.sourceEvents}`,
+    `Estimated raw tokens: ${report.estimatedRawTokens}`,
+    `Compact tokens: ${report.compactTokens}`,
+    `Compression ratio: ${report.compressionRatio}x`,
+    `Signals: ${report.continuitySignals.join(", ") || "none"}`,
+    `Missing: ${report.missingSignals.join(", ") || "none"}`,
+  ].join("\n");
+}
+
+function humanPrompt(prompt: { content: string }): string {
+  return prompt.content;
+}
+
+function humanBenchmarkScenarioList(
+  scenarios: Array<{ id: string; title: string; category: string; difficulty: string; variants: string[] }>,
+): string {
+  return scenarios
+    .map((scenario) => `${scenario.id} ${scenario.category}/${scenario.difficulty} ${scenario.title} [${scenario.variants.join(",")}]`)
+    .join("\n");
+}
+
+function humanBenchmarkTask(task: { content: string }): string {
+  return task.content;
+}
+
+function humanBenchmarkRun(run: { id: string; scenarioId: string; variant: string; score?: number | undefined }): string {
+  return `${run.id} ${run.scenarioId} ${run.variant}${run.score === undefined ? "" : ` score=${run.score}`}`;
+}
+
+function humanBenchmarkRunList(runs: Array<{ id: string; scenarioId: string; variant: string; score?: number | undefined }>): string {
+  if (runs.length === 0) return "No benchmark runs recorded.";
+  return runs.map(humanBenchmarkRun).join("\n");
+}
+
+function humanBenchmarkCompare(compare: {
+  totalRuns: number;
+  variants: Array<{ variant: string; runs: number; averageScore?: number | undefined }>;
+}): string {
+  if (compare.totalRuns === 0) return "No benchmark runs recorded.";
+  return compare.variants
+    .map((variant) => `${variant.variant} runs=${variant.runs}${variant.averageScore === undefined ? "" : ` avg=${variant.averageScore}`}`)
+    .join("\n");
+}
+
+function humanDemoGuideList(guides: Array<{ id: string; title: string; durationMinutes: number; tags: string[] }>): string {
+  return guides.map((guide) => `${guide.id} ${guide.durationMinutes}m ${guide.title} [${guide.tags.join(",")}]`).join("\n");
+}
+
+function humanDemoGuide(guide: { markdown: string }): string {
+  return guide.markdown;
+}
+
 function humanPhase(data: { planId: string; planTitle: string; phase: { id: string; title: string; status: string } }): string {
   return [
     `Plan: ${data.planTitle}`,
@@ -1018,6 +1373,39 @@ function humanSessionList(sessions: Array<{ id: string; startedAt: string; ended
     .join("\n");
 }
 
+function humanDone(result:
+  | { kind: "phase"; result: { completed: { phaseId: string; status: string } | null; planCompleted: boolean; next: { recommendation: string | null } } }
+  | { kind: "finding"; finding: { id: string; title: string; status: string } },
+): string {
+  if (result.kind === "finding") {
+    return `Finding closed: ${result.finding.id} ${result.finding.title}`;
+  }
+
+  return [
+    result.result.completed
+      ? `Phase: ${result.result.completed.phaseId} -> ${result.result.completed.status}`
+      : "No phase completed.",
+    `Plan completed: ${result.result.planCompleted ? "yes" : "no"}`,
+    `Next: ${result.result.next.recommendation ?? "none"}`,
+  ].join("\n");
+}
+
+function humanBlocked(result:
+  | { kind: "phase"; result: { completed: { phaseId: string; status: string } | null; next: { recommendation: string | null } } }
+  | { kind: "finding"; finding: { id: string; title: string; severity: string } },
+): string {
+  if (result.kind === "finding") {
+    return `Finding recorded: ${result.finding.id} ${result.finding.severity} ${result.finding.title}`;
+  }
+
+  return [
+    result.result.completed
+      ? `Phase: ${result.result.completed.phaseId} -> ${result.result.completed.status}`
+      : "No phase marked blocked.",
+    `Next: ${result.result.next.recommendation ?? "none"}`,
+  ].join("\n");
+}
+
 function humanStage(stage: {
   id: string;
   stage: string;
@@ -1068,6 +1456,14 @@ function parseFindingStatus(status: string | undefined): FindingListStatus {
   });
 }
 
+function collectValues(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function evidenceFromNotes(values: string[]): Array<{ kind: "note"; value: string }> {
+  return values.map((value) => ({ kind: "note", value }));
+}
+
 function toContextOptions(commandOptions: CommandOptions): { phaseId?: string } {
   return commandOptions.phase ? { phaseId: commandOptions.phase } : {};
 }
@@ -1086,6 +1482,61 @@ function parseDaysOption(value?: string): { days?: number } {
 function parseStaleAfterDaysOption(value?: string): { staleAfterDays?: number } {
   const staleAfterDays = parsePositiveIntegerOption(value, "stale-after-days");
   return staleAfterDays === undefined ? {} : { staleAfterDays };
+}
+
+function parseMaxTokensOption(value?: string): { maxTokens?: number } {
+  const maxTokens = parsePositiveIntegerOption(value, "max-tokens");
+  return maxTokens === undefined ? {} : { maxTokens };
+}
+
+function parsePromptFormat(value: string): "markdown" | "agent" | "codex" | "claude" {
+  if (value === "markdown" || value === "agent" || value === "codex" || value === "claude") {
+    return value;
+  }
+
+  throw new ZenithError("--format must be markdown, agent, codex, or claude.", {
+    code: "invalid_option",
+    details: { optionName: "format", value },
+  });
+}
+
+function parseBenchmarkVariant(value: string): "no_zenith" | "manual_handoff" | "continue" | "prompt" | "full_loop" {
+  if (value === "no_zenith" || value === "manual_handoff" || value === "continue" || value === "prompt" || value === "full_loop") {
+    return value;
+  }
+
+  throw new ZenithError("--variant must be no_zenith, manual_handoff, continue, prompt, or full_loop.", {
+    code: "invalid_option",
+    details: { optionName: "variant", value },
+  });
+}
+
+function requireBenchmarkScenario(scenarioId: string) {
+  const scenario = loadBenchmarkScenarios().find((candidate) => candidate.id === scenarioId);
+  if (!scenario) {
+    throw new ZenithError(`Benchmark scenario not found: ${scenarioId}`, {
+      code: "benchmark_scenario_not_found",
+      details: { scenarioId },
+    });
+  }
+  return scenario;
+}
+
+function requireDemoGuide(demoId: string) {
+  const guide = getDemoGuide(demoId);
+  if (!guide) {
+    throw new ZenithError(`Demo guide not found: ${demoId}`, {
+      code: "demo_not_found",
+      details: { demoId },
+    });
+  }
+  return guide;
+}
+
+function storageHomeOptions(options: RunCliOptions): { zenithHome?: string } {
+  return {
+    ...(options.zenithHome ? { zenithHome: options.zenithHome } : {}),
+  };
 }
 
 function parseTimeoutOption(value?: string): { timeoutMs?: number } {

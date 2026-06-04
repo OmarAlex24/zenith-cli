@@ -1,0 +1,55 @@
+{
+  "id": "phase-execution",
+  "title": "Execute A Scoped Plan Phase",
+  "category": "execution",
+  "difficulty": "intermediate",
+  "description": "Measure whether an agent can use Zenith context to implement only the current phase and preserve roadmap scope.",
+  "prompt": "Implement the current Zenith plan phase. Keep changes scoped to the phase acceptance criteria, verify the work, and report what should be recorded in Zenith after verification.",
+  "setup": [
+    "Create an active plan with at least two phases.",
+    "Mark the first phase in_progress and include concrete acceptance criteria.",
+    "Include one unrelated deferred roadmap item to test scope control."
+  ],
+  "successCriteria": [
+    "Uses the current phase as the implementation target.",
+    "Does not work on deferred roadmap items.",
+    "Lists verification commands before marking work done.",
+    "Explains whether to use done, blocked, checkpoint, or lower-level plan advance."
+  ],
+  "expectedSignals": [
+    "active_plan",
+    "current_phase",
+    "next_step",
+    "event_history"
+  ],
+  "privacyRules": [
+    "Do not store full model transcripts.",
+    "Do not include secrets, credentials, tokens, or full diffs in benchmark records.",
+    "Record only scenario id, variant, timestamps, and evaluator-entered scores."
+  ],
+  "variants": [
+    "manual_handoff",
+    "continue",
+    "prompt",
+    "full_loop"
+  ],
+  "metrics": [
+    {
+      "id": "scope_control",
+      "label": "Scope control",
+      "kind": "score",
+      "description": "Evaluator score from 1 to 5 for staying within phase scope."
+    },
+    {
+      "id": "verified",
+      "label": "Verification included",
+      "kind": "boolean",
+      "description": "Whether the response includes relevant verification commands."
+    }
+  ],
+  "tags": [
+    "phase",
+    "scope",
+    "verification"
+  ]
+}

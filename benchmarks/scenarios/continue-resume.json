@@ -1,0 +1,55 @@
+{
+  "id": "continue-resume",
+  "title": "Resume From Continuity Context",
+  "category": "continuity",
+  "difficulty": "basic",
+  "description": "Measure whether an agent can identify the current project state, active phase, and next action from Zenith continuity context.",
+  "prompt": "You are resuming work in a Zenith-enabled repository. Determine the current next step, identify blockers or cleanup needs, and state the first implementation action you would take.",
+  "setup": [
+    "Register the repository with Zenith.",
+    "Create or select an active roadmap-backed plan with one in-progress phase.",
+    "Leave at least one recent session or decision in memory."
+  ],
+  "successCriteria": [
+    "Mentions the active plan and current phase.",
+    "Identifies dirty worktree or blocking findings when present.",
+    "Does not invent roadmap items that are not in Zenith memory.",
+    "Provides one concrete next action."
+  ],
+  "expectedSignals": [
+    "active_plan",
+    "current_phase",
+    "next_step",
+    "sessions"
+  ],
+  "privacyRules": [
+    "Do not store full model transcripts.",
+    "Do not include secrets, credentials, tokens, or full diffs in benchmark records.",
+    "Record only scenario id, variant, timestamps, and evaluator-entered scores."
+  ],
+  "variants": [
+    "no_zenith",
+    "manual_handoff",
+    "continue",
+    "prompt"
+  ],
+  "metrics": [
+    {
+      "id": "identified_next_step",
+      "label": "Identified next step",
+      "kind": "boolean",
+      "description": "Whether the response names the correct next action."
+    },
+    {
+      "id": "continuity_score",
+      "label": "Continuity score",
+      "kind": "score",
+      "description": "Evaluator score from 1 to 5 for resumption quality."
+    }
+  ],
+  "tags": [
+    "resume",
+    "continue",
+    "readiness"
+  ]
+}

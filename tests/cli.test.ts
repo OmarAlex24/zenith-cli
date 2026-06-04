@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createZenithApp } from "../src/app/factory";
-import { cleanupTempDir, makeTempDir, runDecode, runWithLegacyDecodeHome } from "./helpers";
+import { cleanupTempDir, makeTempDir, runCommand, runDecode } from "./helpers";
 
 const tempDirs: string[] = [];
 
@@ -15,14 +16,14 @@ afterEach(() => {
 describe("cli json commands", () => {
   test("init and status emit stable envelopes", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    const init = await runDecode(["init", "--json"], { cwd, decodeHome });
+    const init = await runDecode(["init", "--json"], { cwd, zenithHome });
     expect(init.exitCode).toBe(0);
     expect((init.json as any).ok).toBe(true);
 
-    const status = await runDecode(["project", "status", "--json"], { cwd, decodeHome });
+    const status = await runDecode(["project", "status", "--json"], { cwd, zenithHome });
     expect(status.exitCode).toBe(0);
     expect((status.json as any).data.registered).toBe(true);
     expect((status.json as any).meta.schemaVersion).toBe(1);
@@ -30,13 +31,13 @@ describe("cli json commands", () => {
 
   test("creates a plan from stdin and returns plan next", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Zenith MVP",
         phases: [{ title: "Foundation" }, { title: "TUI" }],
@@ -46,19 +47,19 @@ describe("cli json commands", () => {
     expect(created.exitCode).toBe(0);
     expect((created.json as any).data.title).toBe("Zenith MVP");
 
-    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     expect((next.json as any).data.recommendation).toBe("Foundation");
   });
 
   test("context, resume, and phase commands emit stable json", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Zenith CLI Roadmap",
         phases: [
@@ -73,27 +74,425 @@ describe("cli json commands", () => {
     });
     const phaseId = (created.json as any).data.phases[1].id;
 
-    const context = await runDecode(["context", "get", "--json", "--phase", phaseId], { cwd, decodeHome });
-    const compact = await runDecode(["context", "compact", "--json", "--phase", phaseId], { cwd, decodeHome });
-    const phase = await runDecode(["phase", "show", phaseId, "--json"], { cwd, decodeHome });
-    const resume = await runDecode(["resume", "--json"], { cwd, decodeHome });
+    const context = await runDecode(["context", "get", "--json", "--phase", phaseId], { cwd, zenithHome });
+    const compact = await runDecode(["context", "compact", "--json", "--phase", phaseId], { cwd, zenithHome });
+    const phase = await runDecode(["phase", "show", phaseId, "--json"], { cwd, zenithHome });
+    const resume = await runDecode(["resume", "--json"], { cwd, zenithHome });
 
     expect(context.exitCode).toBe(0);
     expect((context.json as any).data.selectedPhase.phase.id).toBe(phaseId);
     expect((compact.json as any).data.markdown).toContain("Context Engine v1");
     expect((phase.json as any).data.planTitle).toBe("Zenith CLI Roadmap");
     expect((resume.json as any).data.markdown).toContain("Zenith Resume");
+    expect((resume.json as any).data.readiness.status).toBe("ready");
+    expect((resume.json as any).data.roi.sourceEvents).toBeGreaterThan(0);
+  });
+
+  test("continue emits continuity read model without mutating sessions", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Continuity Plan",
+        phases: [{ title: "Resume command", status: "todo" }],
+      },
+    });
+    const phaseId = (created.json as any).data.phases[0].id;
+
+    const beforeSessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+    const result = await runDecode(["continue", "--json"], { cwd, zenithHome });
+    const human = await runRawZenith(["continue"], { cwd, zenithHome });
+    const afterSessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.markdown).toStartWith("# Zenith Continue");
+    expect((result.json as any).data.context.activePlan.title).toBe("Continuity Plan");
+    expect((result.json as any).data.phase.phase.id).toBe(phaseId);
+    expect((result.json as any).data.roi.sourceEvents).toBeGreaterThan(0);
+    expect((result.json as any).data.markdown).toContain("## ROI");
+    expect((result.json as any).data.newSession).toBeNull();
+    expect((result.json as any).data.closedSession).toBeNull();
+    expect((result.json as any).data.readiness.status).toBe("ready");
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toStartWith("# Zenith Continue");
+    expect(human.stdout).toContain("## ROI");
+    expect(human.stdout).not.toContain('"ok"');
+    expect(human.stdout).not.toContain('"data"');
+    expect(human.stdout).not.toContain('"meta"');
+    expect(() => JSON.parse(human.stdout)).toThrow();
+    expect((beforeSessions.json as any).data).toHaveLength(0);
+    expect((afterSessions.json as any).data).toHaveLength(0);
+  });
+
+  test("continue handles unregistered projects without mutating memory", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    const result = await runDecode(["continue", "--json"], { cwd, zenithHome });
+
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.context.project).toBeNull();
+    expect((result.json as any).data.next.recommendation).toBe("Run zenith init");
+    expect((result.json as any).data.warnings.join("\n")).toContain("Project is not registered");
+    expect((result.json as any).data.newSession).toBeNull();
+    expect((result.json as any).data.readiness.status).toBe("needs_cleanup");
+  });
+
+  test("continue includes roadmap create-plan candidate when no active plan exists", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Continuity Roadmap",
+        items: [{ title: "MVP 8", status: "todo" }],
+      },
+    });
+
+    const result = await runDecode(["continue", "--json"], { cwd, zenithHome });
+
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.next.kind).toBe("create_plan");
+    expect((result.json as any).data.roadmapItem.title).toBe("MVP 8");
+    expect((result.json as any).data.readiness.status).toBe("needs_plan");
+  });
+
+  test("continue readiness blocks on severe findings", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        type: "bug",
+        severity: "critical",
+        title: "Cannot resume safely",
+        description: "Critical finding should block continuity readiness.",
+        relatedFiles: [],
+      },
+    });
+
+    const result = await runDecode(["continue", "--json"], { cwd, zenithHome });
+
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.next.kind).toBe("blocking_finding");
+    expect((result.json as any).data.readiness.status).toBe("blocked");
+    expect((result.json as any).data.warnings.join("\n")).toContain("high or critical");
+  });
+
+  test("continue reports dirty worktree state", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+    await runCommand(["git", "init"], cwd);
+    writeFileSync(join(cwd, "README.md"), "dirty\n");
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const result = await runDecode(["continue", "--json"], { cwd, zenithHome });
+
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.context.git.dirty).toBe(true);
+    expect((result.json as any).data.context.git.changedFiles).toContain("README.md");
+    expect((result.json as any).data.readiness.status).toBe("needs_cleanup");
+  });
+
+  test("continue session flags mutate only when explicit", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Session Flag Plan",
+        phases: [{ title: "Work" }],
+      },
+    });
+    const opened = await runDecode(["session", "start", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        summary: "Already open",
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const openSessionId = (opened.json as any).data.id;
+
+    const noDuplicate = await runDecode(["continue", "--json", "--start-session"], { cwd, zenithHome });
+    const replaced = await runDecode(["continue", "--json", "--close-open-session", "--start-session", "--auto-capture"], {
+      cwd,
+      zenithHome,
+    });
+    const sessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+
+    expect(noDuplicate.exitCode).toBe(0);
+    expect((noDuplicate.json as any).data.newSession).toBeNull();
+    expect((noDuplicate.json as any).data.warnings.join("\n")).toContain("open session already exists");
+
+    expect(replaced.exitCode).toBe(0);
+    expect((replaced.json as any).data.closedSession.id).toBe(openSessionId);
+    expect((replaced.json as any).data.newSession.id).toBe((replaced.json as any).data.openSession.id);
+    expect((sessions.json as any).data).toHaveLength(2);
+    expect((sessions.json as any).data.filter((session: any) => !session.endedAt)).toHaveLength(1);
+  });
+
+  test("roi command reports deterministic context compression and supports since cursor", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "ROI Plan",
+        phases: [{ title: "Measure" }],
+      },
+    });
+    const cursorTimeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
+    const cursorId = (cursorTimeline.json as any).data[0].id as string;
+    await runDecode(["decision", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Measure ROI",
+        context: "Need deterministic continuity value.",
+        decision: "Estimate token compression from local memory records.",
+      },
+    });
+
+    const full = await runDecode(["roi", "--json"], { cwd, zenithHome });
+    const since = await runDecode(["roi", "--json", "--since", cursorId], { cwd, zenithHome });
+    const human = await runRawZenith(["roi"], { cwd, zenithHome });
+
+    expect(full.exitCode).toBe(0);
+    expect((full.json as any).data.sourceEvents).toBeGreaterThan(0);
+    expect((full.json as any).data.sourcePhases).toBe(1);
+    expect((full.json as any).data.compactTokens).toBeGreaterThan(0);
+    expect((full.json as any).data.compressionRatio).toBeGreaterThanOrEqual(0);
+    expect((full.json as any).data.continuitySignals).toContain("active_plan");
+
+    expect(since.exitCode).toBe(0);
+    expect((since.json as any).data.sourceEvents).toBeGreaterThan(0);
+    expect((since.json as any).data.sourceDecisions).toBe(1);
+
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain("Compression ratio:");
+  });
+
+  test("prompt command renders formats without mutating memory and omits metadata by default", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Prompt Plan",
+        phases: [{ title: "Prompt Phase", status: "in_progress", acceptanceCriteria: ["Prompt includes next step"] }],
+      },
+    });
+
+    const beforeSessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+    const markdown = await runDecode(["prompt", "--json"], { cwd, zenithHome });
+    const agent = await runDecode(["prompt", "--json", "--format", "agent"], { cwd, zenithHome });
+    const codex = await runDecode(["prompt", "--json", "--format", "codex"], { cwd, zenithHome });
+    const claude = await runDecode(["prompt", "--json", "--format", "claude", "--metadata"], { cwd, zenithHome });
+    const humanCodex = await runRawZenith(["prompt", "--format", "codex", "--max-tokens", "800"], { cwd, zenithHome });
+    const afterSessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+
+    expect(markdown.exitCode).toBe(0);
+    expect((markdown.json as any).data.format).toBe("markdown");
+    expect((markdown.json as any).data.content).toContain("# Zenith Prompt (markdown)");
+    expect((markdown.json as any).data.content).toContain("## Next Step");
+    expect((markdown.json as any).data.metadata).toBeUndefined();
+
+    expect((agent.json as any).data.format).toBe("agent");
+    expect((agent.json as any).data.content).toContain("implementation agent");
+    expect((codex.json as any).data.format).toBe("codex");
+    expect((codex.json as any).data.content).toContain("You are Codex");
+    expect((claude.json as any).data.format).toBe("claude");
+    expect((claude.json as any).data.content).toContain("You are Claude Code");
+    expect((claude.json as any).data.content).toContain("## Metadata");
+    expect((claude.json as any).data.metadata.readinessStatus).toBe("ready");
+    expect(humanCodex.exitCode).toBe(0);
+    expect(humanCodex.stdout).toStartWith("# Zenith Prompt (codex)");
+    expect(humanCodex.stdout).toContain("You are Codex");
+    expect(humanCodex.stdout).not.toContain('"ok"');
+    expect(humanCodex.stdout).not.toContain('"data"');
+    expect(humanCodex.stdout).not.toContain('"meta"');
+    expect(() => JSON.parse(humanCodex.stdout)).toThrow();
+
+    expect((beforeSessions.json as any).data).toHaveLength(0);
+    expect((afterSessions.json as any).data).toHaveLength(0);
+  });
+
+  test("prompt truncation keeps high-priority next and phase sections before lower-priority context", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Truncated Prompt Plan",
+        phases: [{ title: "Keep Me", status: "in_progress", description: "This phase must survive truncation." }],
+      },
+    });
+
+    const result = await runDecode(["prompt", "--json", "--format", "codex", "--max-tokens", "120"], { cwd, zenithHome });
+    const sections = (result.json as any).data.sections as Array<{ id: string; included: boolean }>;
+
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).data.truncated).toBe(true);
+    expect(sections.find((section) => section.id === "next")?.included).toBe(true);
+    expect(sections.find((section) => section.id === "phase")?.included).toBe(true);
+    expect(sections.find((section) => section.id === "compact-context")?.included).toBe(false);
+    expect((result.json as any).data.content).toContain("## Next Step");
+    expect((result.json as any).data.content).toContain("## Phase");
+    expect((result.json as any).data.content).not.toContain("## Compact Context");
+  });
+
+  test("prompt returns stable errors for invalid format and token options", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+
+    const invalidFormat = await runDecode(["prompt", "--json", "--format", "xml"], { cwd, zenithHome });
+    const invalidTokens = await runDecode(["prompt", "--json", "--max-tokens", "0"], { cwd, zenithHome });
+
+    expect(invalidFormat.exitCode).toBe(1);
+    expect((invalidFormat.json as any).errors[0].code).toBe("invalid_option");
+    expect((invalidFormat.json as any).errors[0].details.optionName).toBe("format");
+    expect(invalidTokens.exitCode).toBe(1);
+    expect((invalidTokens.json as any).errors[0].code).toBe("invalid_option");
+    expect((invalidTokens.json as any).errors[0].details.optionName).toBe("max-tokens");
+  });
+
+  test("benchmark CLI lists scenarios, exports tasks, records runs, compares variants, and rejects transcripts", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    const list = await runDecode(["benchmark", "list", "--json"], { cwd, zenithHome });
+    const task = await runDecode(["benchmark", "task", "continue-resume", "--variant", "prompt", "--json"], { cwd, zenithHome });
+    const recordedPrompt = await runDecode(["benchmark", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        scenarioId: "continue-resume",
+        variant: "prompt",
+        score: 4,
+        metrics: {
+          identified_next_step: true,
+          continuity_score: 4,
+        },
+      },
+    });
+    const recordedManual = await runDecode(["benchmark", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        scenarioId: "continue-resume",
+        variant: "manual_handoff",
+        score: 3,
+        metrics: {
+          identified_next_step: false,
+          continuity_score: 3,
+        },
+      },
+    });
+    const runs = await runDecode(["benchmark", "runs", "--json"], { cwd, zenithHome });
+    const compare = await runDecode(["benchmark", "compare", "--scenario", "continue-resume", "--json"], { cwd, zenithHome });
+    const forbidden = await runDecode(["benchmark", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        scenarioId: "continue-resume",
+        variant: "prompt",
+        transcript: "full model output must not be stored",
+      },
+    });
+
+    const runsPath = join(zenithHome, "benchmarks", "runs.json");
+    const stored = JSON.parse(readFileSync(runsPath, "utf8")) as any;
+
+    expect(list.exitCode).toBe(0);
+    expect((list.json as any).data.map((scenario: any) => scenario.id)).toEqual(["continue-resume", "phase-execution", "review-handoff"]);
+    expect(task.exitCode).toBe(0);
+    expect((task.json as any).data.content).toContain("# Zenith Benchmark Task: Resume From Continuity Context");
+    expect((task.json as any).data.content).toContain("## Privacy Rules");
+    expect((recordedPrompt.json as any).data.id).toStartWith("bench_");
+    expect((recordedManual.json as any).data.variant).toBe("manual_handoff");
+    expect((runs.json as any).data).toHaveLength(2);
+    expect((compare.json as any).data.totalRuns).toBe(2);
+    expect((compare.json as any).data.variants.find((variant: any) => variant.variant === "prompt").averageScore).toBe(4);
+    expect((compare.json as any).data.variants.find((variant: any) => variant.variant === "manual_handoff").averageScore).toBe(3);
+    expect(existsSync(runsPath)).toBe(true);
+    expect(stored.runs).toHaveLength(2);
+    expect(JSON.stringify(stored)).not.toContain("full model output");
+    expect(forbidden.exitCode).toBe(1);
+    expect((forbidden.json as any).errors[0].code).toBe("benchmark_forbidden_field");
+    expect((forbidden.json as any).errors[0].details.fields).toEqual(["transcript"]);
+  });
+
+  test("demo CLI lists and shows read-only onboarding guides", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    const list = await runDecode(["demo", "list", "--json"], { cwd, zenithHome });
+    const guide = await runDecode(["demo", "show", "continuity", "--json"], { cwd, zenithHome });
+    const missing = await runDecode(["demo", "show", "missing", "--json"], { cwd, zenithHome });
+
+    expect(list.exitCode).toBe(0);
+    expect((list.json as any).data.map((entry: any) => entry.id)).toEqual(["continuity", "daily-loop", "benchmark-proof"]);
+    expect((list.json as any).data[0].durationMinutes).toBe(5);
+    expect((guide.json as any).data.markdown).toContain("# Five-Minute Continuity Demo");
+    expect((guide.json as any).data.markdown).toContain("## Privacy And Storage");
+    expect((guide.json as any).data.markdown).toContain("bun run zenith continue");
+    expect((guide.json as any).data.markdown).toContain("bun run zenith prompt --format codex --max-tokens 800");
+    expect((guide.json as any).data.markdown).not.toContain("bun run zenith continue --json");
+    expect((guide.json as any).data.markdown).not.toContain("bun run zenith prompt --format codex --max-tokens 1200 --json");
+    expect((guide.json as any).data.privacy.join("\n")).toContain("stores project memory locally");
+    expect((guide.json as any).data.steps.map((step: any) => step.title)).toContain("Check benchmark proof");
+    expect(missing.exitCode).toBe(1);
+    expect((missing.json as any).errors[0].code).toBe("demo_not_found");
+    expect((missing.json as any).errors[0].details).toEqual({ demoId: "missing" });
+    expect(existsSync(join(zenithHome, "benchmarks"))).toBe(false);
   });
 
   test("updates plan metadata from stdin", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Old roadmap",
         phases: [{ title: "Foundation" }],
@@ -102,7 +501,7 @@ describe("cli json commands", () => {
 
     const updated = await runDecode(["plan", "update", (created.json as any).data.id, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Zenith CLI Roadmap",
         description: "Renamed roadmap",
@@ -122,13 +521,13 @@ describe("cli json commands", () => {
 
   test("plan create and update reject a second active plan", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const active = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Active roadmap",
         phases: [{ title: "Foundation" }],
@@ -138,7 +537,7 @@ describe("cli json commands", () => {
 
     const duplicateActive = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Competing roadmap",
         phases: [{ title: "Discovery" }],
@@ -154,7 +553,7 @@ describe("cli json commands", () => {
 
     const paused = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Paused roadmap",
         status: "paused",
@@ -164,7 +563,7 @@ describe("cli json commands", () => {
     const pausedPlanId = (paused.json as any).data.id;
     const activatePaused = await runDecode(["plan", "update", pausedPlanId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         status: "active",
       },
@@ -181,13 +580,13 @@ describe("cli json commands", () => {
 
   test("roadmap items can become active executable plans", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Zenith CLI Product Roadmap",
         items: [
@@ -200,7 +599,7 @@ describe("cli json commands", () => {
 
     const added = await runDecode(["roadmap", "add-item", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "MVP 4.5 - Product And Architecture Hardening",
         description: "Harden product workflow and architecture before advanced skills.",
@@ -213,7 +612,7 @@ describe("cli json commands", () => {
     const itemId = (added.json as any).data.items[1].id as string;
     const missingJustification = await runDecode(["roadmap", "add-item", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "MVP 4.75 - Missing Justification",
         afterItemTitle: "MVP 4.5 - Product And Architecture Hardening",
@@ -221,7 +620,7 @@ describe("cli json commands", () => {
     });
     const deferred = await runDecode(["roadmap", "update-item", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         itemTitle: "MVP 5 - PR Review Skill",
         status: "deferred",
@@ -231,7 +630,7 @@ describe("cli json commands", () => {
 
     const createdPlan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         itemId,
         title: "Zenith Product And Architecture Hardening",
@@ -244,10 +643,10 @@ describe("cli json commands", () => {
         ],
       },
     });
-    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     const duplicate = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId },
     });
 
@@ -276,13 +675,13 @@ describe("cli json commands", () => {
 
   test("discarded roadmap items stay visible but cannot become plans", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Zenith CLI Product Roadmap",
         items: [{ title: "MVP 6 - Agent Backends", status: "deferred" }],
@@ -293,17 +692,17 @@ describe("cli json commands", () => {
 
     const discarded = await runDecode(["roadmap", "update-item", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         itemId,
         status: "discarded",
         justification: "Wake-on-event choreography replaces provider CLI spawning.",
       },
     });
-    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     const createPlan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId },
     });
 
@@ -316,13 +715,13 @@ describe("cli json commands", () => {
 
   test("decision list and show return project decisions", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const recorded = await runDecode(["decision", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Use local SQLite",
         context: "Zenith needs private project memory.",
@@ -334,8 +733,8 @@ describe("cli json commands", () => {
     });
     const decisionId = (recorded.json as any).data.id;
 
-    const list = await runDecode(["decision", "list", "--json"], { cwd, decodeHome });
-    const show = await runDecode(["decision", "show", decisionId, "--json"], { cwd, decodeHome });
+    const list = await runDecode(["decision", "list", "--json"], { cwd, zenithHome });
+    const show = await runDecode(["decision", "show", decisionId, "--json"], { cwd, zenithHome });
 
     expect(list.exitCode).toBe(0);
     expect((list.json as any).data).toHaveLength(1);
@@ -352,19 +751,19 @@ describe("cli json commands", () => {
 
   test("decision browsing returns stable error envelopes", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    const unregisteredList = await runDecode(["decision", "list", "--json"], { cwd, decodeHome });
-    const unregisteredShow = await runDecode(["decision", "show", "dec_missing", "--json"], { cwd, decodeHome });
+    const unregisteredList = await runDecode(["decision", "list", "--json"], { cwd, zenithHome });
+    const unregisteredShow = await runDecode(["decision", "show", "dec_missing", "--json"], { cwd, zenithHome });
 
     expect(unregisteredList.exitCode).toBe(1);
     expect((unregisteredList.json as any).errors[0].code).toBe("project_not_registered");
     expect(unregisteredShow.exitCode).toBe(1);
     expect((unregisteredShow.json as any).errors[0].code).toBe("project_not_registered");
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
-    const missing = await runDecode(["decision", "show", "dec_missing", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const missing = await runDecode(["decision", "show", "dec_missing", "--json"], { cwd, zenithHome });
 
     expect(missing.exitCode).toBe(1);
     expect((missing.json as any).errors[0].code).toBe("decision_not_found");
@@ -373,22 +772,22 @@ describe("cli json commands", () => {
 
   test("finding record list and close emit stable json", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    const unregisteredList = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
+    const unregisteredList = await runDecode(["finding", "list", "--json"], { cwd, zenithHome });
     expect(unregisteredList.exitCode).toBe(1);
     expect((unregisteredList.json as any).errors[0].code).toBe("project_not_registered");
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
-    const missing = await runDecode(["finding", "close", "finding_missing", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const missing = await runDecode(["finding", "close", "finding_missing", "--json"], { cwd, zenithHome });
     expect(missing.exitCode).toBe(1);
     expect((missing.json as any).errors[0].code).toBe("finding_not_found");
     expect((missing.json as any).errors[0].details).toEqual({ findingId: "finding_missing" });
 
     const recorded = await runDecode(["finding", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         type: "risk",
         severity: "high",
@@ -399,22 +798,22 @@ describe("cli json commands", () => {
     });
     const findingId = (recorded.json as any).data.id;
 
-    const list = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
-    const shown = await runDecode(["finding", "show", findingId, "--json"], { cwd, decodeHome });
+    const list = await runDecode(["finding", "list", "--json"], { cwd, zenithHome });
+    const shown = await runDecode(["finding", "show", findingId, "--json"], { cwd, zenithHome });
     const updated = await runDecode(["finding", "update", findingId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         severity: "medium",
         title: "Updated operational risk",
         relatedFiles: ["src/app/plan-next.ts", "src/cli/program.ts"],
       },
     });
-    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
-    const closed = await runDecode(["finding", "close", findingId, "--json"], { cwd, decodeHome });
-    const afterClose = await runDecode(["finding", "list", "--json"], { cwd, decodeHome });
-    const closedList = await runDecode(["finding", "list", "--status", "closed", "--json"], { cwd, decodeHome });
-    const allList = await runDecode(["finding", "list", "--status", "all", "--json"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
+    const closed = await runDecode(["finding", "close", findingId, "--json"], { cwd, zenithHome });
+    const afterClose = await runDecode(["finding", "list", "--json"], { cwd, zenithHome });
+    const closedList = await runDecode(["finding", "list", "--status", "closed", "--json"], { cwd, zenithHome });
+    const allList = await runDecode(["finding", "list", "--status", "all", "--json"], { cwd, zenithHome });
 
     expect(recorded.exitCode).toBe(0);
     expect((recorded.json as any).data.status).toBe("open");
@@ -433,13 +832,13 @@ describe("cli json commands", () => {
 
   test("finding record with relatedPlanId links plan and show returns it", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const createdPlan = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Linked Plan",
         phases: [{ title: "Phase One" }],
@@ -450,7 +849,7 @@ describe("cli json commands", () => {
 
     const recorded = await runDecode(["finding", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         type: "risk",
         severity: "medium",
@@ -463,20 +862,20 @@ describe("cli json commands", () => {
     expect((recorded.json as any).data.relatedPlanId).toBe(planId);
 
     const findingId = (recorded.json as any).data.id;
-    const shown = await runDecode(["finding", "show", findingId, "--json"], { cwd, decodeHome });
+    const shown = await runDecode(["finding", "show", findingId, "--json"], { cwd, zenithHome });
     expect(shown.exitCode).toBe(0);
     expect((shown.json as any).data.relatedPlanId).toBe(planId);
   });
 
   test("finding record with non-existent relatedPlanId returns plan_not_found error", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const recorded = await runDecode(["finding", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         type: "bug",
         severity: "low",
@@ -491,13 +890,13 @@ describe("cli json commands", () => {
 
   test("memory tag set list and search emit stable json", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Searchable Release Plan",
         phases: [
@@ -512,26 +911,26 @@ describe("cli json commands", () => {
 
     const tagged = await runDecode(["tag", "set", "plan", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { tags: ["Release Notes", "OSS", "release-notes"] },
     });
-    const listed = await runDecode(["tag", "list", "--json", "--tag", "Release Notes"], { cwd, decodeHome });
+    const listed = await runDecode(["tag", "list", "--json", "--tag", "Release Notes"], { cwd, zenithHome });
     const planSearch = await runDecode(["search", "--json", "--query", "searchable release", "--entity-type", "plan"], {
       cwd,
-      decodeHome,
+      zenithHome,
     });
     const taggedSearch = await runDecode(["search", "--json", "--query", "searchable", "--tag", "oss", "--limit", "1"], {
       cwd,
-      decodeHome,
+      zenithHome,
     });
     const invalidEntity = await runDecode(["tag", "set", "plan", "plan_missing", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { tags: ["missing"] },
     });
     const invalidTag = await runDecode(["tag", "set", "plan", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { tags: ["!!!"] },
     });
 
@@ -553,21 +952,21 @@ describe("cli json commands", () => {
 
   test("session start capture end and summarize emit stable json", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
     const unregisteredStart = await runDecode(["session", "start", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {},
     });
     expect(unregisteredStart.exitCode).toBe(1);
     expect((unregisteredStart.json as any).errors[0].code).toBe("project_not_registered");
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const missingCapture = await runDecode(["session", "capture", "sess_missing", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { summary: "No session exists." },
     });
     expect(missingCapture.exitCode).toBe(1);
@@ -576,7 +975,7 @@ describe("cli json commands", () => {
 
     const started = await runDecode(["session", "start", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         summary: "Started lifecycle work.",
         changedFiles: ["src/domain/schemas.ts"],
@@ -587,7 +986,7 @@ describe("cli json commands", () => {
 
     const captured = await runDecode(["session", "capture", sessionId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         summary: "Captured lifecycle progress.",
         nextSteps: ["End session"],
@@ -596,7 +995,7 @@ describe("cli json commands", () => {
 
     const ended = await runDecode(["session", "end", sessionId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         summary: "Finished lifecycle work.",
         changedFiles: ["src/domain/schemas.ts", "src/cli/program.ts"],
@@ -607,14 +1006,14 @@ describe("cli json commands", () => {
 
     const summarized = await runDecode(["session", "summarize", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         summary: "Compatibility summary still works.",
         changedFiles: ["README.md"],
       },
     });
-    const sessionList = await runDecode(["session", "list", "--json"], { cwd, decodeHome });
-    const sessionShow = await runDecode(["session", "show", sessionId, "--json"], { cwd, decodeHome });
+    const sessionList = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+    const sessionShow = await runDecode(["session", "show", sessionId, "--json"], { cwd, zenithHome });
 
     expect(started.exitCode).toBe(0);
     expect((started.json as any).data.endedAt).toBeUndefined();
@@ -630,13 +1029,182 @@ describe("cli json commands", () => {
     expect((sessionShow.json as any).data.id).toBe(sessionId);
   });
 
+  test("low-friction capture wrappers record checkpoints, notes, and decisions", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Wrapper Plan",
+        phases: [{ title: "Capture" }],
+      },
+    });
+    const planId = (plan.json as any).data.id as string;
+
+    const checkpoint = await runDecode(["checkpoint", "Reached a useful state", "--next", "Run tests", "--plan", planId, "--json"], {
+      cwd,
+      zenithHome,
+    });
+    const note = await runDecode(["note", "Remember to update generated skills", "--json"], { cwd, zenithHome });
+    const decision = await runDecode(
+      [
+        "decide",
+        "Use explicit wrappers",
+        "--context",
+        "Nested commands are verbose for frequent capture.",
+        "--decision",
+        "Expose top-level wrapper commands.",
+        "--alternative",
+        "Keep only nested commands.",
+        "--plan",
+        planId,
+        "--json",
+      ],
+      { cwd, zenithHome },
+    );
+    const sessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+
+    expect(checkpoint.exitCode).toBe(0);
+    expect((checkpoint.json as any).data.summary).toBe("Reached a useful state");
+    expect((checkpoint.json as any).data.nextSteps).toEqual(["Run tests"]);
+    expect((checkpoint.json as any).data.relatedPlanId).toBe(planId);
+    expect(typeof (checkpoint.json as any).data.endedAt).toBe("string");
+
+    expect(note.exitCode).toBe(0);
+    expect((note.json as any).data.summary).toBe("Remember to update generated skills");
+    expect(typeof (note.json as any).data.endedAt).toBe("string");
+
+    expect(decision.exitCode).toBe(0);
+    expect((decision.json as any).data.title).toBe("Use explicit wrappers");
+    expect((decision.json as any).data.relatedPlanIds).toEqual([planId]);
+    expect((decision.json as any).data.alternatives).toEqual(["Keep only nested commands."]);
+
+    expect((sessions.json as any).data).toHaveLength(2);
+  });
+
+  test("done and blocked wrappers advance phases and close findings", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "State Wrapper Plan",
+        phases: [
+          { title: "Implement", status: "in_progress" },
+          { title: "Verify", status: "todo" },
+        ],
+      },
+    });
+    const planId = (plan.json as any).data.id as string;
+    const implementPhaseId = (plan.json as any).data.phases[0].id as string;
+    const verifyPhaseId = (plan.json as any).data.phases[1].id as string;
+
+    const done = await runDecode(["done", "--evidence", "Implementation verified", "--json"], { cwd, zenithHome });
+    const blockedFinding = await runDecode(
+      [
+        "blocked",
+        "External API unavailable",
+        "--description",
+        "Cannot verify until the API fixture is available.",
+        "--phase",
+        verifyPhaseId,
+        "--plan",
+        planId,
+        "--file",
+        "src/index.ts",
+        "--json",
+      ],
+      { cwd, zenithHome },
+    );
+    const findingId = (blockedFinding.json as any).data.finding.id as string;
+    const closedFinding = await runDecode(["done", "--finding", findingId, "--json"], { cwd, zenithHome });
+    const blockedPhase = await runDecode(["blocked", "--mark-phase", verifyPhaseId, "--plan", planId, "--evidence", "Waiting", "--json"], {
+      cwd,
+      zenithHome,
+    });
+    const phase = await runDecode(["phase", "show", verifyPhaseId, "--json"], { cwd, zenithHome });
+
+    expect(done.exitCode).toBe(0);
+    expect((done.json as any).data.kind).toBe("phase");
+    expect((done.json as any).data.result.completed).toEqual({ phaseId: implementPhaseId, status: "done" });
+
+    expect(blockedFinding.exitCode).toBe(0);
+    expect((blockedFinding.json as any).data.kind).toBe("finding");
+    expect((blockedFinding.json as any).data.finding.severity).toBe("high");
+    expect((blockedFinding.json as any).data.finding.relatedPlanId).toBe(planId);
+    expect((blockedFinding.json as any).data.finding.relatedPhaseId).toBe(verifyPhaseId);
+    expect((blockedFinding.json as any).data.finding.relatedFiles).toEqual(["src/index.ts"]);
+
+    expect(closedFinding.exitCode).toBe(0);
+    expect((closedFinding.json as any).data.kind).toBe("finding");
+    expect((closedFinding.json as any).data.finding.status).toBe("closed");
+
+    expect(blockedPhase.exitCode).toBe(0);
+    expect((blockedPhase.json as any).data.kind).toBe("phase");
+    expect((blockedPhase.json as any).data.result.completed).toEqual({ phaseId: verifyPhaseId, status: "blocked" });
+    expect((phase.json as any).data.phase.status).toBe("blocked");
+  });
+
+  test("done reports exact suggested commands when current phase is ambiguous", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+
+    const roadmapA = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Wrapper Alpha", items: [{ title: "Alpha Item", status: "in_progress" }] },
+    });
+    const roadmapAId = (roadmapA.json as any).data.id as string;
+    const roadmapB = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Wrapper Beta", items: [{ title: "Beta Item", status: "in_progress" }] },
+    });
+    const roadmapBId = (roadmapB.json as any).data.id as string;
+
+    const planA = await runDecode(["roadmap", "create-plan", roadmapAId, "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { itemTitle: "Alpha Item", phases: [{ title: "Alpha Phase", status: "in_progress" }] },
+    });
+    const planB = await runDecode(["roadmap", "create-plan", roadmapBId, "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { itemTitle: "Beta Item", phases: [{ title: "Beta Phase", status: "in_progress" }] },
+    });
+    const planAId = (planA.json as any).data.id as string;
+    const planBId = (planB.json as any).data.id as string;
+    const phaseAId = (planA.json as any).data.phases[0].id as string;
+    const phaseBId = (planB.json as any).data.phases[0].id as string;
+
+    const result = await runDecode(["done", "--json"], { cwd, zenithHome });
+
+    expect(result.exitCode).toBe(1);
+    expect((result.json as any).errors[0].code).toBe("ambiguous_current_phase");
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith focus set ${roadmapAId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith focus set ${roadmapBId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith done --plan ${planAId} --phase ${phaseAId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith done --plan ${planBId} --phase ${phaseBId}`);
+  });
+
   test("phase show returns phase_not_found for unknown ids", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
-    const missing = await runDecode(["phase", "show", "phase_missing", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const missing = await runDecode(["phase", "show", "phase_missing", "--json"], { cwd, zenithHome });
 
     expect(missing.exitCode).toBe(1);
     expect((missing.json as any).errors[0].code).toBe("phase_not_found");
@@ -659,19 +1227,6 @@ describe("cli json commands", () => {
     expect(stdout).toContain("zenith");
     expect(stdout).toContain("Zenith");
     expect(stdout).not.toContain("Decode");
-  });
-
-  test("DECODE_HOME remains a legacy compatibility alias", async () => {
-    const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
-
-    const init = await runWithLegacyDecodeHome(["init", "--json"], { cwd, decodeHome });
-    const status = await runWithLegacyDecodeHome(["project", "status", "--json"], { cwd, decodeHome });
-
-    expect(init.exitCode).toBe(0);
-    expect(status.exitCode).toBe(0);
-    expect((status.json as any).data.registered).toBe(true);
   });
 
   test("invalid stdin json returns an error envelope", async () => {
@@ -699,12 +1254,12 @@ describe("cli json commands", () => {
 
   test("timeline --json returns ok envelope with array", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
 
-    const result = await runDecode(["timeline", "--json"], { cwd, decodeHome });
+    const result = await runDecode(["timeline", "--json"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).ok).toBe(true);
     expect(Array.isArray((result.json as any).data)).toBe(true);
@@ -714,13 +1269,13 @@ describe("cli json commands", () => {
 
   test("plan update-phase dependency graph validation", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Dep Graph Plan",
         phases: [{ title: "Phase A" }, { title: "Phase B" }],
@@ -735,7 +1290,7 @@ describe("cli json commands", () => {
     // Setting A dependsOn B should succeed
     const setDepAonB = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { phaseId: phaseAId, dependsOn: [phaseBId] },
     });
     expect(setDepAonB.exitCode).toBe(0);
@@ -744,7 +1299,7 @@ describe("cli json commands", () => {
     // Setting B dependsOn A creates a cycle → dependency_cycle error
     const cyclicDep = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { phaseId: phaseBId, dependsOn: [phaseAId] },
     });
     expect(cyclicDep.exitCode).toBe(1);
@@ -753,7 +1308,7 @@ describe("cli json commands", () => {
     // Self-dependency → dependency_self error
     const selfDep = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { phaseId: phaseAId, dependsOn: [phaseAId] },
     });
     expect(selfDep.exitCode).toBe(1);
@@ -762,7 +1317,7 @@ describe("cli json commands", () => {
     // Non-existent phase id → dependency_unknown_phase error
     const unknownDep = await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { phaseId: phaseAId, dependsOn: ["phase_does_not_exist"] },
     });
     expect(unknownDep.exitCode).toBe(1);
@@ -771,46 +1326,46 @@ describe("cli json commands", () => {
 
   test("timeline --limit 1 returns at most 1 entry", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     // Create an extra event
     await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Timeline Test Plan", phases: [{ title: "Phase 1" }] },
     });
 
-    const result = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, decodeHome });
+    const result = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).data).toHaveLength(1);
   });
 
   test("parallel roadmaps each keep an active plan and focus resolves which to implement", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
 
     const roadmapA = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Roadmap Alpha", items: [{ title: "Alpha Item", status: "in_progress" }] },
     });
     const roadmapAId = (roadmapA.json as any).data.id as string;
 
     const roadmapB = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Roadmap Beta", items: [{ title: "Beta Item", status: "in_progress" }] },
     });
     const roadmapBId = (roadmapB.json as any).data.id as string;
 
     const planA = await runDecode(["roadmap", "create-plan", roadmapAId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemTitle: "Alpha Item", phases: [{ title: "Alpha Phase", status: "in_progress" }] },
     });
     expect(planA.exitCode).toBe(0);
@@ -818,54 +1373,57 @@ describe("cli json commands", () => {
     // A second active plan for a different roadmap is allowed.
     const planB = await runDecode(["roadmap", "create-plan", roadmapBId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemTitle: "Beta Item", phases: [{ title: "Beta Phase", status: "in_progress" }] },
     });
     expect(planB.exitCode).toBe(0);
 
     // Without focus, plan next is ambiguous.
-    const ambiguous = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const ambiguous = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     expect((ambiguous.json as any).data.recommendation).toContain("Set roadmap focus");
+    const ambiguousContinue = await runDecode(["continue", "--json"], { cwd, zenithHome });
+    expect((ambiguousContinue.json as any).data.next.kind).toBe("ambiguous_focus");
+    expect((ambiguousContinue.json as any).data.readiness.status).toBe("ambiguous");
 
     // Binding the worktree to Roadmap Alpha resolves the active plan.
-    const setFocus = await runDecode(["focus", "set", roadmapAId, "--json"], { cwd, decodeHome });
+    const setFocus = await runDecode(["focus", "set", roadmapAId, "--json"], { cwd, zenithHome });
     expect(setFocus.exitCode).toBe(0);
     expect((setFocus.json as any).data.focus.roadmapId).toBe(roadmapAId);
 
-    const focused = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const focused = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     expect((focused.json as any).data.recommendation).toBe("Alpha Phase");
 
-    const show = await runDecode(["focus", "show", "--json"], { cwd, decodeHome });
+    const show = await runDecode(["focus", "show", "--json"], { cwd, zenithHome });
     expect((show.json as any).data.focus.roadmapId).toBe(roadmapAId);
     expect((show.json as any).data.activePlan.title).toContain("Alpha");
 
     // Clearing focus restores ambiguity.
-    const cleared = await runDecode(["focus", "clear", "--json"], { cwd, decodeHome });
+    const cleared = await runDecode(["focus", "clear", "--json"], { cwd, zenithHome });
     expect((cleared.json as any).data.focus).toBeNull();
-    const ambiguousAgain = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const ambiguousAgain = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     expect((ambiguousAgain.json as any).data.recommendation).toContain("Set roadmap focus");
   });
 
   test("roadmap workspace lists groups with linked plans and rollups", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Workspace Roadmap", items: [{ title: "WS Item", status: "in_progress" }] },
     });
     const roadmapId = (roadmap.json as any).data.id as string;
 
     await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemTitle: "WS Item", phases: [{ title: "WS Phase", status: "done" }] },
     });
 
-    const workspace = await runDecode(["roadmap", "workspace", "--json"], { cwd, decodeHome });
+    const workspace = await runDecode(["roadmap", "workspace", "--json"], { cwd, zenithHome });
     expect(workspace.exitCode).toBe(0);
     const group = (workspace.json as any).data.groups.find((g: any) => g.roadmapId === roadmapId);
     expect(group.title).toBe("Workspace Roadmap");
@@ -876,13 +1434,13 @@ describe("cli json commands", () => {
 
   test("stage set and watch support scoped wake-on-event predicates", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Choreography Plan",
         phases: [{ title: "Implement" }],
@@ -893,7 +1451,7 @@ describe("cli json commands", () => {
 
     const stage = await runDecode(["stage", "set", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         phaseId,
         stage: "review",
@@ -903,9 +1461,9 @@ describe("cli json commands", () => {
     });
     const watch = await runDecode(
       ["watch", "--until", `stage=review,plan=${planId},phase=${phaseId}`, "--timeout", "100", "--poll-interval", "1", "--json"],
-      { cwd, decodeHome },
+      { cwd, zenithHome },
     );
-    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
 
     expect(stage.exitCode).toBe(0);
     expect((stage.json as any).data.planId).toBe(planId);
@@ -919,17 +1477,17 @@ describe("cli json commands", () => {
 
   test("watch returns stable timeout and invalid predicate errors", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const timeout = await runDecode(["watch", "--until", "stage=review", "--timeout", "1", "--poll-interval", "1", "--json"], {
       cwd,
-      decodeHome,
+      zenithHome,
     });
     const invalid = await runDecode(["watch", "--until", "stage=bogus", "--timeout", "1", "--poll-interval", "1", "--json"], {
       cwd,
-      decodeHome,
+      zenithHome,
     });
 
     expect(timeout.exitCode).toBe(2);
@@ -945,19 +1503,19 @@ describe("cli json commands", () => {
 
   test("plan complete fails with plan_has_open_phases when phases are not done", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Incomplete Plan", phases: [{ title: "Phase A" }, { title: "Phase B", status: "done" }] },
     });
     const planId = (created.json as any).data.id;
     const openPhaseId = (created.json as any).data.phases[0].id;
 
-    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, zenithHome });
     expect(result.exitCode).toBe(1);
     expect((result.json as any).errors[0].code).toBe("plan_has_open_phases");
     expect((result.json as any).errors[0].details.openPhaseIds).toContain(openPhaseId);
@@ -965,18 +1523,18 @@ describe("cli json commands", () => {
 
   test("plan complete succeeds when all phases are done and emits stable envelope", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Completable Plan", phases: [{ title: "Phase A", status: "done" }] },
     });
     const planId = (created.json as any).data.id;
 
-    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).ok).toBe(true);
     expect((result.json as any).meta.schemaVersion).toBe(1);
@@ -986,13 +1544,13 @@ describe("cli json commands", () => {
 
   test("plan complete via roadmap advances roadmap item to done", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Complete Roadmap", items: [{ title: "Item A", status: "todo" }] },
     });
     const roadmapId = (roadmap.json as any).data.id;
@@ -1000,24 +1558,24 @@ describe("cli json commands", () => {
 
     const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId, phases: [{ title: "Phase A", status: "done" }] },
     });
     expect(plan.exitCode).toBe(0);
     const planId = (plan.json as any).data.id;
 
     // Verify companion fix: item is now in_progress
-    const roadmapAfterCreate = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    const roadmapAfterCreate = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, zenithHome });
     expect((roadmapAfterCreate.json as any).data.items[0].status).toBe("in_progress");
 
-    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    const result = await runDecode(["plan", "complete", planId, "--json"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).data.plan.status).toBe("completed");
     expect((result.json as any).data.roadmapItemAdvanced.roadmapId).toBe(roadmapId);
     expect((result.json as any).data.roadmapItemAdvanced.itemId).toBe(itemId);
 
     // Verify roadmap item is now done
-    const roadmapAfterComplete = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    const roadmapAfterComplete = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, zenithHome });
     expect((roadmapAfterComplete.json as any).data.items[0].status).toBe("done");
   });
 
@@ -1027,13 +1585,13 @@ describe("cli json commands", () => {
 
   test("roadmap create-plan flips todo item to in_progress when plan is active", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Flip Roadmap", items: [{ title: "Todo Item", status: "todo" }] },
     });
     const roadmapId = (roadmap.json as any).data.id;
@@ -1041,24 +1599,24 @@ describe("cli json commands", () => {
 
     const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId, phases: [{ title: "Phase A" }] },
     });
     expect(plan.exitCode).toBe(0);
 
-    const roadmapAfter = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    const roadmapAfter = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, zenithHome });
     expect((roadmapAfter.json as any).data.items[0].status).toBe("in_progress");
   });
 
   test("roadmap create-plan does NOT flip item that is already in_progress", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Already Active Roadmap", items: [{ title: "Active Item", status: "in_progress" }] },
     });
     const roadmapId = (roadmap.json as any).data.id;
@@ -1066,12 +1624,12 @@ describe("cli json commands", () => {
 
     const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId, phases: [{ title: "Phase A" }] },
     });
     expect(plan.exitCode).toBe(0);
 
-    const roadmapAfter = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, decodeHome });
+    const roadmapAfter = await runDecode(["roadmap", "show", roadmapId, "--json"], { cwd, zenithHome });
     // Still in_progress, not mutated by the flip logic
     expect((roadmapAfter.json as any).data.items[0].status).toBe("in_progress");
   });
@@ -1082,13 +1640,13 @@ describe("cli json commands", () => {
 
   test("plan advance marks phase done and recomputes next step", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Advance Plan", phases: [{ title: "Phase A" }, { title: "Phase B" }] },
     });
     const planId = (created.json as any).data.id;
@@ -1096,7 +1654,7 @@ describe("cli json commands", () => {
 
     const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { planId, completedPhaseId: phaseAId, evidence: [{ kind: "note", value: "Phase A done!" }] },
     });
     expect(result.exitCode).toBe(0);
@@ -1111,13 +1669,13 @@ describe("cli json commands", () => {
 
   test("plan advance auto-completes plan when last phase is finished", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Auto-Complete Roadmap", items: [{ title: "AC Item", status: "todo" }, { title: "Next Item", status: "todo" }] },
     });
     const roadmapId = (roadmap.json as any).data.id;
@@ -1125,7 +1683,7 @@ describe("cli json commands", () => {
 
     const plan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { itemId, phases: [{ title: "Only Phase" }] },
     });
     expect(plan.exitCode).toBe(0);
@@ -1134,7 +1692,7 @@ describe("cli json commands", () => {
 
     const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { planId, completedPhaseId: phaseId },
     });
     expect(result.exitCode).toBe(0);
@@ -1146,20 +1704,20 @@ describe("cli json commands", () => {
 
   test("plan advance without completedPhaseId just recomputes next", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "No-Op Advance Plan", phases: [{ title: "Phase A" }] },
     });
     const planId = (created.json as any).data.id;
 
     const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { planId },
     });
     expect(result.exitCode).toBe(0);
@@ -1174,13 +1732,13 @@ describe("cli json commands", () => {
 
   test("plan path returns topological order with ready flags and critical path", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Path Plan", phases: [{ title: "Phase A" }, { title: "Phase B" }, { title: "Phase C" }] },
     });
     const planId = (created.json as any).data.id;
@@ -1191,11 +1749,11 @@ describe("cli json commands", () => {
     // Set B depends on A
     await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { phaseId: phaseBId, dependsOn: [phaseAId] },
     });
 
-    const result = await runDecode(["plan", "path", planId, "--json"], { cwd, decodeHome });
+    const result = await runDecode(["plan", "path", planId, "--json"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).ok).toBe(true);
     expect((result.json as any).meta.schemaVersion).toBe(1);
@@ -1226,20 +1784,20 @@ describe("cli json commands", () => {
 
   test("timeline --since <iso> returns only events after the timestamp", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     // Get the timestamp after init
     const after = new Date().toISOString();
 
     await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Since Test Plan", phases: [{ title: "Phase A" }] },
     });
 
-    const result = await runDecode(["timeline", "--json", "--since", after], { cwd, decodeHome });
+    const result = await runDecode(["timeline", "--json", "--since", after], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     // Only events after 'after' — should include plan.created but not project.registered
     const events = (result.json as any).data as any[];
@@ -1252,25 +1810,25 @@ describe("cli json commands", () => {
 
   test("timeline --since <eventId> returns only events after that event", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
 
     // Get the first event id from timeline
-    const timeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, decodeHome });
+    const timeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     // The most recent event (DESC order) — use this as the cursor
     const firstEventId = (timeline.json as any).data[0].id;
 
     // Create a plan to generate more events
     await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "EventId Since Test", phases: [{ title: "Phase A" }] },
     });
 
     // Pass that event id as --since; we should get the plan events but not the init event
-    const sinceResult = await runDecode(["timeline", "--json", "--since", firstEventId], { cwd, decodeHome });
+    const sinceResult = await runDecode(["timeline", "--json", "--since", firstEventId], { cwd, zenithHome });
     expect(sinceResult.exitCode).toBe(0);
     const events = (sinceResult.json as any).data as any[];
     // There should be new events (plan.created at minimum)
@@ -1279,25 +1837,25 @@ describe("cli json commands", () => {
 
   test("timeline --since with unknown event id returns event_not_found error", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
 
-    const result = await runDecode(["timeline", "--json", "--since", "evt_nonexistent_xyz"], { cwd, decodeHome });
+    const result = await runDecode(["timeline", "--json", "--since", "evt_nonexistent_xyz"], { cwd, zenithHome });
     expect(result.exitCode).toBe(1);
     expect((result.json as any).errors[0].code).toBe("event_not_found");
   });
 
   test("self-tracking telemetry commands emit stable json", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Product Roadmap",
         items: [{ title: "Telemetry", status: "todo" }],
@@ -1306,7 +1864,7 @@ describe("cli json commands", () => {
     const roadmapId = (roadmap.json as any).data.id as string;
     await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         itemTitle: "Telemetry",
         phases: [{ title: "Read model" }],
@@ -1314,7 +1872,7 @@ describe("cli json commands", () => {
     });
     const session = await runDecode(["session", "start", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         summary: "Checkpoint",
         startedAt: "2026-01-01T00:00:00.000Z",
@@ -1323,7 +1881,7 @@ describe("cli json commands", () => {
     const sessionId = (session.json as any).data.id as string;
     await runDecode(["session", "end", sessionId, "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         summary: "Checkpoint done",
         endedAt: "2026-01-01T01:00:00.000Z",
@@ -1331,7 +1889,7 @@ describe("cli json commands", () => {
     });
     await runDecode(["decision", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         title: "Use telemetry",
         context: "Need daily operational visibility.",
@@ -1339,11 +1897,11 @@ describe("cli json commands", () => {
       },
     });
 
-    const cursorTimeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, decodeHome });
+    const cursorTimeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     const cursorId = (cursorTimeline.json as any).data[0].id as string;
     await runDecode(["finding", "record", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: {
         type: "test_gap",
         severity: "low",
@@ -1353,12 +1911,12 @@ describe("cli json commands", () => {
       },
     });
 
-    const standup = await runDecode(["standup", "--json", "--days", "7"], { cwd, decodeHome });
-    const diffDefault = await runDecode(["diff", "--json"], { cwd, decodeHome });
-    const diff = await runDecode(["diff", "--json", "--since", cursorId, "--limit", "10"], { cwd, decodeHome });
-    const drift = await runDecode(["drift", "--json"], { cwd, decodeHome });
-    const adherence = await runDecode(["adherence", "--json", "--days", "7"], { cwd, decodeHome });
-    const next = await runDecode(["plan", "next", "--json", "--stale-after-days", "1"], { cwd, decodeHome });
+    const standup = await runDecode(["standup", "--json", "--days", "7"], { cwd, zenithHome });
+    const diffDefault = await runDecode(["diff", "--json"], { cwd, zenithHome });
+    const diff = await runDecode(["diff", "--json", "--since", cursorId, "--limit", "10"], { cwd, zenithHome });
+    const drift = await runDecode(["drift", "--json"], { cwd, zenithHome });
+    const adherence = await runDecode(["adherence", "--json", "--days", "7"], { cwd, zenithHome });
+    const next = await runDecode(["plan", "next", "--json", "--stale-after-days", "1"], { cwd, zenithHome });
 
     expect(standup.exitCode).toBe(0);
     expect((standup.json as any).data.events.total).toBeGreaterThan(0);
@@ -1416,13 +1974,13 @@ describe("cli json commands", () => {
 
   test("completePlan is idempotent: second call is a no-op and does not emit duplicate events", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Idempotent Complete Plan", phases: [{ title: "Only Phase" }] },
     });
     expect(created.exitCode).toBe(0);
@@ -1432,23 +1990,23 @@ describe("cli json commands", () => {
     // Advance the plan marking the only phase done — triggers auto-complete
     const advance = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { planId, completedPhaseId: phaseId },
     });
     expect(advance.exitCode).toBe(0);
     expect((advance.json as any).data.planCompleted).toBe(true);
 
     // Count events after first completion
-    const timelineAfterFirst = await runDecode(["timeline", "--json"], { cwd, decodeHome });
+    const timelineAfterFirst = await runDecode(["timeline", "--json"], { cwd, zenithHome });
     expect(timelineAfterFirst.exitCode).toBe(0);
     const countAfterFirst = ((timelineAfterFirst.json as any).data as any[]).length;
 
     // Explicitly complete the already-completed plan — should be a no-op
-    const second = await runDecode(["plan", "complete", planId, "--json"], { cwd, decodeHome });
+    const second = await runDecode(["plan", "complete", planId, "--json"], { cwd, zenithHome });
     expect(second.exitCode).toBe(0);
 
     // Timeline should not have grown (no new events emitted)
-    const timelineAfterSecond = await runDecode(["timeline", "--json"], { cwd, decodeHome });
+    const timelineAfterSecond = await runDecode(["timeline", "--json"], { cwd, zenithHome });
     expect(timelineAfterSecond.exitCode).toBe(0);
     const countAfterSecond = ((timelineAfterSecond.json as any).data as any[]).length;
     expect(countAfterSecond).toBe(countAfterFirst);
@@ -1456,14 +2014,14 @@ describe("cli json commands", () => {
 
   test("advancing a zero-phase plan does not auto-complete it", async () => {
     const cwd = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(cwd, decodeHome);
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
 
-    await runDecode(["init", "--json"], { cwd, decodeHome });
+    await runDecode(["init", "--json"], { cwd, zenithHome });
     // Create a plan with no phases
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { title: "Zero Phase Plan", phases: [] },
     });
     // A plan with zero phases may be rejected by schema; tolerate that and skip
@@ -1475,7 +2033,7 @@ describe("cli json commands", () => {
     // Advance with no completedPhaseId — just a recompute
     const advance = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
-      decodeHome,
+      zenithHome,
       input: { planId },
     });
     expect(advance.exitCode).toBe(0);
@@ -1483,7 +2041,7 @@ describe("cli json commands", () => {
     expect((advance.json as any).data.planCompleted).toBe(false);
 
     // Verify plan status remains active
-    const show = await runDecode(["plan", "show", planId, "--json"], { cwd, decodeHome });
+    const show = await runDecode(["plan", "show", planId, "--json"], { cwd, zenithHome });
     expect(show.exitCode).toBe(0);
     expect((show.json as any).data.status).not.toBe("completed");
   });

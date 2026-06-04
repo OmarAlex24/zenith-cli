@@ -3,9 +3,12 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useKeyboard, useRenderer, useTerminalDimensions, useTimeline } from "@opentui/react";
 import type { ActivityReport, ProjectStatus } from "../app/decode-app";
+import type { BenchmarkCompareResult } from "../benchmarks/store";
+import type { BenchmarkScenarioSummary } from "../benchmarks/scenarios";
 import type { RoadmapWorkspace, WorkspaceGroup, WorkspaceItem } from "../app/roadmap-workspace";
 import type {
   CompactContext,
+  ContinueResult,
   Decision,
   Event,
   Finding,
@@ -42,6 +45,11 @@ export type DashboardData = {
   context: CompactContext;
   timeline: Event[];
   activity: ActivityReport;
+  continuity: ContinueResult;
+  benchmarks: {
+    scenarios: BenchmarkScenarioSummary[];
+    compare: BenchmarkCompareResult;
+  };
   search: MemorySearchResult[];
 };
 
@@ -62,6 +70,7 @@ const sections = [
   { id: "decisions", label: "Decisions" },
   { id: "context", label: "Context" },
   { id: "pulse", label: "Pulse" },
+  { id: "benchmarks", label: "Bench" },
   { id: "search", label: "Search" },
 ] as const;
 
@@ -480,6 +489,7 @@ function Main({
   if (section === "brief") return <BriefView data={data} />;
   if (section === "context") return <ContextView data={data} />;
   if (section === "pulse") return <PulseView data={data} />;
+  if (section === "benchmarks") return <BenchmarksView data={data} />;
   if (section === "search")
     return <SearchView results={searchResults} query={searchQuery} selectedIndex={selectedIndex} bodyHeight={bodyHeight} contentHasFocus={contentHasFocus} />;
   if (section === "roadmap")
@@ -506,6 +516,8 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
   const plan = status.activePlan;
   const phaseTotal = plan?.phases.length ?? 0;
   const phaseDone = plan?.phases.filter((phase) => phase.status === "done").length ?? 0;
+  const readiness = data.continuity.readiness;
+  const roi = data.continuity.roi;
   const showHero = bodyHeight >= 12;
 
   return (
@@ -516,27 +528,32 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
         </box>
       ) : null}
 
-      <Panel title="Next action" grow={false}>
-        <text fg={palette.accent}>{status.next.recommendation ?? "nothing pending"}</text>
-        <text fg={palette.muted}>{status.next.reason}</text>
-      </Panel>
-
-      <Panel title="Focus" grow={false}>
-        {status.focus ? (
+      <box style={{ flexDirection: "row", gap: 1 }}>
+        <Panel title="Continuity" grow={false}>
           <text>
-            <span fg={palette.accent}>{truncate(status.focus.roadmapTitle, 44)}</span>
-            <span fg={palette.faint}>{`  ${status.focus.branch ?? "no-branch"}`}</span>
+            <span fg={readinessColor(readiness.status)}>{readiness.status}</span>
+            <span fg={palette.faint}>{`  ${readiness.score}/100`}</span>
           </text>
-        ) : status.focusAmbiguous ? (
-          <text fg={palette.warning}>{"no focus — multiple roadmaps active · zenith focus set <id>"}</text>
-        ) : (
-          <text fg={palette.muted}>{"no focus binding for this worktree"}</text>
-        )}
+          <text fg={palette.muted}>{truncate(readiness.gaps[0] ?? "ready to continue", 52)}</text>
+        </Panel>
+        <Panel title="ROI" grow={false}>
+          <text>
+            <span fg={palette.accent}>{`${roi.compressionRatio}x`}</span>
+            <span fg={palette.faint}>{`  ${roi.sourceEvents} events`}</span>
+          </text>
+          <text fg={palette.muted}>{truncate(formatList(roi.continuitySignals, 5), 52)}</text>
+        </Panel>
+      </box>
+
+      <Panel title="Next action" grow={false}>
+        <text fg={palette.accent}>{truncate(status.next.recommendation ?? "nothing pending", 86)}</text>
+        <text fg={palette.muted}>{truncate(status.next.reason, 86)}</text>
       </Panel>
 
       <box style={{ flexDirection: "row", gap: 1, flexGrow: 1 }}>
         <Panel title="Active plan">
           <text fg={palette.text}>{truncate(plan?.title ?? "no active plan", 40)}</text>
+          <text fg={palette.faint}>{`phase: ${data.continuity.context.currentPhase?.title ?? "none"}`}</text>
           {plan ? <text fg={palette.accent}>{progressBar(phaseDone, phaseTotal, 10)}</text> : null}
           {plan
             ? plan.phases.slice(0, 5).map((phase) => (
@@ -577,6 +594,13 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
                 </text>
               ))
             )}
+          </Panel>
+          <Panel title="Benchmarks">
+            <text>
+              <span fg={palette.accent}>{`${data.benchmarks.scenarios.length} scenarios`}</span>
+              <span fg={palette.faint}>{`  ${data.benchmarks.compare.totalRuns} runs`}</span>
+            </text>
+            <text fg={palette.muted}>{"benchmark list · benchmark compare"}</text>
           </Panel>
         </box>
       </box>
@@ -625,6 +649,44 @@ function PulseView({ data }: { data: DashboardData }) {
   );
 }
 
+function BenchmarksView({ data }: { data: DashboardData }) {
+  const compare = data.benchmarks.compare;
+  return (
+    <box style={{ flexDirection: "column", flexGrow: 1, gap: 1 }}>
+      <Panel title="Benchmark Scenarios">
+        {data.benchmarks.scenarios.length === 0 ? (
+          <text fg={palette.muted}>{"no scenarios found"}</text>
+        ) : (
+          data.benchmarks.scenarios.slice(0, 8).map((scenario) => (
+            <text key={scenario.id}>
+              <span fg={palette.accent}>{`${scenario.id} `}</span>
+              <span fg={palette.text}>{truncate(scenario.title, 42)}</span>
+              <span fg={palette.faint}>{`  ${scenario.category}/${scenario.difficulty}`}</span>
+            </text>
+          ))
+        )}
+      </Panel>
+      <Panel title="Variant Comparison">
+        <text>
+          <span fg={palette.accent}>{`${compare.totalRuns} recorded runs`}</span>
+          <span fg={palette.faint}>{"  local Zenith home"}</span>
+        </text>
+        {compare.variants.length === 0 ? (
+          <text fg={palette.muted}>{"benchmark record --json --input -"}</text>
+        ) : (
+          compare.variants.slice(0, 6).map((variant) => (
+            <text key={variant.variant}>
+              <span fg={palette.text}>{variant.variant}</span>
+              <span fg={palette.faint}>{`  runs ${variant.runs}`}</span>
+              <span fg={palette.accent}>{variant.averageScore === undefined ? "" : `  avg ${variant.averageScore}`}</span>
+            </text>
+          ))
+        )}
+      </Panel>
+    </box>
+  );
+}
+
 function StatLine({ label, value }: { label: string; value: string }) {
   return (
     <text>
@@ -637,6 +699,12 @@ function StatLine({ label, value }: { label: string; value: string }) {
 function activityCellColor(day: ActivityReport["grid"]["days"][number]): string {
   if (day.future) return palette.faint;
   return ACTIVITY_RAMP[day.level] ?? palette.border;
+}
+
+function readinessColor(status: string): string {
+  if (status === "ready") return palette.success;
+  if (status === "needs_cleanup" || status === "needs_plan" || status === "ambiguous") return palette.warning;
+  return palette.danger;
 }
 
 function SearchView({
@@ -1219,6 +1287,13 @@ function clampAll(selection: SelectionState, data: DashboardData): SelectionStat
 function clamp(index: number, count: number): number {
   if (count <= 0) return 0;
   return Math.min(Math.max(index, 0), count - 1);
+}
+
+function formatList(items: string[], limit: number): string {
+  if (items.length === 0) return "none";
+  const visible = items.slice(0, limit).join(", ");
+  const hidden = items.length - limit;
+  return hidden > 0 ? `${visible}, +${hidden}` : visible;
 }
 
 function sectionByNumber(token: string): SectionId | null {

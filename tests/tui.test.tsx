@@ -6,9 +6,11 @@ import { act } from "react";
 import type { CapturedFrame, CapturedLine } from "@opentui/core";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
+import type { BenchmarkCompareResult } from "../src/benchmarks/store";
+import type { BenchmarkScenarioSummary } from "../src/benchmarks/scenarios";
 import { buildRoadmapWorkspace } from "../src/app/roadmap-workspace";
 import { buildActivityReport, type ActivityReport } from "../src/app/telemetry";
-import type { CompactContext, Decision, Event, Finding, MemorySearchResult, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
+import type { CompactContext, ContinueResult, Decision, Event, Finding, MemorySearchResult, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
 import { palette } from "../src/tui/theme";
 
 describe("OpenTUI dashboard", () => {
@@ -25,9 +27,11 @@ describe("OpenTUI dashboard", () => {
     expect(home).toContain("PULSE");
     expect(home).toContain("Roadmap");
     expect(home).toContain("Findings");
+    expect(home).toContain("Continuity");
+    expect(home).toContain("ROI");
+    expect(home).toContain("Benchmarks");
     expect(home).toContain("Next action");
     expect(home).toContain("NEXT");
-    expect(home).toContain("Focus");
 
     await act(async () => {
       setup.mockInput.pressKey("3");
@@ -225,6 +229,32 @@ describe("OpenTUI dashboard", () => {
     expect(frame).toContain("longest");
     expect(frame).toContain("max/day");
     expect(frame).toContain("1-9 jump");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("benchmark section lists scenarios and comparison totals", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressKey("9");
+    });
+    await setup.flush();
+    await act(async () => {
+      setup.mockInput.pressArrow("down");
+    });
+    await setup.flush();
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("Benchmark Scenarios");
+    expect(frame).toContain("continue-resume");
+    expect(frame).toContain("Variant Comparison");
+    expect(frame).toContain("2 recorded runs");
+    expect(frame).toContain("prompt");
 
     act(() => {
       setup.renderer.destroy();
@@ -535,6 +565,7 @@ function makeDashboardData(
   const roadmaps = options.roadmaps ?? status.recentRoadmaps;
   const plans = options.plans ?? [status.activePlan!];
   status.recentRoadmaps = roadmaps;
+  const context = makeContext(status);
   return {
     status,
     brief: makeBrief(),
@@ -545,11 +576,74 @@ function makeDashboardData(
     findings,
     sessions: status.recentSessions,
     decisions: status.recentDecisions,
-    context: makeContext(status),
+    context,
     timeline: options.timeline ?? makeTimeline(),
     activity: options.activity ?? makeActivity(),
+    continuity: makeContinuity(status, context),
+    benchmarks: makeBenchmarks(),
     search: options.search ?? makeSearchResults(),
   };
+}
+
+function makeContinuity(status: ProjectStatus, context: CompactContext): ContinueResult {
+  return {
+    context,
+    next: status.next,
+    phase: status.currentPhase
+      ? {
+          planId: status.activePlan?.id ?? "plan_1",
+          planTitle: status.activePlan?.title ?? "Zenith MVP",
+          phase: status.currentPhase,
+        }
+      : null,
+    roadmapItem: null,
+    latestSession: status.recentSessions[0] ?? null,
+    openSession: null,
+    newSession: null,
+    closedSession: null,
+    warnings: [],
+    readiness: {
+      score: 95,
+      status: "ready",
+      strengths: ["Project is registered.", "Active plan is selected.", "Current phase is available."],
+      gaps: [],
+    },
+    roi: {
+      sourceEvents: 12,
+      sourceSessions: status.recentSessions.length,
+      sourceDecisions: status.recentDecisions.length,
+      sourceFindings: status.openFindings.length,
+      sourcePhases: status.activePlan?.phases.length ?? 0,
+      estimatedRawTokens: 1200,
+      compactTokens: 300,
+      compressionRatio: 4,
+      continuitySignals: ["brief", "active_plan", "current_phase", "next_step"],
+      missingSignals: [],
+    },
+    markdown: "# Zenith Continue\n\n## Readiness\n- Status: ready",
+  };
+}
+
+function makeBenchmarks(): DashboardData["benchmarks"] {
+  const scenarios: BenchmarkScenarioSummary[] = [
+    {
+      id: "continue-resume",
+      title: "Resume From Continuity Context",
+      description: "Compare low-friction resume prompts against structured continue context.",
+      category: "continuity",
+      difficulty: "basic",
+      variants: ["prompt", "continue"],
+      tags: ["resume"],
+    },
+  ];
+  const compare: BenchmarkCompareResult = {
+    totalRuns: 2,
+    variants: [
+      { variant: "continue", runs: 1, averageScore: 4, metrics: [] },
+      { variant: "prompt", runs: 1, averageScore: 3, metrics: [] },
+    ],
+  };
+  return { scenarios, compare };
 }
 
 function makeSearchResults(): MemorySearchResult[] {

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createZenithApp } from "../src/app/factory";
-import { openDecodeDatabase, openZenithDatabase } from "../src/storage/database";
+import { openZenithDatabase } from "../src/storage/database";
 import { getDatabasePath, getZenithHome } from "../src/storage/paths";
 import { ZenithRepository } from "../src/storage/repository";
 import { cleanupTempDir, makeTempDir } from "./helpers";
@@ -19,73 +19,42 @@ describe("sqlite repository", () => {
   test("uses Zenith home and database naming by default", () => {
     const originalHome = Bun.env.HOME;
     const originalZenithHome = Bun.env.ZENITH_HOME;
-    const originalDecodeHome = Bun.env.DECODE_HOME;
     const homeRoot = makeTempDir();
     tempDirs.push(homeRoot);
 
     try {
       Bun.env.HOME = homeRoot;
       delete Bun.env.ZENITH_HOME;
-      delete Bun.env.DECODE_HOME;
 
       expect(getZenithHome()).toBe(join(homeRoot, ".zenith"));
       expect(getDatabasePath()).toBe(join(homeRoot, ".zenith", "zenith.db"));
     } finally {
       restoreEnv("HOME", originalHome);
       restoreEnv("ZENITH_HOME", originalZenithHome);
-      restoreEnv("DECODE_HOME", originalDecodeHome);
     }
   });
 
-  test("uses legacy decode home only as a fallback", () => {
-    const originalHome = Bun.env.HOME;
+  test("ZENITH_HOME overrides the default storage home", () => {
     const originalZenithHome = Bun.env.ZENITH_HOME;
-    const originalDecodeHome = Bun.env.DECODE_HOME;
-    const homeRoot = makeTempDir();
-    tempDirs.push(homeRoot);
-
-    try {
-      Bun.env.HOME = homeRoot;
-      delete Bun.env.ZENITH_HOME;
-      delete Bun.env.DECODE_HOME;
-      mkdirSync(join(homeRoot, ".decode"), { recursive: true });
-
-      expect(getZenithHome()).toBe(join(homeRoot, ".decode"));
-      expect(getDatabasePath()).toBe(join(homeRoot, ".decode", "decode.db"));
-    } finally {
-      restoreEnv("HOME", originalHome);
-      restoreEnv("ZENITH_HOME", originalZenithHome);
-      restoreEnv("DECODE_HOME", originalDecodeHome);
-    }
-  });
-
-  test("ZENITH_HOME takes precedence over legacy DECODE_HOME", () => {
-    const originalZenithHome = Bun.env.ZENITH_HOME;
-    const originalDecodeHome = Bun.env.DECODE_HOME;
     const zenithHome = makeTempDir();
-    const decodeHome = makeTempDir();
-    tempDirs.push(zenithHome, decodeHome);
+    tempDirs.push(zenithHome);
 
     try {
       Bun.env.ZENITH_HOME = zenithHome;
-      Bun.env.DECODE_HOME = decodeHome;
 
       expect(getZenithHome()).toBe(zenithHome);
       expect(getDatabasePath()).toBe(join(zenithHome, "zenith.db"));
     } finally {
       restoreEnv("ZENITH_HOME", originalZenithHome);
-      restoreEnv("DECODE_HOME", originalDecodeHome);
     }
   });
 
-  test("explicit storage options prefer zenithHome and preserve decodeHome compatibility", () => {
+  test("explicit storage options use zenithHome", () => {
     const root = makeTempDir();
     const zenithHome = join(root, ".zenith");
-    const decodeHome = join(root, ".decode");
     tempDirs.push(root);
 
-    expect(getDatabasePath({ zenithHome, decodeHome })).toBe(join(zenithHome, "zenith.db"));
-    expect(getDatabasePath({ decodeHome })).toBe(join(decodeHome, "decode.db"));
+    expect(getDatabasePath({ zenithHome })).toBe(join(zenithHome, "zenith.db"));
 
     const db = openZenithDatabase({ zenithHome });
     db.close();
@@ -281,6 +250,7 @@ describe("sqlite repository", () => {
 
     expect(started.endedAt).toBeUndefined();
     expect(started.changedFiles).toEqual(["src/index.ts"]);
+    expect(repo.listOpenSessions(project.id).map((session) => session.id)).toEqual([started.id]);
 
     const captured = repo.captureSession(started.id, {
       summary: "Implemented most lifecycle commands.",
@@ -300,6 +270,7 @@ describe("sqlite repository", () => {
     expect(ended.endedAt).toBe("2026-01-01T01:00:00.000Z");
     expect(ended.changedFiles).toEqual(["src/index.ts", "tests/storage.test.ts"]);
     expect(ended.nextSteps).toEqual(["Record evidence"]);
+    expect(repo.listOpenSessions(project.id)).toEqual([]);
     repo.close();
   });
 
@@ -647,16 +618,6 @@ describe("sqlite repository", () => {
     repo.close();
   });
 
-  test("openDecodeDatabase remains a legacy compatibility alias", () => {
-    const root = makeTempDir();
-    const decodeHome = join(root, ".decode");
-    tempDirs.push(root);
-    const db = openDecodeDatabase({ decodeHome });
-
-    db.close();
-    expect(existsSync(join(decodeHome, "decode.db"))).toBe(true);
-  });
-
   test("multiple active plans are allowed when they belong to different roadmaps", () => {
     const root = makeTempDir();
     tempDirs.push(root);
@@ -946,7 +907,7 @@ describe("sqlite repository", () => {
   });
 });
 
-function restoreEnv(key: "HOME" | "ZENITH_HOME" | "DECODE_HOME", value: string | undefined): void {
+function restoreEnv(key: "HOME" | "ZENITH_HOME", value: string | undefined): void {
   if (value === undefined) {
     delete Bun.env[key];
     return;

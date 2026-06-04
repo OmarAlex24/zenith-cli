@@ -8,6 +8,16 @@ Use `bun run zenith ...` for the commands below if the `zenith` binary is not on
 Run:
 
 ```bash
+zenith continue
+zenith prompt --format codex --max-tokens 800
+zenith demo show continuity
+```
+
+`zenith continue`, `zenith prompt`, and `zenith demo` are read-only by default. Use `continue --start-session`, `--close-open-session`, or `--auto-capture` only when explicit session mutation is intended.
+
+Lower-level equivalent commands:
+
+```bash
 zenith context compact --json
 zenith plan next --json
 ```
@@ -25,24 +35,27 @@ Use that phase as the implementation target. If the user's prompt names a differ
 Run:
 
 ```bash
+zenith continue
 zenith context compact --json
 zenith plan next --json
 zenith plan list --json
 ```
 
-If the project is not registered, ask whether to run `zenith init --json`.
+If the project is not registered, ask whether to run `zenith init`.
 
 ## Self-Tracking Telemetry
 
 Use these read-only commands when choosing or auditing the next work:
 
 ```bash
-zenith standup --json                 # daily digest; accepts --days <n>
-zenith diff --json                    # changes since latest ended session
-zenith diff --json --since <cursor>   # event id or ISO timestamp
-zenith drift --json                   # roadmap-vs-active-plan alignment
-zenith adherence --json               # velocity/adherence; accepts --days <n>
-zenith activity --json                # 53-week activity heatmap from grouped event counts
+zenith standup                 # daily digest; accepts --days <n>
+zenith roi                     # context compression and continuity signals
+zenith roi --since <cursor>    # event id or ISO timestamp
+zenith diff                    # changes since latest ended session
+zenith diff --since <cursor>   # event id or ISO timestamp
+zenith drift                   # roadmap-vs-active-plan alignment
+zenith adherence               # velocity/adherence; accepts --days <n>
+zenith activity                # 53-week activity heatmap from grouped event counts
 zenith plan next --json --stale-after-days 7
 ```
 
@@ -154,7 +167,7 @@ Payload:
 }
 ```
 
-Use `discarded` when roadmap work should stay auditable but should no longer be planned, deferred, or counted as completed:
+Use `discarded` when roadmap work should stay auditable but should no longer be active, deferred, or counted as done:
 
 ```json
 {
@@ -303,7 +316,7 @@ Payload:
   "type": "bug",
   "severity": "high",
   "title": "Missing retry around sync",
-  "description": "A transient failure can drop pending progress.",
+  "description": "A transient failure can drop in-flight progress.",
   "relatedFiles": ["src/sync.ts"],
   "relatedPlanId": "plan_id",
   "relatedPhaseId": "phase_id"
@@ -337,7 +350,7 @@ Payload:
 }
 ```
 
-Use `zenith session summarize --json --input -` as a compatibility shortcut when there is no open session id.
+Use `zenith session summarize --json --input -` when there is no open session id.
 
 ## Long-Running Loop (multi-phase roadmap grind)
 
@@ -383,9 +396,10 @@ If `planCompleted` is `true` in the `AdvanceResult`, the plan has auto-completed
 
 ### Checkpoint / Resume
 
-Before pausing, record the latest event id as a cursor:
+Before pausing, record a concise checkpoint and then keep the latest event id as a cursor:
 
 ```bash
+zenith checkpoint "Verified current phase" --next "Next action"
 zenith timeline --json --limit 1   # take data[0].id as cursor
 ```
 

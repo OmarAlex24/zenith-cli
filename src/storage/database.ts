@@ -5,7 +5,6 @@ import { getDatabasePath, ensureZenithHome } from "./paths";
 
 export type DatabaseOptions = {
   zenithHome?: string;
-  decodeHome?: string;
   dbPath?: string;
   readonly?: boolean;
 };
@@ -245,10 +244,6 @@ export function openZenithDatabase(options: DatabaseOptions = {}): Database {
   }
 
   return db;
-}
-
-export function openDecodeDatabase(options: DatabaseOptions = {}): Database {
-  return openZenithDatabase(options);
 }
 
 export function runMigrations(db: Database): void {

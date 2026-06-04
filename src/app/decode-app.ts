@@ -4,12 +4,20 @@ import {
   AddRoadmapItemInputSchema,
   AdvancePlanInputSchema,
   AgentStageSchema,
+  BlockedInputSchema,
   ConcludeSpikeInputSchema,
   CaptureSessionInputSchema,
+  CheckpointInputSchema,
+  DecideInputSchema,
+  DoneInputSchema,
+  DoneResultSchema,
   type AgentStage,
   type AgentStageState,
   type AdvanceResult,
+  BlockedResultSchema,
+  type BlockedResult,
   type CompactContext,
+  ContinueResultSchema,
   type ContextSnapshot,
   CreatePlanFromRoadmapInputSchema,
   CreateRoadmapInputSchema,
@@ -19,12 +27,16 @@ import {
   ImportPlanToRoadmapInputSchema,
   MEMORY_ENTITY_TYPES,
   MemoryEntityTypeSchema,
+  NoteInputSchema,
   type PhaseDetail,
   type PlanPath,
+  PromptFormatSchema,
+  PromptResultSchema,
   RecordFindingInputSchema,
   RecordDecisionInputSchema,
   RecordSpikeInputSchema,
   type ResumeContext,
+  ResumeContextSchema,
   SessionSummaryInputSchema,
   SetBriefInputSchema,
   SetMemoryTagsInputSchema,
@@ -36,15 +48,22 @@ import {
   UpdateRoadmapInputSchema,
   UpdateRoadmapItemInputSchema,
   type Decision,
+  type DoneResult,
   type Event,
   type Finding,
   type MemoryEntityType,
   type MemorySearchResult,
   type MemoryTag,
+  type ContinueResult,
+  type ContinuityReadiness,
+  type ContextRoiReport,
+  type NextStep,
   type Plan,
   type PlanPhase,
   type ProjectBrief,
   type Project,
+  type PromptFormat,
+  type PromptResult,
   type Roadmap,
   type RoadmapItem,
   type Session,
@@ -52,7 +71,7 @@ import {
 } from "../domain/schemas";
 import type { GitSummary } from "../integrations/git/git-adapter";
 import { GitAdapter } from "../integrations/git/git-adapter";
-import type { ZenithRepository, SearchableMemoryEntity } from "../storage/repository";
+import type { EventWindowSummary, ZenithRepository, SearchableMemoryEntity } from "../storage/repository";
 import type { FindingListStatus } from "../storage/repository";
 import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
@@ -80,6 +99,18 @@ export type ProjectDetection = {
   project: Project | null;
   git: GitSummary;
   registered: boolean;
+};
+
+export type ContinueOptions = {
+  startSession?: boolean;
+  closeOpenSession?: boolean;
+  autoCapture?: boolean;
+};
+
+export type PromptOptions = {
+  format?: PromptFormat;
+  maxTokens?: number;
+  includeMetadata?: boolean;
 };
 
 export type ProjectStatus = {
@@ -1093,6 +1124,35 @@ export class ZenithApp {
     );
   }
 
+  private roadmapItemForNext(projectId: string, next: NextStep): RoadmapItem | null {
+    if (next.kind !== "create_plan" && next.kind !== "review_deferred") {
+      return null;
+    }
+
+    const [roadmapId, itemId] = next.evidence;
+    if (!roadmapId || !itemId) {
+      return null;
+    }
+
+    const roadmap = this.repository.getRoadmapById(roadmapId);
+    if (!roadmap || roadmap.projectId !== projectId) {
+      return null;
+    }
+
+    return roadmap.items.find((item) => item.id === itemId) ?? null;
+  }
+
+  private singleOpenSessionForMutation(openSessions: Session[], flag: string): Session | null {
+    if (openSessions.length > 1) {
+      throw new ZenithError(`Multiple open sessions exist; ${flag} requires exactly one open session.`, {
+        code: "ambiguous_open_session",
+        details: { flag, sessionIds: openSessions.map((session) => session.id) },
+      });
+    }
+
+    return openSessions[0] ?? null;
+  }
+
   private resolveEventSince(projectId: string, since: string): ResolvedEventSince {
     const isIso = /^\d{4}-\d{2}-\d{2}T/.test(since);
     if (isIso) {
@@ -1144,7 +1204,191 @@ export class ZenithApp {
   }
 
   async resume(): Promise<ResumeContext> {
-    return this.contextEngine.resume();
+    const resume = await this.contextEngine.resume();
+    const context = await this.compactContext();
+    const detection = await this.detectProject();
+    const openSessionCount = detection.project ? this.repository.listOpenSessions(detection.project.id, 20).length : 0;
+    const readiness = buildContinuityReadiness(context, openSessionCount);
+    const roi = detection.project ? await this.contextRoi() : emptyContextRoiReport(context);
+
+    return ResumeContextSchema.parse({
+      ...resume,
+      readiness,
+      roi,
+    });
+  }
+
+  async contextRoi(options: { since?: string } = {}): Promise<ContextRoiReport> {
+    const project = await this.requireProject();
+    const context = await this.compactContext();
+    const resolved = options.since ? this.resolveEventSince(project.id, options.since).since : undefined;
+    const eventSummary = this.repository.summarizeEvents(project.id, resolved ? { since: resolved } : {});
+    const records = this.repository
+      .listSearchableMemoryEntities(project.id)
+      .filter((record) => !resolved || record.updatedAt > resolved.createdAt);
+
+    return buildContextRoiReport(records, eventSummary, context);
+  }
+
+  async continueWork(options: ContinueOptions = {}): Promise<ContinueResult> {
+    const context = await this.compactContext();
+    const detection = await this.detectProject();
+    const project = detection.project;
+    const warnings = continueWarnings(context);
+    let phase: PhaseDetail | null = null;
+    let roadmapItem: RoadmapItem | null = null;
+    let latestSession: Session | null = null;
+    let openSession: Session | null = null;
+    let newSession: Session | null = null;
+    let closedSession: Session | null = null;
+    let openSessionCount = 0;
+    let roi = emptyContextRoiReport(context);
+
+    if (!project) {
+      pushUnique(warnings, "Project is not registered. Run `zenith init` before relying on continuity memory.");
+      const readiness = buildContinuityReadiness(context, 0);
+      return ContinueResultSchema.parse({
+        context,
+        next: context.next,
+        phase,
+        roadmapItem,
+        latestSession,
+        openSession,
+        newSession,
+        closedSession,
+        warnings,
+        readiness,
+        roi,
+        markdown: renderContinueMarkdown({
+          context,
+          phase,
+          roadmapItem,
+          latestSession,
+          openSession,
+          newSession,
+          closedSession,
+          warnings,
+          readiness,
+          roi,
+        }),
+      });
+    }
+
+    roi = await this.contextRoi();
+    const initialOpenSessions = this.repository.listOpenSessions(project.id, 20);
+    openSessionCount = initialOpenSessions.length;
+    if (initialOpenSessions.length > 1) {
+      pushUnique(
+        warnings,
+        `Multiple open sessions found (${initialOpenSessions.length}); close or update one explicitly before using session mutation flags.`,
+      );
+    }
+    openSession = initialOpenSessions.length === 1 ? initialOpenSessions[0]! : null;
+    latestSession = this.repository.listRecentSessions(project.id, 1)[0] ?? null;
+    phase = context.next.phaseId ? await this.showPhase(context.next.phaseId) : null;
+    roadmapItem = this.roadmapItemForNext(project.id, context.next);
+
+    if (options.closeOpenSession) {
+      const session = this.singleOpenSessionForMutation(initialOpenSessions, "--close-open-session");
+      if (session) {
+        closedSession = await this.endSession(session.id, {
+          summary: "Closed by zenith continue --close-open-session.",
+          changedFiles: detection.git.changedFiles,
+          nextSteps: nextStepList(context.next),
+          ...(context.next.planId ? { relatedPlanId: context.next.planId } : {}),
+        });
+      } else {
+        pushUnique(warnings, "--close-open-session was requested but no session is open.");
+      }
+    }
+
+    const afterCloseOpenSessions = this.repository.listOpenSessions(project.id, 20);
+    if (options.startSession) {
+      if (afterCloseOpenSessions.length > 1) {
+        this.singleOpenSessionForMutation(afterCloseOpenSessions, "--start-session");
+      } else if (afterCloseOpenSessions.length === 0) {
+        newSession = await this.startSession({
+          summary: "Started by zenith continue --start-session.",
+          changedFiles: detection.git.changedFiles,
+          nextSteps: nextStepList(context.next),
+          ...(context.next.planId ? { relatedPlanId: context.next.planId } : {}),
+        });
+      } else {
+        pushUnique(warnings, "--start-session was requested but an open session already exists.");
+      }
+    }
+
+    if (options.autoCapture) {
+      const captureOpenSessions = this.repository.listOpenSessions(project.id, 20);
+      const session = this.singleOpenSessionForMutation(captureOpenSessions, "--auto-capture");
+      if (session) {
+        const captured = await this.captureSession(session.id, {
+          summary: "Captured by zenith continue --auto-capture.",
+          changedFiles: detection.git.changedFiles,
+          nextSteps: nextStepList(context.next),
+          ...(context.next.planId ? { relatedPlanId: context.next.planId } : {}),
+        });
+        if (newSession?.id === captured.id) {
+          newSession = captured;
+        }
+      } else {
+        pushUnique(warnings, "--auto-capture was requested but no session is open.");
+      }
+    }
+
+    const finalOpenSessions = this.repository.listOpenSessions(project.id, 20);
+    openSessionCount = finalOpenSessions.length;
+    if (finalOpenSessions.length > 1) {
+      pushUnique(
+        warnings,
+        `Multiple open sessions found (${finalOpenSessions.length}); close or update one explicitly before using session mutation flags.`,
+      );
+    }
+    openSession = finalOpenSessions.length === 1 ? finalOpenSessions[0]! : null;
+    latestSession = this.repository.listRecentSessions(project.id, 1)[0] ?? latestSession;
+
+    const readiness = buildContinuityReadiness(context, openSessionCount);
+    return ContinueResultSchema.parse({
+      context,
+      next: context.next,
+      phase,
+      roadmapItem,
+      latestSession,
+      openSession,
+      newSession,
+      closedSession,
+      warnings,
+      readiness,
+      roi,
+      markdown: renderContinueMarkdown({
+        context,
+        phase,
+        roadmapItem,
+        latestSession,
+        openSession,
+        newSession,
+        closedSession,
+        warnings,
+        readiness,
+        roi,
+      }),
+    });
+  }
+
+  async prompt(options: PromptOptions = {}): Promise<PromptResult> {
+    const format = PromptFormatSchema.parse(options.format ?? "markdown");
+    if (options.maxTokens !== undefined && (!Number.isInteger(options.maxTokens) || options.maxTokens <= 0)) {
+      throw new ZenithError("--max-tokens must be a positive integer.", {
+        code: "invalid_option",
+        details: { optionName: "max-tokens", value: String(options.maxTokens) },
+      });
+    }
+
+    return renderPromptResult(await this.continueWork(), {
+      format,
+      ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+      ...(options.includeMetadata ? { includeMetadata: true } : {}),
+    });
   }
 
   async timeline(options: { limit?: number; since?: string } = {}): Promise<Event[]> {
@@ -1396,6 +1640,93 @@ export class ZenithApp {
     });
   }
 
+  async checkpoint(rawInput: unknown): Promise<Session> {
+    const input = CheckpointInputSchema.parse(rawInput);
+    return this.summarizeSession(input);
+  }
+
+  async note(rawInput: unknown): Promise<Session> {
+    const input = NoteInputSchema.parse(rawInput);
+    return this.summarizeSession({
+      summary: input.text,
+      ...(input.changedFiles !== undefined ? { changedFiles: input.changedFiles } : {}),
+      nextSteps: input.nextSteps,
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      ...(input.branch ? { branch: input.branch } : {}),
+    });
+  }
+
+  async decide(rawInput: unknown): Promise<Decision> {
+    const input = DecideInputSchema.parse(rawInput);
+    return this.recordDecision(input);
+  }
+
+  async done(rawInput: unknown): Promise<DoneResult> {
+    const input = DoneInputSchema.parse(rawInput);
+
+    if (input.findingId) {
+      return DoneResultSchema.parse({ kind: "finding", finding: await this.closeFinding(input.findingId) });
+    }
+
+    const { plan, phase } = await this.resolvePhaseForMutation(
+      {
+        ...(input.planId ? { planId: input.planId } : {}),
+        ...(input.phaseId ? { phaseId: input.phaseId } : {}),
+      },
+      {
+        commandName: "done",
+        explicitCommand: (candidatePlan, candidatePhase) => `zenith done --plan ${candidatePlan.id} --phase ${candidatePhase.id}`,
+      },
+    );
+
+    const result = await this.advancePlan({
+      planId: plan.id,
+      completedPhaseId: phase.id,
+      evidence: input.evidence,
+    });
+
+    return DoneResultSchema.parse({ kind: "phase", result });
+  }
+
+  async blocked(rawInput: unknown): Promise<BlockedResult> {
+    const input = BlockedInputSchema.parse(rawInput);
+
+    if (input.markPhaseId) {
+      const { plan, phase } = await this.resolvePhaseForMutation(
+        {
+          ...(input.relatedPlanId ? { planId: input.relatedPlanId } : {}),
+          phaseId: input.markPhaseId,
+        },
+        {
+          commandName: "blocked",
+          explicitCommand: (candidatePlan, candidatePhase) =>
+            `zenith blocked --mark-phase ${candidatePhase.id} --plan ${candidatePlan.id}`,
+        },
+      );
+      const evidence = input.evidence.length > 0 ? input.evidence : [{ kind: "note" as const, value: "Marked blocked by zenith blocked." }];
+      const result = await this.advancePlan({
+        planId: plan.id,
+        completedPhaseId: phase.id,
+        status: "blocked",
+        evidence,
+      });
+
+      return BlockedResultSchema.parse({ kind: "phase", result });
+    }
+
+    const finding = await this.recordFinding({
+      type: input.type,
+      severity: input.severity,
+      title: input.title!,
+      description: input.description!,
+      relatedFiles: input.relatedFiles,
+      ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      ...(input.relatedPhaseId ? { relatedPhaseId: input.relatedPhaseId } : {}),
+    });
+
+    return BlockedResultSchema.parse({ kind: "finding", finding });
+  }
+
   private requireProjectSession(sessionId: string, projectId: string): Session {
     const session = this.repository.getSessionById(sessionId);
 
@@ -1420,6 +1751,101 @@ export class ZenithApp {
     }
 
     return finding;
+  }
+
+  private async resolvePhaseForMutation(
+    scope: { planId?: string; phaseId?: string },
+    command: { commandName: string; explicitCommand: (plan: Plan, phase: PlanPhase) => string },
+  ): Promise<{ plan: Plan; phase: PlanPhase }> {
+    const project = await this.requireProject();
+
+    if (scope.phaseId) {
+      const result = scope.planId
+        ? { plan: await this.showPlan(scope.planId) }
+        : this.repository.getPlanByPhaseId(scope.phaseId);
+      const plan = result?.plan;
+
+      if (!plan || plan.projectId !== project.id) {
+        throw new ZenithError(`Phase not found: ${scope.phaseId}`, {
+          code: "phase_not_found",
+          details: { phaseId: scope.phaseId },
+        });
+      }
+
+      const phase = plan.phases.find((candidate) => candidate.id === scope.phaseId);
+      if (!phase) {
+        throw new ZenithError(`Phase ${scope.phaseId} does not belong to plan ${plan.id}.`, {
+          code: "phase_plan_mismatch",
+          details: { planId: plan.id, phaseId: scope.phaseId },
+        });
+      }
+
+      return { plan, phase };
+    }
+
+    if (scope.planId) {
+      const plan = await this.showPlan(scope.planId);
+      if (plan.projectId !== project.id) {
+        throw new ZenithError(`Plan not found: ${scope.planId}`, {
+          code: "plan_not_found",
+          details: { planId: scope.planId },
+        });
+      }
+      const phase = findCurrentPhase(plan);
+      if (!phase) {
+        throw new ZenithError(`Plan has no current phase: ${scope.planId}`, {
+          code: "current_phase_not_found",
+          details: { planId: scope.planId },
+        });
+      }
+      return { plan, phase };
+    }
+
+    const git = await this.git.inspect(this.cwd);
+    const { resolution } = this.resolveFocus(project.id, git.worktreeRoot);
+
+    if (resolution.ambiguous) {
+      throw new ZenithError(`Cannot infer phase for zenith ${command.commandName}: multiple active plans are available.`, {
+        code: "ambiguous_current_phase",
+        details: {
+          candidates: resolution.candidates,
+          suggestedCommands: this.suggestMutationCommands(resolution.candidates, command.explicitCommand),
+        },
+      });
+    }
+
+    if (!resolution.activePlan) {
+      throw new ZenithError(`Cannot infer phase for zenith ${command.commandName}: no active plan is available.`, {
+        code: "active_plan_not_found",
+        details: { suggestedCommands: ["zenith plan next --json"] },
+      });
+    }
+
+    const phase = findCurrentPhase(resolution.activePlan);
+    if (!phase) {
+      throw new ZenithError(`Active plan has no current phase: ${resolution.activePlan.id}`, {
+        code: "current_phase_not_found",
+        details: { planId: resolution.activePlan.id },
+      });
+    }
+
+    return { plan: resolution.activePlan, phase };
+  }
+
+  private suggestMutationCommands(
+    candidates: FocusCandidate[],
+    explicitCommand: (plan: Plan, phase: PlanPhase) => string,
+  ): string[] {
+    return candidates.flatMap((candidate) => {
+      const plan = this.repository.getPlanById(candidate.planId);
+      if (!plan) return [];
+      const phase = findCurrentPhase(plan);
+      const suggestions = candidate.roadmapId ? [`zenith focus set ${candidate.roadmapId}`] : [];
+      if (phase) {
+        suggestions.push(explicitCommand(plan, phase));
+      }
+      return suggestions;
+    });
   }
 
   private requireMemoryEntity(projectId: string, entityType: MemoryEntityType, entityId: string): void {
@@ -1580,6 +2006,479 @@ function normalizeEvidence(evidence: {
     value: evidence.value,
     createdAt: evidence.createdAt ?? nowIso(),
   };
+}
+
+function continueWarnings(context: CompactContext): string[] {
+  const warnings: string[] = [];
+  if (context.git.dirty) {
+    pushUnique(warnings, `Working tree is dirty with ${context.git.changedFiles.length} changed file(s).`);
+  }
+  if (context.next.kind === "ambiguous_focus") {
+    pushUnique(warnings, "Multiple active roadmap plans are available; set roadmap focus before implementing.");
+  }
+  if (context.next.kind === "blocked_dependency") {
+    pushUnique(warnings, "The next phase is blocked by unfinished dependencies.");
+  }
+  if (context.next.kind === "review_deferred") {
+    pushUnique(warnings, "Roadmap work is deferred; reactivate a roadmap item before creating an executable plan.");
+  }
+
+  const severeFindings = context.openFindings.filter((finding) => finding.severity === "critical" || finding.severity === "high");
+  if (severeFindings.length > 0) {
+    pushUnique(warnings, `${severeFindings.length} high or critical finding(s) should be handled before advancing.`);
+  }
+
+  return warnings;
+}
+
+function buildContinuityReadiness(context: CompactContext, openSessionCount: number): ContinuityReadiness {
+  const strengths: string[] = [];
+  const gaps: string[] = [];
+  let score = 100;
+
+  if (context.project) {
+    strengths.push("Project is registered.");
+  } else {
+    gaps.push("Project is not registered.");
+    score -= 100;
+  }
+
+  if (context.git.dirty) {
+    gaps.push("Working tree has uncommitted changes.");
+    score -= 20;
+  } else {
+    strengths.push("Working tree is clean.");
+  }
+
+  if (context.activePlan) {
+    strengths.push("Active plan is selected.");
+  } else {
+    gaps.push("No active executable plan is selected.");
+    score -= 25;
+  }
+
+  if (context.currentPhase) {
+    strengths.push("Current phase is available.");
+  } else if (context.activePlan) {
+    gaps.push("Active plan has no current phase.");
+    score -= 10;
+  }
+
+  const severeFindings = context.openFindings.filter((finding) => finding.severity === "critical" || finding.severity === "high");
+  if (severeFindings.length > 0) {
+    gaps.push("Open high or critical findings are blocking.");
+    score -= 30;
+  } else {
+    strengths.push("No high or critical findings are open.");
+  }
+
+  if (context.next.kind === "ambiguous_focus") {
+    gaps.push("Roadmap focus is ambiguous.");
+    score -= 30;
+  }
+  if (context.next.kind === "blocked_dependency") {
+    gaps.push("Next phase is blocked by dependencies.");
+    score -= 25;
+  }
+  if (context.next.kind === "review_deferred") {
+    gaps.push("Next roadmap work is deferred.");
+    score -= 20;
+  }
+  if (context.next.kind === "create_plan_empty") {
+    gaps.push("No plan, roadmap, finding, or session next step exists.");
+    score -= 25;
+  }
+
+  if (context.recentSessions.length > 0) {
+    strengths.push("Recent session history is available.");
+  } else {
+    gaps.push("No recent session history is available.");
+    score -= 5;
+  }
+
+  if (openSessionCount === 1) {
+    strengths.push("One open session is available.");
+  } else if (openSessionCount > 1) {
+    gaps.push("Multiple open sessions need manual cleanup.");
+    score -= 10;
+  }
+
+  const clampedScore = Math.max(0, Math.min(100, score));
+  return {
+    score: clampedScore,
+    status: readinessStatus(context, gaps),
+    strengths,
+    gaps,
+  };
+}
+
+function buildContextRoiReport(
+  records: SearchableMemoryEntity[],
+  eventSummary: EventWindowSummary,
+  context: CompactContext,
+): ContextRoiReport {
+  const estimatedRawTokens = estimateTokens(records.map((record) => `${record.title}\n${record.text}`).join("\n\n"));
+  const compactTokens = estimateTokens(context.markdown);
+  const compressionRatio = compactTokens === 0 ? 0 : roundMetric(estimatedRawTokens / compactTokens);
+
+  return {
+    sourceEvents: eventSummary.total,
+    sourceSessions: countRecords(records, "session"),
+    sourceDecisions: countRecords(records, "decision"),
+    sourceFindings: countRecords(records, "finding"),
+    sourcePhases: countRecords(records, "phase"),
+    estimatedRawTokens,
+    compactTokens,
+    compressionRatio,
+    continuitySignals: continuitySignals(context, records, eventSummary),
+    missingSignals: missingContinuitySignals(context, records, eventSummary),
+  };
+}
+
+function emptyContextRoiReport(context: CompactContext): ContextRoiReport {
+  return buildContextRoiReport(
+    [],
+    { total: 0, byType: [], byEntityType: [], activeDays: [] },
+    context,
+  );
+}
+
+function countRecords(records: SearchableMemoryEntity[], entityType: MemoryEntityType): number {
+  return records.filter((record) => record.entityType === entityType).length;
+}
+
+function estimateTokens(text: string): number {
+  const normalized = text.trim();
+  if (normalized.length === 0) return 0;
+  return Math.ceil(normalized.length / 4);
+}
+
+function continuitySignals(
+  context: CompactContext,
+  records: SearchableMemoryEntity[],
+  eventSummary: EventWindowSummary,
+): string[] {
+  const signals: string[] = [];
+  if (context.currentBrief) signals.push("brief");
+  if (context.activePlan) signals.push("active_plan");
+  if (context.currentPhase) signals.push("current_phase");
+  if (context.next.recommendation) signals.push("next_step");
+  if (context.recentSessions.length > 0 || countRecords(records, "session") > 0) signals.push("sessions");
+  if (context.recentDecisions.length > 0 || countRecords(records, "decision") > 0) signals.push("decisions");
+  if (context.openFindings.length > 0 || countRecords(records, "finding") > 0) signals.push("findings");
+  if (eventSummary.total > 0) signals.push("event_history");
+  return signals;
+}
+
+function missingContinuitySignals(
+  context: CompactContext,
+  records: SearchableMemoryEntity[],
+  eventSummary: EventWindowSummary,
+): string[] {
+  const missing: string[] = [];
+  if (!context.currentBrief) missing.push("brief");
+  if (!context.activePlan) missing.push("active_plan");
+  if (!context.currentPhase) missing.push("current_phase");
+  if (!context.next.recommendation) missing.push("next_step");
+  if (context.recentSessions.length === 0 && countRecords(records, "session") === 0) missing.push("sessions");
+  if (context.recentDecisions.length === 0 && countRecords(records, "decision") === 0) missing.push("decisions");
+  if (eventSummary.total === 0) missing.push("event_history");
+  return missing;
+}
+
+function readinessStatus(context: CompactContext, gaps: string[]): ContinuityReadiness["status"] {
+  if (!context.project || context.git.dirty) {
+    return "needs_cleanup";
+  }
+  if (context.next.kind === "ambiguous_focus") {
+    return "ambiguous";
+  }
+  if (
+    context.next.kind === "blocking_finding" ||
+    context.next.kind === "blocked_dependency" ||
+    context.openFindings.some((finding) => finding.severity === "critical" || finding.severity === "high")
+  ) {
+    return "blocked";
+  }
+  if (
+    !context.activePlan ||
+    context.next.kind === "create_plan" ||
+    context.next.kind === "review_deferred" ||
+    context.next.kind === "create_plan_empty"
+  ) {
+    return "needs_plan";
+  }
+  return "ready";
+}
+
+function renderContinueMarkdown(input: {
+  context: CompactContext;
+  phase: PhaseDetail | null;
+  roadmapItem: RoadmapItem | null;
+  latestSession: Session | null;
+  openSession: Session | null;
+  newSession: Session | null;
+  closedSession: Session | null;
+  warnings: string[];
+  readiness: ContinuityReadiness;
+  roi: ContextRoiReport;
+}): string {
+  const lines = [
+    "# Zenith Continue",
+    "",
+    "## Readiness",
+    `- Status: ${input.readiness.status}`,
+    `- Score: ${input.readiness.score}/100`,
+    `- Strengths: ${formatList(input.readiness.strengths, 5)}`,
+    `- Gaps: ${formatList(input.readiness.gaps, 5)}`,
+    "",
+    "## ROI",
+    `- Source events: ${input.roi.sourceEvents}`,
+    `- Estimated raw tokens: ${input.roi.estimatedRawTokens}`,
+    `- Compact tokens: ${input.roi.compactTokens}`,
+    `- Compression ratio: ${input.roi.compressionRatio}x`,
+    `- Signals: ${formatList(input.roi.continuitySignals, 8)}`,
+    "",
+    "## Next",
+    `- Recommendation: ${input.context.next.recommendation ?? "none"}`,
+    `- Reason: ${input.context.next.reason}`,
+    `- Kind: ${input.context.next.kind ?? "session_next_step"}`,
+    "",
+    "## Worktree",
+    `- Branch: ${input.context.git.branch ?? "none"}`,
+    `- Dirty: ${input.context.git.dirty ? "yes" : "no"}`,
+    `- Changed files: ${formatList(input.context.git.changedFiles, 8)}`,
+    "",
+    "## Plan",
+    `- Active plan: ${input.context.activePlan ? input.context.activePlan.title : "none"}`,
+    `- Current phase: ${input.context.currentPhase ? input.context.currentPhase.title : "none"}`,
+    `- Phase detail: ${input.phase ? `${input.phase.phase.title} (${input.phase.phase.status})` : "none"}`,
+    `- Roadmap item: ${input.roadmapItem ? `${input.roadmapItem.title} (${input.roadmapItem.status})` : "none"}`,
+    "",
+    "## Sessions",
+    `- Latest: ${input.latestSession ? truncateText(input.latestSession.summary ?? input.latestSession.id, 160) : "none"}`,
+    `- Open: ${input.openSession ? input.openSession.id : "none"}`,
+    `- New: ${input.newSession ? input.newSession.id : "none"}`,
+    `- Closed: ${input.closedSession ? input.closedSession.id : "none"}`,
+    "",
+    "## Warnings",
+  ];
+
+  if (input.warnings.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const warning of input.warnings.slice(0, 8)) {
+      lines.push(`- ${warning}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+type PromptSectionDraft = {
+  id: string;
+  title: string;
+  priority: number;
+  body: string;
+};
+
+function renderPromptResult(
+  continuation: ContinueResult,
+  options: { format: PromptFormat; maxTokens?: number; includeMetadata?: boolean },
+): PromptResult {
+  const sections = buildPromptSections(continuation, options.format, Boolean(options.includeMetadata));
+  const included = selectPromptSections(sections, options.maxTokens);
+  const includedIds = new Set(included.map((section) => section.id));
+  const content = included.map((section) => section.body).join("\n\n");
+  const estimatedTokens = estimateTokens(content);
+
+  return PromptResultSchema.parse({
+    format: options.format,
+    content,
+    estimatedTokens,
+    ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+    truncated: included.length < sections.length,
+    sections: sections.map((section) => ({
+      id: section.id,
+      title: section.title,
+      priority: section.priority,
+      estimatedTokens: estimateTokens(section.body),
+      included: includedIds.has(section.id),
+    })),
+    ...(options.includeMetadata
+      ? {
+          metadata: {
+            ...(continuation.context.project ? { projectId: continuation.context.project.id } : {}),
+            ...(continuation.context.activePlan ? { planId: continuation.context.activePlan.id } : {}),
+            ...(continuation.context.currentPhase ? { phaseId: continuation.context.currentPhase.id } : {}),
+            ...(continuation.context.next.kind ? { nextKind: continuation.context.next.kind } : {}),
+            readinessStatus: continuation.readiness.status,
+          },
+        }
+      : {}),
+  });
+}
+
+function buildPromptSections(continuation: ContinueResult, format: PromptFormat, includeMetadata: boolean): PromptSectionDraft[] {
+  const context = continuation.context;
+  const intro = promptIntro(format);
+  const sections: PromptSectionDraft[] = [
+    {
+      id: "next",
+      title: "Next Step",
+      priority: 100,
+      body: [
+        `# Zenith Prompt (${format})`,
+        intro,
+        "",
+        "## Next Step",
+        `- Recommendation: ${context.next.recommendation ?? "none"}`,
+        `- Reason: ${context.next.reason}`,
+        `- Kind: ${context.next.kind ?? "session_next_step"}`,
+      ].join("\n"),
+    },
+    {
+      id: "phase",
+      title: "Phase",
+      priority: 90,
+      body: [
+        "## Phase",
+        `- Active plan: ${context.activePlan ? context.activePlan.title : "none"}`,
+        `- Current phase: ${context.currentPhase ? `${context.currentPhase.title} (${context.currentPhase.status})` : "none"}`,
+        `- Phase detail: ${continuation.phase ? continuation.phase.phase.description ?? continuation.phase.phase.title : "none"}`,
+        ...(continuation.phase && continuation.phase.phase.acceptanceCriteria.length > 0
+          ? ["- Acceptance criteria:", ...continuation.phase.phase.acceptanceCriteria.slice(0, 6).map((item) => `  - ${item}`)]
+          : []),
+      ].join("\n"),
+    },
+    {
+      id: "readiness",
+      title: "Readiness",
+      priority: 80,
+      body: [
+        "## Readiness",
+        `- Status: ${continuation.readiness.status}`,
+        `- Score: ${continuation.readiness.score}/100`,
+        `- Strengths: ${formatList(continuation.readiness.strengths, 5)}`,
+        `- Gaps: ${formatList(continuation.readiness.gaps, 5)}`,
+      ].join("\n"),
+    },
+    {
+      id: "warnings",
+      title: "Warnings",
+      priority: 75,
+      body: [
+        "## Warnings",
+        ...(continuation.warnings.length > 0 ? continuation.warnings.slice(0, 8).map((warning) => `- ${warning}`) : ["- none"]),
+      ].join("\n"),
+    },
+    {
+      id: "worktree",
+      title: "Worktree",
+      priority: 65,
+      body: [
+        "## Worktree",
+        `- Branch: ${context.git.branch ?? "none"}`,
+        `- Dirty: ${context.git.dirty ? "yes" : "no"}`,
+        `- Changed files: ${formatList(context.git.changedFiles, 8)}`,
+      ].join("\n"),
+    },
+    {
+      id: "roi",
+      title: "ROI",
+      priority: 40,
+      body: [
+        "## ROI",
+        `- Source events: ${continuation.roi.sourceEvents}`,
+        `- Estimated raw tokens: ${continuation.roi.estimatedRawTokens}`,
+        `- Compact tokens: ${continuation.roi.compactTokens}`,
+        `- Compression ratio: ${continuation.roi.compressionRatio}x`,
+        `- Signals: ${formatList(continuation.roi.continuitySignals, 8)}`,
+      ].join("\n"),
+    },
+    {
+      id: "recent-memory",
+      title: "Recent Memory",
+      priority: 35,
+      body: [
+        "## Recent Memory",
+        `- Latest session: ${continuation.latestSession ? truncateText(continuation.latestSession.summary ?? continuation.latestSession.id, 160) : "none"}`,
+        `- Recent decisions: ${formatList(context.recentDecisions.map((decision) => decision.title), 5)}`,
+        `- Open findings: ${formatList(context.openFindings.map((finding) => `${finding.severity}: ${finding.title}`), 5)}`,
+      ].join("\n"),
+    },
+    {
+      id: "compact-context",
+      title: "Compact Context",
+      priority: 20,
+      body: ["## Compact Context", context.markdown].join("\n"),
+    },
+  ];
+
+  if (includeMetadata) {
+    sections.push({
+      id: "metadata",
+      title: "Metadata",
+      priority: 10,
+      body: [
+        "## Metadata",
+        `- Project ID: ${context.project?.id ?? "none"}`,
+        `- Plan ID: ${context.activePlan?.id ?? "none"}`,
+        `- Phase ID: ${context.currentPhase?.id ?? "none"}`,
+        `- Next kind: ${context.next.kind ?? "session_next_step"}`,
+        `- Readiness: ${continuation.readiness.status}`,
+      ].join("\n"),
+    });
+  }
+
+  return sections;
+}
+
+function promptIntro(format: PromptFormat): string {
+  if (format === "codex") {
+    return "You are Codex working in this repository. Use the local files and Zenith context below to continue the requested task.";
+  }
+  if (format === "claude") {
+    return "You are Claude Code working in this repository. Use the local files and Zenith context below to continue the requested task.";
+  }
+  if (format === "agent") {
+    return "You are an implementation agent. Use the Zenith continuity context below to resume work without re-reading unrelated history.";
+  }
+  return "Use this markdown continuity prompt to resume the Zenith project from local memory.";
+}
+
+function selectPromptSections(sections: PromptSectionDraft[], maxTokens: number | undefined): PromptSectionDraft[] {
+  if (maxTokens === undefined) return sections;
+
+  const selected: PromptSectionDraft[] = [];
+  let used = 0;
+  for (const section of [...sections].sort((a, b) => b.priority - a.priority)) {
+    const tokens = estimateTokens(section.body);
+    if (used + tokens <= maxTokens || selected.length === 0) {
+      selected.push(section);
+      used += tokens;
+    }
+  }
+
+  const order = new Map(sections.map((section, index) => [section.id, index]));
+  return selected.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+}
+
+function nextStepList(next: NextStep): string[] {
+  return next.recommendation ? [next.recommendation] : [];
+}
+
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
+}
+
+function formatList(values: string[], max: number): string {
+  if (values.length === 0) return "none";
+  const visible = values.slice(0, max);
+  const remaining = values.length - visible.length;
+  return remaining > 0 ? `${visible.join(", ")} (+${remaining} more)` : visible.join(", ");
 }
 
 function parseMemoryEntityType(raw: string): MemoryEntityType {

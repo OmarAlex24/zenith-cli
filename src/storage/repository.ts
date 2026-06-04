@@ -1689,6 +1689,15 @@ export class ZenithRepository {
     return this.listRecentSessions(projectId, limit);
   }
 
+  listOpenSessions(projectId: string, limit = 20): Session[] {
+    return this.db
+      .query<SessionRow, [string, number]>(
+        "SELECT * FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY created_at DESC LIMIT ?",
+      )
+      .all(projectId, limit)
+      .map(mapSession);
+  }
+
   getLatestEndedSession(projectId: string): Session | null {
     const row = this.db
       .query<SessionRow, [string]>(
