@@ -22,6 +22,9 @@ type CommandOptions = {
   since?: string;
   days?: string;
   staleAfterDays?: string;
+  until?: string;
+  timeout?: string;
+  pollInterval?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -217,6 +220,17 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .option("--json", "Emit stable JSON")
     .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) => app.clearFocus(), humanFocusStatus);
+    });
+
+  const stage = program.command("stage").description("Agent choreography stage state");
+
+  stage
+    .command("set")
+    .description("Set project, plan, or phase stage state for wake-on-event workflows")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.setStage(await readJsonInput(commandOptions.input)), humanStage);
     });
 
   const spike = program.command("spike").description("Bounded investigations");
@@ -600,6 +614,27 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.activity(), humanActivity);
     });
 
+  program
+    .command("watch")
+    .description("Block until a local project memory predicate matches")
+    .requiredOption("--until <predicate>", "Predicate such as stage=review,plan=<plan-id>,phase=<phase-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--timeout <ms>", "Maximum time to wait in milliseconds")
+    .option("--poll-interval <ms>", "Polling interval in milliseconds (default 1000)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.watch({
+            until: commandOptions.until ?? "",
+            ...parseTimeoutOption(commandOptions.timeout),
+            ...parsePollIntervalOption(commandOptions.pollInterval),
+          }),
+        humanWatch,
+      );
+    });
+
   const agents = program.command("agents").description("Agent pack installer");
 
   agents
@@ -929,6 +964,41 @@ function humanSessionList(sessions: Array<{ id: string; startedAt: string; ended
     .join("\n");
 }
 
+function humanStage(stage: {
+  id: string;
+  stage: string;
+  planId?: string | undefined;
+  phaseId?: string | undefined;
+  role?: string | undefined;
+  note?: string | undefined;
+  updatedAt: string;
+}): string {
+  return [
+    `Stage: ${stage.stage}`,
+    `ID: ${stage.id}`,
+    `Plan: ${stage.planId ?? "project"}`,
+    `Phase: ${stage.phaseId ?? "none"}`,
+    `Role: ${stage.role ?? "none"}`,
+    `Note: ${stage.note ?? "none"}`,
+    `Updated: ${stage.updatedAt}`,
+  ].join("\n");
+}
+
+function humanWatch(result: {
+  matched: true;
+  predicate: { raw: string };
+  stage: { stage: string; planId?: string | undefined; phaseId?: string | undefined };
+  elapsedMs: number;
+}): string {
+  return [
+    `Matched: ${result.predicate.raw}`,
+    `Stage: ${result.stage.stage}`,
+    `Plan: ${result.stage.planId ?? "project"}`,
+    `Phase: ${result.stage.phaseId ?? "none"}`,
+    `Elapsed: ${result.elapsedMs}ms`,
+  ].join("\n");
+}
+
 function parseFindingStatus(status: string | undefined): FindingListStatus {
   if (status === undefined) {
     return "open";
@@ -962,6 +1032,16 @@ function parseDaysOption(value?: string): { days?: number } {
 function parseStaleAfterDaysOption(value?: string): { staleAfterDays?: number } {
   const staleAfterDays = parsePositiveIntegerOption(value, "stale-after-days");
   return staleAfterDays === undefined ? {} : { staleAfterDays };
+}
+
+function parseTimeoutOption(value?: string): { timeoutMs?: number } {
+  const timeoutMs = parsePositiveIntegerOption(value, "timeout");
+  return timeoutMs === undefined ? {} : { timeoutMs };
+}
+
+function parsePollIntervalOption(value?: string): { pollIntervalMs?: number } {
+  const pollIntervalMs = parsePositiveIntegerOption(value, "poll-interval");
+  return pollIntervalMs === undefined ? {} : { pollIntervalMs };
 }
 
 function parsePositiveIntegerOption(value: string | undefined, optionName: string): number | undefined {

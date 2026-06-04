@@ -184,6 +184,35 @@ describe("context engine", () => {
     services.close();
   });
 
+  test("compact context reports discarded roadmap work without making it next", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+    const services = createZenithApp({ cwd, zenithHome });
+
+    await services.app.registerProject();
+    await services.app.createRoadmap({
+      title: "Zenith CLI Product Roadmap",
+      items: [
+        { title: "MVP 5.5 - Pulse", status: "done" },
+        {
+          title: "MVP 6 - Agent Backends",
+          status: "discarded",
+          justification: "Provider CLI spawning is no longer in scope.",
+        },
+      ],
+    });
+
+    const next = await services.app.nextPlanStep();
+    const compact = await services.app.compactContext();
+
+    expect(next.kind).toBe("create_plan_empty");
+    expect(compact.markdown).toContain("actionable: none");
+    expect(compact.markdown).toContain("discarded: discarded: MVP 6 - Agent Backends");
+    expect(compact.markdown).toContain("why: Provider CLI spawning is no longer in scope.");
+    services.close();
+  });
+
   test("git context includes changed file names without file contents", async () => {
     const cwd = makeTempDir();
     const zenithHome = makeTempDir();

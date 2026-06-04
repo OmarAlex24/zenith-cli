@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ok, fail, ZenithError } from "../src/cli/json-output";
-import { ContextSnapshotSchema, CreatePlanInputSchema } from "../src/domain/schemas";
+import { ContextSnapshotSchema, CreatePlanInputSchema, CreateRoadmapInputSchema } from "../src/domain/schemas";
 
 describe("domain schemas and json envelope", () => {
   test("validates plan input with at least one phase", () => {
@@ -24,6 +24,19 @@ describe("domain schemas and json envelope", () => {
 
     expect(parsed.phases[0]?.status).toBe("todo");
     expect(parsed.phases[1]?.status).toBe("done");
+  });
+
+  test("accepts discarded roadmap items and cancelled aliases", () => {
+    const parsed = CreateRoadmapInputSchema.parse({
+      title: "Product Roadmap",
+      items: [
+        { title: "MVP 6 - Agent Backends", status: "discarded" },
+        { title: "MVP 7 - Provider Jobs", status: "cancelled" },
+      ],
+    });
+
+    expect(parsed.items[0]?.status).toBe("discarded");
+    expect(parsed.items[1]?.status).toBe("discarded");
   });
 
   test("wraps success output in the stable envelope", () => {

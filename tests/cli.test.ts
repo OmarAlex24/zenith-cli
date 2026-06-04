@@ -274,6 +274,46 @@ describe("cli json commands", () => {
     expect((duplicate.json as any).errors[0].code).toBe("active_plan_exists");
   });
 
+  test("discarded roadmap items stay visible but cannot become plans", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Zenith CLI Product Roadmap",
+        items: [{ title: "MVP 6 - Agent Backends", status: "deferred" }],
+      },
+    });
+    const roadmapId = (roadmap.json as any).data.id as string;
+    const itemId = (roadmap.json as any).data.items[0].id as string;
+
+    const discarded = await runDecode(["roadmap", "update-item", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        itemId,
+        status: "discarded",
+        justification: "Wake-on-event choreography replaces provider CLI spawning.",
+      },
+    });
+    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+    const createPlan = await runDecode(["roadmap", "create-plan", roadmapId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { itemId },
+    });
+
+    expect(discarded.exitCode).toBe(0);
+    expect((discarded.json as any).data.items[0].status).toBe("discarded");
+    expect((next.json as any).data.kind).toBe("create_plan_empty");
+    expect(createPlan.exitCode).toBe(1);
+    expect((createPlan.json as any).errors[0].code).toBe("roadmap_item_discarded");
+  });
+
   test("decision list and show return project decisions", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();
@@ -770,6 +810,71 @@ describe("cli json commands", () => {
     const item = group.items.find((entry: any) => entry.item.title === "WS Item");
     expect(item.linkedPlans).toHaveLength(1);
     expect(item.phaseProgress).toEqual({ done: 1, total: 1 });
+  });
+
+  test("stage set and watch support scoped wake-on-event predicates", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Choreography Plan",
+        phases: [{ title: "Implement" }],
+      },
+    });
+    const planId = (plan.json as any).data.id as string;
+    const phaseId = (plan.json as any).data.phases[0].id as string;
+
+    const stage = await runDecode(["stage", "set", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        phaseId,
+        stage: "review",
+        role: "codex",
+        note: "Ready for review.",
+      },
+    });
+    const watch = await runDecode(
+      ["watch", "--until", `stage=review,plan=${planId},phase=${phaseId}`, "--timeout", "100", "--poll-interval", "1", "--json"],
+      { cwd, decodeHome },
+    );
+    const next = await runDecode(["plan", "next", "--json"], { cwd, decodeHome });
+
+    expect(stage.exitCode).toBe(0);
+    expect((stage.json as any).data.planId).toBe(planId);
+    expect((stage.json as any).data.phaseId).toBe(phaseId);
+    expect((stage.json as any).data.stage).toBe("review");
+    expect((watch.json as any).ok).toBe(true);
+    expect((watch.json as any).data.matched).toBe(true);
+    expect((watch.json as any).data.stage.stage).toBe("review");
+    expect((next.json as any).data.recommendation).toBe("Implement");
+  });
+
+  test("watch returns stable timeout and invalid predicate errors", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const timeout = await runDecode(["watch", "--until", "stage=review", "--timeout", "1", "--poll-interval", "1", "--json"], {
+      cwd,
+      decodeHome,
+    });
+    const invalid = await runDecode(["watch", "--until", "stage=bogus", "--timeout", "1", "--poll-interval", "1", "--json"], {
+      cwd,
+      decodeHome,
+    });
+
+    expect(timeout.exitCode).toBe(2);
+    expect((timeout.json as any).ok).toBe(false);
+    expect((timeout.json as any).errors[0].code).toBe("watch_timeout");
+    expect((invalid.json as any).ok).toBe(false);
+    expect((invalid.json as any).errors[0].code).toBe("invalid_watch_predicate");
   });
 
   // -------------------------------------------------------------------------

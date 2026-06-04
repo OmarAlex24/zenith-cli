@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createId, nowIso } from "../domain/ids";
 import {
+  AgentStageStateSchema,
   DecisionSchema,
   EventSchema,
   FindingSchema,
@@ -10,6 +11,8 @@ import {
   RoadmapSchema,
   SessionSchema,
   SpikeSchema,
+  type AgentStage,
+  type AgentStageState,
   type Decision,
   type Event,
   type Evidence,
@@ -179,6 +182,19 @@ type RoadmapFocusRow = {
   updated_at: string;
 };
 
+type AgentStageRow = {
+  id: string;
+  project_id: string;
+  scope_key: string;
+  plan_id: string | null;
+  phase_id: string | null;
+  stage: AgentStage;
+  role: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RegisterProjectInput = {
   name: string;
   rootPath: string;
@@ -214,6 +230,11 @@ export type EventWindowSummary = {
 export type EventDayCount = {
   date: string;
   count: number;
+};
+
+export type AgentStageScope = {
+  planId?: string;
+  phaseId?: string;
 };
 
 export type InsertPlanInput = {
@@ -958,6 +979,85 @@ export class ZenithRepository {
       .query("DELETE FROM roadmap_focus WHERE project_id = ? AND worktree_key = ?")
       .run(projectId, worktreeKey);
     return result.changes > 0;
+  }
+
+  // Agent choreography stage state
+  getAgentStage(projectId: string, scope: AgentStageScope = {}): AgentStageState | null {
+    const row = this.db
+      .query<AgentStageRow, [string, string]>(
+        "SELECT * FROM agent_stages WHERE project_id = ? AND scope_key = ?",
+      )
+      .get(projectId, agentStageScopeKey(scope));
+
+    return row ? mapAgentStage(row) : null;
+  }
+
+  listAgentStages(projectId: string): AgentStageState[] {
+    return this.db
+      .query<AgentStageRow, [string]>("SELECT * FROM agent_stages WHERE project_id = ? ORDER BY updated_at DESC")
+      .all(projectId)
+      .map(mapAgentStage);
+  }
+
+  setAgentStage(input: {
+    projectId: string;
+    stage: AgentStage;
+    planId?: string;
+    phaseId?: string;
+    role?: string;
+    note?: string;
+  }): AgentStageState {
+    const scope = { ...(input.planId ? { planId: input.planId } : {}), ...(input.phaseId ? { phaseId: input.phaseId } : {}) };
+    const scopeKey = agentStageScopeKey(scope);
+    const timestamp = nowIso();
+    const existing = this.getAgentStage(input.projectId, scope);
+
+    this.db.transaction(() => {
+      if (existing) {
+        this.db
+          .query(
+            `
+            UPDATE agent_stages
+            SET stage = ?, role = ?, note = ?, updated_at = ?
+            WHERE id = ?
+          `,
+          )
+          .run(input.stage, input.role ?? null, input.note ?? null, timestamp, existing.id);
+      } else {
+        this.db
+          .query(
+            `
+            INSERT INTO agent_stages (
+              id, project_id, scope_key, plan_id, phase_id, stage,
+              role, note, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            createId("stage"),
+            input.projectId,
+            scopeKey,
+            input.planId ?? null,
+            input.phaseId ?? null,
+            input.stage,
+            input.role ?? null,
+            input.note ?? null,
+            timestamp,
+            timestamp,
+          );
+      }
+
+      this.recordEvent(input.projectId, "stage.changed", "agent_stage", scopeKey, {
+        stage: input.stage,
+        scopeKey,
+        planId: input.planId,
+        phaseId: input.phaseId,
+        role: input.role,
+      });
+    })();
+
+    return this.getAgentStage(input.projectId, scope)!;
   }
 
   updatePlan(planId: string, patch: UpdatePlanPatch): Plan {
@@ -1757,6 +1857,30 @@ function mapRoadmapFocus(row: RoadmapFocusRow): RoadmapFocus {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function mapAgentStage(row: AgentStageRow): AgentStageState {
+  return AgentStageStateSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    ...(row.plan_id === null ? {} : { planId: row.plan_id }),
+    ...(row.phase_id === null ? {} : { phaseId: row.phase_id }),
+    stage: row.stage,
+    ...(row.role === null ? {} : { role: row.role }),
+    ...(row.note === null ? {} : { note: row.note }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function agentStageScopeKey(scope: AgentStageScope): string {
+  if (scope.phaseId) {
+    return `phase:${scope.phaseId}`;
+  }
+  if (scope.planId) {
+    return `plan:${scope.planId}`;
+  }
+  return "project";
 }
 
 function mapPhase(row: PhaseRow): PlanPhase {

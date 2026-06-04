@@ -3,8 +3,11 @@ import { createId, nowIso } from "../domain/ids";
 import {
   AddRoadmapItemInputSchema,
   AdvancePlanInputSchema,
+  AgentStageSchema,
   ConcludeSpikeInputSchema,
   CaptureSessionInputSchema,
+  type AgentStage,
+  type AgentStageState,
   type AdvanceResult,
   type CompactContext,
   type ContextSnapshot,
@@ -22,6 +25,7 @@ import {
   type ResumeContext,
   SessionSummaryInputSchema,
   SetBriefInputSchema,
+  SetStageInputSchema,
   StartSessionInputSchema,
   UpdateFindingInputSchema,
   UpdatePhaseInputSchema,
@@ -104,6 +108,21 @@ export type FocusStatus = {
   ambiguous: boolean;
   candidates: FocusCandidate[];
   activePlan: { id: string; title: string } | null;
+};
+
+export type WatchPredicate = {
+  raw: string;
+  stage: AgentStage;
+  planId?: string;
+  phaseId?: string;
+};
+
+export type WatchResult = {
+  matched: true;
+  predicate: WatchPredicate;
+  stage: AgentStageState;
+  checkedAt: string;
+  elapsedMs: number;
 };
 
 export type StandupDigest = {
@@ -336,6 +355,71 @@ export class ZenithApp {
     return this.focusStatus();
   }
 
+  async setStage(rawInput: unknown): Promise<AgentStageState> {
+    const project = await this.requireProject();
+    const input = SetStageInputSchema.parse(rawInput);
+    const scope = await this.resolveStageScope(project.id, {
+      ...(input.planId ? { planId: input.planId } : {}),
+      ...(input.phaseId ? { phaseId: input.phaseId } : {}),
+    });
+
+    return this.repository.setAgentStage({
+      projectId: project.id,
+      stage: input.stage,
+      ...(scope.planId ? { planId: scope.planId } : {}),
+      ...(scope.phaseId ? { phaseId: scope.phaseId } : {}),
+      ...(input.role ? { role: input.role } : {}),
+      ...(input.note ? { note: input.note } : {}),
+    });
+  }
+
+  async watch(options: { until: string; timeoutMs?: number; pollIntervalMs?: number }): Promise<WatchResult> {
+    const project = await this.requireProject();
+    const parsed = parseWatchPredicate(options.until);
+    const scope = await this.resolveStageScope(project.id, {
+      ...(parsed.planId ? { planId: parsed.planId } : {}),
+      ...(parsed.phaseId ? { phaseId: parsed.phaseId } : {}),
+    });
+    const predicate = {
+      raw: parsed.raw,
+      stage: parsed.stage,
+      ...(scope.planId ? { planId: scope.planId } : {}),
+      ...(scope.phaseId ? { phaseId: scope.phaseId } : {}),
+    };
+    const startedAt = Date.now();
+    const pollIntervalMs = options.pollIntervalMs ?? 1000;
+    const deadline = options.timeoutMs === undefined ? null : startedAt + options.timeoutMs;
+
+    for (;;) {
+      const stage = this.repository.getAgentStage(project.id, scope);
+      if (stage?.stage === predicate.stage) {
+        return {
+          matched: true,
+          predicate,
+          stage,
+          checkedAt: nowIso(),
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+
+      const now = Date.now();
+      if (deadline !== null && now >= deadline) {
+        throw new ZenithError(`Watch timed out waiting for ${predicate.raw}.`, {
+          code: "watch_timeout",
+          details: {
+            predicate,
+            timeoutMs: options.timeoutMs,
+            elapsedMs: now - startedAt,
+          },
+          exitCode: 2,
+        });
+      }
+
+      const nextDelay = deadline === null ? pollIntervalMs : Math.max(1, Math.min(pollIntervalMs, deadline - now));
+      await sleep(nextDelay);
+    }
+  }
+
   async setBrief(rawInput: unknown): Promise<ProjectBrief> {
     const project = await this.requireProject();
     const input = SetBriefInputSchema.parse(rawInput);
@@ -464,6 +548,13 @@ export class ZenithApp {
       ...(input.itemId ? { itemId: input.itemId } : {}),
       ...(input.itemTitle ? { itemTitle: input.itemTitle } : {}),
     });
+
+    if (item.status === "discarded") {
+      throw new ZenithError("Cannot create a plan from a discarded roadmap item.", {
+        code: "roadmap_item_discarded",
+        details: { roadmapId: roadmap.id, itemId: item.id, status: item.status },
+      });
+    }
 
     if (input.status === "active") {
       this.assertNoOtherActivePlan(project.id, { sourceRoadmapId: roadmap.id });
@@ -1288,6 +1379,41 @@ export class ZenithApp {
     return detection.project;
   }
 
+  private async resolveStageScope(projectId: string, scope: { planId?: string; phaseId?: string }): Promise<{ planId?: string; phaseId?: string }> {
+    if (scope.phaseId) {
+      const phaseResult = this.repository.getPlanByPhaseId(scope.phaseId);
+      if (!phaseResult || phaseResult.plan.projectId !== projectId) {
+        throw new ZenithError(`Phase not found: ${scope.phaseId}`, {
+          code: "phase_not_found",
+          details: { phaseId: scope.phaseId },
+        });
+      }
+
+      if (scope.planId && phaseResult.plan.id !== scope.planId) {
+        throw new ZenithError(`Phase ${scope.phaseId} does not belong to plan ${scope.planId}.`, {
+          code: "phase_plan_mismatch",
+          details: { planId: scope.planId, phaseId: scope.phaseId },
+        });
+      }
+
+      return { planId: phaseResult.plan.id, phaseId: scope.phaseId };
+    }
+
+    if (scope.planId) {
+      const plan = this.repository.getPlanById(scope.planId);
+      if (!plan || plan.projectId !== projectId) {
+        throw new ZenithError(`Plan not found: ${scope.planId}`, {
+          code: "plan_not_found",
+          details: { planId: scope.planId },
+        });
+      }
+
+      return { planId: scope.planId };
+    }
+
+    return {};
+  }
+
   private assertNoOtherActivePlan(
     projectId: string,
     scope: { sourceRoadmapId: string | null; planId?: string },
@@ -1330,6 +1456,68 @@ function normalizeEvidence(evidence: {
     value: evidence.value,
     createdAt: evidence.createdAt ?? nowIso(),
   };
+}
+
+function parseWatchPredicate(raw: string): WatchPredicate {
+  const clauses = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const values = new Map<string, string>();
+
+  for (const clause of clauses) {
+    const match = /^([A-Za-z][A-Za-z0-9_-]*)=(.+)$/.exec(clause);
+    if (!match) {
+      throw invalidWatchPredicate(raw, "Use comma-separated key=value clauses.");
+    }
+
+    const key = normalizeWatchPredicateKey(match[1]!);
+    const value = match[2]!.trim();
+    if (values.has(key)) {
+      throw invalidWatchPredicate(raw, `Duplicate predicate key: ${key}.`);
+    }
+    if (value.length === 0) {
+      throw invalidWatchPredicate(raw, `Empty predicate value: ${key}.`);
+    }
+    values.set(key, value);
+  }
+
+  const allowedKeys = new Set(["stage", "plan", "phase"]);
+  for (const key of values.keys()) {
+    if (!allowedKeys.has(key)) {
+      throw invalidWatchPredicate(raw, `Unsupported predicate key: ${key}.`);
+    }
+  }
+
+  const stageValue = values.get("stage");
+  const parsedStage = AgentStageSchema.safeParse(stageValue);
+  if (!parsedStage.success) {
+    throw invalidWatchPredicate(raw, "Predicate must include stage=plan|implement|review|done.");
+  }
+
+  return {
+    raw,
+    stage: parsedStage.data,
+    ...(values.get("plan") ? { planId: values.get("plan")! } : {}),
+    ...(values.get("phase") ? { phaseId: values.get("phase")! } : {}),
+  };
+}
+
+function normalizeWatchPredicateKey(key: string): string {
+  if (key === "planId") return "plan";
+  if (key === "phaseId") return "phase";
+  return key;
+}
+
+function invalidWatchPredicate(raw: string, reason: string): ZenithError {
+  return new ZenithError(`Invalid watch predicate: ${reason}`, {
+    code: "invalid_watch_predicate",
+    details: { predicate: raw },
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function driftIssues(

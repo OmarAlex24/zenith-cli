@@ -70,6 +70,7 @@ export type RoadmapProgress = {
   inProgress: number;
   todo: number;
   deferred: number;
+  discarded: number;
   percentDone: number;
   nextItem?: {
     id: string;
@@ -187,6 +188,7 @@ export function roadmapProgress(roadmaps: Roadmap[]): RoadmapProgress[] {
     const inProgress = roadmap.items.filter((item) => item.status === "in_progress").length;
     const todo = roadmap.items.filter((item) => item.status === "todo").length;
     const deferred = roadmap.items.filter((item) => item.status === "deferred").length;
+    const discarded = roadmap.items.filter((item) => item.status === "discarded").length;
     const nextItem = roadmap.items.find((item) => item.status === "in_progress") ?? roadmap.items.find((item) => item.status === "todo");
 
     return {
@@ -198,6 +200,7 @@ export function roadmapProgress(roadmaps: Roadmap[]): RoadmapProgress[] {
       inProgress,
       todo,
       deferred,
+      discarded,
       percentDone: roadmap.items.length === 0 ? 0 : Math.round((done / roadmap.items.length) * 100),
       ...(nextItem
         ? {

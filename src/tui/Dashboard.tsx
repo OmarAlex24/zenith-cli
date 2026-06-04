@@ -1181,6 +1181,7 @@ function workspaceItemRows(group: WorkspaceGroup): Row[] {
     ...roadmapItemBucketRows("NEXT", buckets.next),
     ...roadmapItemBucketRows("LATER", buckets.later),
     ...roadmapItemBucketRows("DONE", buckets.done),
+    ...roadmapItemBucketRows("DISCARDED", buckets.discarded),
   ];
 }
 
@@ -1191,22 +1192,24 @@ function selectableRowIndexes(rows: Row[]): number[] {
 function orderedWorkspaceItems(group: WorkspaceGroup | undefined): WorkspaceItem[] {
   if (!group || group.roadmapId === null) return [];
   const buckets = roadmapItemBuckets(group.items);
-  return [...buckets.next, ...buckets.later, ...buckets.done];
+  return [...buckets.next, ...buckets.later, ...buckets.done, ...buckets.discarded];
 }
 
 function roadmapItemBuckets(items: WorkspaceItem[]): {
   next: WorkspaceItem[];
   later: WorkspaceItem[];
   done: WorkspaceItem[];
+  discarded: WorkspaceItem[];
 } {
   return {
     next: items.filter((entry) => entry.item.status === "in_progress" || entry.item.status === "todo"),
     later: items.filter((entry) => entry.item.status === "deferred"),
     done: items.filter((entry) => entry.item.status === "done"),
+    discarded: items.filter((entry) => entry.item.status === "discarded"),
   };
 }
 
-function roadmapItemBucketRows(label: "NEXT" | "LATER" | "DONE", entries: WorkspaceItem[]): Row[] {
+function roadmapItemBucketRows(label: "NEXT" | "LATER" | "DONE" | "DISCARDED", entries: WorkspaceItem[]): Row[] {
   if (entries.length === 0) return [];
   return [
     { key: `section-${label}`, title: label, titleColor: palette.faint, selectable: false, variant: "header" },

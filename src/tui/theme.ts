@@ -25,6 +25,7 @@ const statusMap: Record<string, StatusGlyph> = {
   done: { glyph: "✓", color: palette.success, label: "done" },
   blocked: { glyph: "✕", color: palette.danger, label: "blocked" },
   deferred: { glyph: "⊘", color: palette.faint, label: "deferred" },
+  discarded: { glyph: "×", color: palette.faint, label: "discarded" },
   // container statuses
   active: { glyph: "●", color: palette.success, label: "active" },
   completed: { glyph: "✓", color: palette.success, label: "completed" },

@@ -184,6 +184,23 @@ describe("computeNext — characterization tests", () => {
     expect(result.evidence).toEqual(["roadmap_c", "item_def_1"]);
   });
 
+  test("6b. no active plan ignores discarded roadmap items", () => {
+    const done = makeRoadmapItem({ id: "item_done_3", roadmapId: "roadmap_discarded", title: "MVP 5 - Done", status: "done" });
+    const discarded = makeRoadmapItem({
+      id: "item_discarded_1",
+      roadmapId: "roadmap_discarded",
+      title: "MVP 6 - Agent Backends",
+      status: "discarded",
+    });
+    const roadmap = makeRoadmap({ id: "roadmap_discarded", title: "Discarded Roadmap", items: [done, discarded], status: "active" });
+
+    const result = computeNext(null, [], [], [roadmap]);
+
+    expect(result.kind).toBe("create_plan_empty" satisfies NextStepKind);
+    expect(result.recommendation).toBe("Create an active plan");
+    expect(result.evidence).toEqual([]);
+  });
+
   test("7. no active plan + low-severity finding with no actionable roadmap", () => {
     const finding = makeFinding({ id: "finding_low_1", title: "Missing docstrings", severity: "low" });
 

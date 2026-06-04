@@ -269,6 +269,10 @@ function appendRoadmaps(lines: string[], roadmaps: Roadmap[]): void {
     if (deferred.length > 0) {
       lines.push(`  - deferred backlog: ${formatRoadmapItems(deferred, 3)}`);
     }
+    const discarded = discardedRoadmapItems(roadmap);
+    if (discarded.length > 0) {
+      lines.push(`  - discarded: ${formatRoadmapItems(discarded, 3)}`);
+    }
   }
 }
 
@@ -278,6 +282,10 @@ function actionableRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
 
 function deferredRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
   return roadmap.items.filter((item) => item.status === "deferred");
+}
+
+function discardedRoadmapItems(roadmap: Roadmap): Roadmap["items"] {
+  return roadmap.items.filter((item) => item.status === "discarded");
 }
 
 function formatRoadmapItems(items: Roadmap["items"], max: number): string {

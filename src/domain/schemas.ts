@@ -14,9 +14,15 @@ export const PlanStatusSchema = z.enum(["active", "completed", "paused", "archiv
 export const BriefStatusSchema = z.enum(["current", "archived"]);
 export const RoadmapStatusSchema = z.enum(["active", "paused", "completed", "archived"]);
 export const SpikeStatusSchema = z.enum(["open", "concluded", "abandoned"]);
+export const AgentStageSchema = z.enum(["plan", "implement", "review", "done"]);
 
 const PHASE_STATUS_ALIASES: Record<string, string> = { pending: "todo", completed: "done" };
-const ROADMAP_ITEM_STATUS_ALIASES: Record<string, string> = { planned: "todo", completed: "done" };
+const ROADMAP_ITEM_STATUS_ALIASES: Record<string, string> = {
+  planned: "todo",
+  completed: "done",
+  canceled: "discarded",
+  cancelled: "discarded",
+};
 
 const aliasPreprocessor = (aliases: Record<string, string>) => (value: unknown) =>
   typeof value === "string" && value in aliases ? aliases[value] : value;
@@ -27,7 +33,7 @@ export const PhaseStatusSchema = z.preprocess(
 );
 export const RoadmapItemStatusSchema = z.preprocess(
   aliasPreprocessor(ROADMAP_ITEM_STATUS_ALIASES),
-  z.enum(["todo", "in_progress", "done", "deferred"]),
+  z.enum(["todo", "in_progress", "done", "deferred", "discarded"]),
 );
 
 export const EvidenceSchema = z.object({
@@ -167,6 +173,18 @@ export const SessionSchema = z.object({
   changedFiles: z.array(z.string().min(1)).default([]),
   relatedPlanId: z.string().min(1).optional(),
   nextSteps: z.array(z.string().min(1)).default([]),
+});
+
+export const AgentStageStateSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  planId: z.string().min(1).optional(),
+  phaseId: z.string().min(1).optional(),
+  stage: AgentStageSchema,
+  role: z.string().min(1).optional(),
+  note: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
 });
 
 export const GitContextSchema = z.object({
@@ -683,6 +701,14 @@ export const EndSessionInputSchema = z.object({
   endedAt: z.string().min(1).optional(),
 });
 
+export const SetStageInputSchema = z.object({
+  planId: z.string().min(1).optional(),
+  phaseId: z.string().min(1).optional(),
+  stage: AgentStageSchema,
+  role: z.string().min(1).optional(),
+  note: z.string().min(1).optional(),
+});
+
 export type Project = z.infer<typeof ProjectSchema>;
 export type Plan = z.infer<typeof PlanSchema>;
 export type PlanPhase = z.infer<typeof PlanPhaseSchema>;
@@ -697,6 +723,8 @@ export type RoadmapStatus = z.infer<typeof RoadmapStatusSchema>;
 export type RoadmapItemStatus = z.infer<typeof RoadmapItemStatusSchema>;
 export type Spike = z.infer<typeof SpikeSchema>;
 export type SpikeStatus = z.infer<typeof SpikeStatusSchema>;
+export type AgentStage = z.infer<typeof AgentStageSchema>;
+export type AgentStageState = z.infer<typeof AgentStageStateSchema>;
 export type Finding = z.infer<typeof FindingSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type GitContext = z.infer<typeof GitContextSchema>;
@@ -733,6 +761,7 @@ export type UpdateFindingInput = z.infer<typeof UpdateFindingInputSchema>;
 export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
 export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;
+export type SetStageInput = z.infer<typeof SetStageInputSchema>;
 export type Event = z.infer<typeof EventSchema>;
 export type NextStepKind = z.infer<typeof NextStepKindSchema>;
 export type NextStepStaleness = z.infer<typeof NextStepStalenessSchema>;

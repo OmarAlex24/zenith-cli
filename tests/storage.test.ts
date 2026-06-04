@@ -446,6 +446,15 @@ describe("sqlite repository", () => {
         )
         .run(project.id),
     ).toThrow("invalid plans.status");
+
+    const roadmap = repo.createRoadmap({
+      projectId: project.id,
+      title: "Product Roadmap",
+      status: "active",
+      items: [{ title: "MVP 6 - Agent Backends", status: "discarded", evidence: [] }],
+    });
+    expect(roadmap.items[0]?.status).toBe("discarded");
+
     repo.close();
   });
 
@@ -741,6 +750,78 @@ describe("sqlite repository", () => {
     expect(() =>
       repo.setFocus({ projectId: project.id, worktreeKey: "/work/meridian", roadmapId: "roadmap_bogus" }),
     ).toThrow("Roadmap not found");
+    repo.close();
+  });
+
+  test("v9 migration creates agent stage state table", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+
+    const tables = db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_stages'")
+      .all()
+      .map((row) => row.name);
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(agent_stages)")
+      .all()
+      .map((column) => column.name);
+
+    expect(tables).toEqual(["agent_stages"]);
+    expect(columns).toContain("scope_key");
+    expect(columns).toContain("stage");
+    db.close();
+  });
+
+  test("agent stages round-trip by scope, emit events, and isolate projects", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+    const otherProject = repo.registerProject({ name: "atlas", rootPath: "/work/atlas" });
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Choreography Plan",
+      status: "active",
+      phases: [{ title: "Implement", status: "todo", acceptanceCriteria: [], evidence: [] }],
+    });
+    const phaseId = plan.phases[0]!.id;
+
+    const created = repo.setAgentStage({
+      projectId: project.id,
+      planId: plan.id,
+      phaseId,
+      stage: "implement",
+      role: "opencode",
+      note: "Ready for implementation.",
+    });
+    const updated = repo.setAgentStage({
+      projectId: project.id,
+      planId: plan.id,
+      phaseId,
+      stage: "review",
+      role: "codex",
+    });
+
+    expect(created.stage).toBe("implement");
+    expect(updated.id).toBe(created.id);
+    expect(updated.stage).toBe("review");
+    expect(updated.role).toBe("codex");
+    expect(updated.note).toBeUndefined();
+    expect(repo.getAgentStage(project.id, { planId: plan.id, phaseId })?.stage).toBe("review");
+    expect(repo.getAgentStage(otherProject.id, { planId: plan.id, phaseId })).toBeNull();
+    expect(repo.listAgentStages(project.id)).toHaveLength(1);
+
+    const stageEvents = repo.listEvents(project.id, { types: ["stage.changed"] });
+    const reviewEvent = stageEvents.find((event) => (event.payload as any).stage === "review");
+    expect(stageEvents).toHaveLength(2);
+    expect(reviewEvent?.payload).toMatchObject({
+      stage: "review",
+      planId: plan.id,
+      phaseId,
+      role: "codex",
+    });
     repo.close();
   });
 

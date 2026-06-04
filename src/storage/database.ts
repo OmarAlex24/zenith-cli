@@ -212,6 +212,14 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 8,
     sql: "",
   },
+  {
+    version: 9,
+    sql: "",
+  },
+  {
+    version: 10,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -269,6 +277,10 @@ export function runMigrations(db: Database): void {
         runPhaseDependsOnMigration(db);
       } else if (migration.version === 8) {
         runFocusAndMultiPlanMigration(db);
+      } else if (migration.version === 9) {
+        runAgentStagesMigration(db);
+      } else if (migration.version === 10) {
+        runRoadmapItemDiscardedStatusMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -278,6 +290,47 @@ export function runMigrations(db: Database): void {
       );
     })();
   }
+}
+
+function runAgentStagesMigration(db: Database): void {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS agent_stages (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      scope_key TEXT NOT NULL,
+      plan_id TEXT REFERENCES plans(id) ON DELETE CASCADE,
+      phase_id TEXT REFERENCES plan_phases(id) ON DELETE CASCADE,
+      stage TEXT NOT NULL,
+      role TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_stages_scope
+      ON agent_stages(project_id, scope_key)`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_agent_stages_project_updated
+      ON agent_stages(project_id, updated_at DESC)`,
+  );
+  db.run(
+    `CREATE TRIGGER IF NOT EXISTS trg_agent_stages_stage_insert
+      BEFORE INSERT ON agent_stages
+      WHEN NEW.stage NOT IN ('plan', 'implement', 'review', 'done')
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid agent_stages.stage');
+      END`,
+  );
+  db.run(
+    `CREATE TRIGGER IF NOT EXISTS trg_agent_stages_stage_update
+      BEFORE UPDATE OF stage ON agent_stages
+      WHEN NEW.stage NOT IN ('plan', 'implement', 'review', 'done')
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid agent_stages.stage');
+      END`,
+  );
 }
 
 function runIntegrityHardeningMigration(db: Database): void {
@@ -356,6 +409,30 @@ function runStatusVocabularyMigration(db: Database): void {
   }
 }
 
+function runRoadmapItemDiscardedStatusMigration(db: Database): void {
+  db.run("DROP TRIGGER IF EXISTS trg_roadmap_items_status_insert");
+  db.run("DROP TRIGGER IF EXISTS trg_roadmap_items_status_update");
+
+  for (const statement of ROADMAP_ITEM_STATUS_TRIGGERS) {
+    db.run(statement);
+  }
+}
+
+const ROADMAP_ITEM_STATUS_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_insert
+    BEFORE INSERT ON roadmap_items
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred', 'discarded')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_update
+    BEFORE UPDATE OF status ON roadmap_items
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred', 'discarded')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
+    END`,
+];
+
 const STATUS_VOCABULARY_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
     BEFORE INSERT ON plan_phases
@@ -369,18 +446,7 @@ const STATUS_VOCABULARY_TRIGGERS = [
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
-  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_insert
-    BEFORE INSERT ON roadmap_items
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
-    BEGIN
-      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
-    END`,
-  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_update
-    BEFORE UPDATE OF status ON roadmap_items
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
-    BEGIN
-      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
-    END`,
+  ...ROADMAP_ITEM_STATUS_TRIGGERS,
 ];
 
 function tableHasColumn(db: Database, tableName: string, columnName: string): boolean {
@@ -472,18 +538,7 @@ const INTEGRITY_HARDENING_STATEMENTS = [
     BEGIN
       SELECT RAISE(ABORT, 'invalid roadmaps.source_plan_id');
     END`,
-  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_insert
-    BEFORE INSERT ON roadmap_items
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
-    BEGIN
-      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
-    END`,
-  `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_status_update
-    BEFORE UPDATE OF status ON roadmap_items
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'deferred')
-    BEGIN
-      SELECT RAISE(ABORT, 'invalid roadmap_items.status');
-    END`,
+  ...ROADMAP_ITEM_STATUS_TRIGGERS,
   `CREATE TRIGGER IF NOT EXISTS trg_roadmap_items_source_phase_insert
     BEFORE INSERT ON roadmap_items
     WHEN NEW.source_phase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan_phases WHERE id = NEW.source_phase_id)
