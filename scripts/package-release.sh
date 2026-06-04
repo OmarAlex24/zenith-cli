@@ -21,10 +21,11 @@ trap cleanup EXIT
 bun run compile
 mkdir -p dist
 cp dist/zenith "$tmp_dir/zenith"
+cp dist/zenith-headless.js "$tmp_dir/zenith-headless.js"
 cp README.md "$tmp_dir/README.md"
 cp LICENSE "$tmp_dir/LICENSE"
 
-tar -czf "dist/$artifact" -C "$tmp_dir" zenith README.md LICENSE
+tar -czf "dist/$artifact" -C "$tmp_dir" zenith zenith-headless.js README.md LICENSE
 shasum -a 256 "dist/$artifact" > "dist/$artifact.sha256"
 
 echo "Created dist/$artifact"

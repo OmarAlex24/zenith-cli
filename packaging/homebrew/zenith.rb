@@ -3,6 +3,8 @@ class Zenith < Formula
   homepage "https://github.com/OWNER/REPO"
   version "0.1.0"
 
+  depends_on "bun"
+
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/OWNER/REPO/releases/download/v#{version}/zenith-darwin-arm64.tar.gz"
@@ -24,7 +26,11 @@ class Zenith < Formula
   end
 
   def install
-    bin.install "zenith"
+    libexec.install "zenith-headless.js"
+    (bin/"zenith").write <<~SH
+      #!/bin/sh
+      exec "#{Formula["bun"].opt_bin}/bun" "#{libexec}/zenith-headless.js" "$@"
+    SH
   end
 
   test do

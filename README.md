@@ -8,7 +8,7 @@ The public product name is Zenith CLI. The `decode` binary remains available as 
 
 ## Status
 
-Zenith is source-first while the repository is prepared for open-source distribution. The supported development and OpenTUI path is Bun from this checkout. A standalone headless binary can be built locally for curl/Homebrew-style distribution templates; npm publication remains intentionally out of scope.
+Zenith is source-first while the repository is prepared for open-source distribution. The supported development and OpenTUI path is Bun from this checkout. A packaged headless launcher can be built locally for curl/Homebrew-style distribution templates; npm publication remains intentionally out of scope.
 
 ## Requirements
 
@@ -57,7 +57,7 @@ bun dist/index.js project detect --json
 
 The bundled JS entrypoint is a verified way to run built output.
 
-Build the local standalone headless executable:
+Build the local packaged headless executable:
 
 ```bash
 bun run compile
@@ -65,7 +65,9 @@ bun run compile
 ./dist/zenith project detect --json
 ```
 
-The `dist/zenith` executable is produced with `bun build --compile`. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. Use `bun run zenith` from the source checkout for the dashboard.
+The `dist/zenith` launcher runs the bundled `dist/zenith-headless.js` with Bun. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. Use `bun run zenith` from the source checkout for the dashboard.
+
+`bun run compile:standalone` remains available as an experimental Bun standalone build, but it is not the release packaging path until the compiled executable passes local smoke tests reliably.
 
 Create a local release archive:
 
@@ -73,7 +75,7 @@ Create a local release archive:
 ZENITH_VERSION=v0.1.0 bun run package:release
 ```
 
-This writes `dist/zenith-<os>-<arch>.tar.gz` plus a `.sha256` file. Release URLs are templated until a repository remote is configured.
+This writes `dist/zenith-<os>-<arch>.tar.gz` plus a `.sha256` file. The archive contains the `zenith` launcher and `zenith-headless.js`; Bun must be installed on the target machine. Release URLs are templated until a repository remote is configured.
 
 ## Curl And Homebrew Templates
 
@@ -86,7 +88,7 @@ ZENITH_INSTALL_DIR="$HOME/.local/bin" \
 sh scripts/install.sh
 ```
 
-The install script downloads `zenith-<os>-<arch>.tar.gz`, extracts `zenith`, and installs it into `ZENITH_INSTALL_DIR`.
+The install script requires Bun, downloads `zenith-<os>-<arch>.tar.gz`, extracts `zenith` plus `zenith-headless.js`, and installs both into `ZENITH_INSTALL_DIR`.
 
 Homebrew packaging starts from [`packaging/homebrew/zenith.rb`](packaging/homebrew/zenith.rb). Replace `OWNER/REPO` and SHA placeholders after publishing release archives.
 

@@ -11,6 +11,11 @@ if [ -z "$base_url" ]; then
   exit 1
 fi
 
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Zenith packaged CLI requires Bun. Install Bun first: https://bun.sh" >&2
+  exit 127
+fi
+
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 
@@ -44,5 +49,6 @@ mkdir -p "$install_dir"
 curl -fsSL "$url" -o "$tmp_dir/$artifact"
 tar -xzf "$tmp_dir/$artifact" -C "$tmp_dir"
 install -m 0755 "$tmp_dir/zenith" "$install_dir/zenith"
+install -m 0644 "$tmp_dir/zenith-headless.js" "$install_dir/zenith-headless.js"
 
 echo "Installed zenith to $install_dir/zenith"
