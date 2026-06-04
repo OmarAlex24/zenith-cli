@@ -26,6 +26,9 @@ export function installAgentPack(agent: AgentKind, rootPath: string): AgentInsta
   const memorySkillDir = join(skillsDir, "zenith-memory");
   const reviewSkillDir = join(skillsDir, "zenith-pr-review");
   const multiAgentSkillDir = join(skillsDir, "zenith-multi-agent");
+  const plannerSkillDir = join(skillsDir, "zenith-planner");
+  const implementerSkillDir = join(skillsDir, "zenith-implementer");
+  const reviewerSkillDir = join(skillsDir, "zenith-reviewer");
 
   files.push(writeMarkedFile(rootFilePath, rootInstructions(agent)));
 
@@ -42,6 +45,15 @@ export function installAgentPack(agent: AgentKind, rootPath: string): AgentInsta
 
   mkdirSync(multiAgentSkillDir, { recursive: true });
   files.push(writeCompleteFile(join(multiAgentSkillDir, "SKILL.md"), multiAgentSkillTemplate(agent)));
+
+  mkdirSync(plannerSkillDir, { recursive: true });
+  files.push(writeCompleteFile(join(plannerSkillDir, "SKILL.md"), plannerSkillTemplate(agent)));
+
+  mkdirSync(implementerSkillDir, { recursive: true });
+  files.push(writeCompleteFile(join(implementerSkillDir, "SKILL.md"), implementerSkillTemplate(agent)));
+
+  mkdirSync(reviewerSkillDir, { recursive: true });
+  files.push(writeCompleteFile(join(reviewerSkillDir, "SKILL.md"), reviewerSkillTemplate(agent)));
 
   return { agent, rootPath, files };
 }
@@ -99,6 +111,10 @@ function rootInstructions(agent: AgentKind): string {
   const memorySkillPath = agent === "codex" ? ".codex/skills/zenith-memory/SKILL.md" : ".claude/skills/zenith-memory/SKILL.md";
   const reviewSkillPath = agent === "codex" ? ".codex/skills/zenith-pr-review/SKILL.md" : ".claude/skills/zenith-pr-review/SKILL.md";
   const multiAgentSkillPath = agent === "codex" ? ".codex/skills/zenith-multi-agent/SKILL.md" : ".claude/skills/zenith-multi-agent/SKILL.md";
+  const plannerSkillPath = agent === "codex" ? ".codex/skills/zenith-planner/SKILL.md" : ".claude/skills/zenith-planner/SKILL.md";
+  const implementerSkillPath =
+    agent === "codex" ? ".codex/skills/zenith-implementer/SKILL.md" : ".claude/skills/zenith-implementer/SKILL.md";
+  const reviewerSkillPath = agent === "codex" ? ".codex/skills/zenith-reviewer/SKILL.md" : ".claude/skills/zenith-reviewer/SKILL.md";
 
   return `
 # Zenith Memory
@@ -125,9 +141,24 @@ Use the zenith-pr-review skill at ${reviewSkillPath} when:
 - recording validated actionable review findings into Zenith memory
 
 Use the zenith-multi-agent skill at ${multiAgentSkillPath} when:
-- coordinating multiple local agent sessions with wake-on-event choreography
-- using \`zenith stage set\` and \`zenith watch --until ...\` for role handoffs
-- building decentralized plan/implement/review loops without spawning vendor CLIs from Zenith
+- designing or debugging the shared wake-on-event choreography protocol
+- coordinating non-standard role handoffs beyond planner/implementer/reviewer
+- checking \`stage/watch\` vocabulary, scope rules, timeouts, and provider-CLI boundaries
+
+Use the zenith-planner skill at ${plannerSkillPath} when:
+- turning roadmap direction into executable plans for role-based handoffs
+- inspecting \`context compact\`, \`plan next\`, and \`phase show\` before dispatch
+- setting \`stage=implement\` for the implementer after the plan/phase is ready
+
+Use the zenith-implementer skill at ${implementerSkillPath} when:
+- waiting for \`stage=implement\` and implementing the scoped phase
+- inspecting \`zenith diff --json\` and \`zenith phase show <phase-id> --json\` after wake
+- verifying work and setting \`stage=review\` for the reviewer
+
+Use the zenith-reviewer skill at ${reviewerSkillPath} when:
+- waiting for \`stage=review\` and reviewing the implementer's handoff
+- recording actionable findings with related plan/phase ids
+- advancing the phase with \`zenith plan advance --json --input -\` only after clean review
 
 Before planning:
 - Run \`zenith context compact --json\`.
@@ -240,12 +271,18 @@ Generated for ${agent}.
 function multiAgentSkillTemplate(agent: AgentKind): string {
   return `---
 name: zenith-multi-agent
-description: Use when coordinating multiple local AI agent sessions with Zenith wake-on-event choreography; relies on stage state, watch predicates, and each agent's own harness instead of Zenith spawning vendor CLIs.
+description: Use as the shared Zenith wake-on-event choreography protocol reference, especially for non-standard multi-agent handoffs; prefer zenith-planner, zenith-implementer, and zenith-reviewer for normal phase work.
 ---
 
 # Zenith Multi-Agent Choreography
 
-Use this skill when a project wants decentralized plan/implement/review handoffs across local agent sessions. Zenith is the deterministic memory and wake predicate surface; each agent session stays responsible for its own terminal, model, and harness.
+Use this skill as the protocol reference for decentralized local-agent handoffs. For normal phase work, use the role-specific skills instead:
+
+- \`zenith-planner\`: chooses or creates executable work and sets \`stage=implement\`.
+- \`zenith-implementer\`: waits for \`stage=implement\`, implements/verifies, and sets \`stage=review\`.
+- \`zenith-reviewer\`: waits for \`stage=review\`, records findings or advances clean phases, and sets \`stage=done\`.
+
+Use \`zenith-multi-agent\` when designing or debugging the shared choreography contract, coordinating roles outside planner/implementer/reviewer, or checking stage/watch scope rules. Zenith is the deterministic memory and wake predicate surface; each agent session stays responsible for its own terminal, model, and harness.
 
 ## Ground Rules
 
@@ -278,20 +315,247 @@ Stage payload:
 
 Use \`plan\`, \`implement\`, \`review\`, and \`done\` as the shared stage vocabulary. Include \`planId\` and \`phaseId\` when coordinating a specific phase; omit both only for project-level coordination.
 
-## Wake Loop
+## Generic Wake Loop
 
-1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith phase show <phase-id> --json\`.
+Use this only for custom roles or when a role-specific skill does not fit.
+
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and, when scoped to a phase, \`zenith phase show <phase-id> --json\`.
 2. If this role should wait, start a background watch with the local harness primitive: \`zenith watch --until stage=<your-role>,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>\`.
 3. When the watch exits successfully, run \`zenith diff --json\` to inspect handoff activity since the latest ended session.
 4. Perform only this role's work.
 5. Transition to the next stage with \`zenith stage set --json --input -\`.
 6. Relaunch the next watch or stop when the phase/plan is done.
 
-## Typical Handoff
+## Standard Handoff
 
-- Planner sets \`stage=implement\` with role \`opencode\`.
-- Implementer waits for \`stage=implement\`, edits code, verifies, then sets \`stage=review\` with role \`codex\`.
-- Reviewer waits for \`stage=review\`, reviews or records findings, then sets \`stage=done\` or returns to \`stage=implement\` with a concrete note.
+For this common path, invoke the role-specific skills:
+
+- \`zenith-planner\` sets \`stage=implement\` with a concrete plan/phase handoff.
+- \`zenith-implementer\` waits for \`stage=implement\`, edits code, verifies, then sets \`stage=review\`.
+- \`zenith-reviewer\` waits for \`stage=review\`, records findings or runs \`zenith plan advance --json --input -\`, then sets \`stage=done\` or returns to \`stage=implement\` with a concrete note.
+
+Generated for ${agent}.
+`;
+}
+
+function plannerSkillTemplate(agent: AgentKind): string {
+  return `---
+name: zenith-planner
+description: Use as the planner role in Zenith wake-on-event choreography; creates or selects executable plans, inspects phase context, and hands scoped work to an implementer with stage/watch state.
+---
+
+# Zenith Planner
+
+Use this skill when acting as the planner in a decentralized local agent workflow. The planner owns choosing the next executable Zenith work item and handing a specific plan/phase to an implementer. Zenith is the local memory and wake predicate surface; each agent keeps using its own terminal, model, and harness.
+
+## Ground Rules
+
+- Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
+- Keep long-running watcher agents in tmux or screen when their harness needs a live terminal.
+- Use explicit watch timeouts and poll intervals for every handoff.
+- Stop instead of looping when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, or \`create_plan_empty\`.
+- Use \`bun run zenith ...\` inside the Zenith source checkout if \`zenith\` is not on PATH.
+
+## Planning Loop
+
+1. Run \`zenith context compact --json\` and read the active plan, roadmap, findings, and latest session next steps.
+2. Run \`zenith plan next --json\`.
+3. If \`next.kind\` is \`create_plan\`, create the roadmap-backed executable plan with \`zenith roadmap create-plan <roadmap-id> --json --input -\`, then run \`zenith plan next --json\` again.
+4. If \`next.kind\` is \`implement_phase\`, run \`zenith phase show <phase-id> --json\` and use that phase as the dispatch target.
+5. If the next step is blocked, ambiguous, deferred, or finding-driven, stop and report the exact \`next.kind\`, recommendation, and evidence instead of assigning implementation work.
+
+## Handoff To Implementer
+
+Set \`stage=implement\` for the phase-scoped implementation stage:
+
+\`\`\`bash
+zenith stage set --json --input -
+\`\`\`
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "implement",
+  "role": "implementer",
+  "note": "Implement this phase. Verify, then set stage=review."
+}
+\`\`\`
+
+If supervising the workflow, wait for review or done with a timeout:
+
+\`\`\`bash
+zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith watch --until stage=done,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+\`\`\`
+
+After a successful watch, run \`zenith diff --json\` to inspect handoff activity before deciding whether more coordination is needed.
+
+Generated for ${agent}.
+`;
+}
+
+function implementerSkillTemplate(agent: AgentKind): string {
+  return `---
+name: zenith-implementer
+description: Use as the implementer role in Zenith wake-on-event choreography; waits for implementation stage, edits the scoped phase, verifies it, and hands review to a reviewer.
+---
+
+# Zenith Implementer
+
+Use this skill when acting as the implementer in a decentralized local agent workflow. The implementer owns code changes and verification for one scoped phase, then hands the result to review. The implementer does not mark the phase done; the reviewer owns \`zenith plan advance\` after clean review.
+
+## Ground Rules
+
+- Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
+- Keep this role in tmux or screen when waiting in the background.
+- Always use explicit \`zenith watch\` timeouts and poll intervals.
+- Stop instead of implementing when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, \`create_plan_empty\`, or a different plan/phase than the handoff.
+- Preserve unrelated dirty worktree changes; work with them when they affect the phase and do not revert them.
+
+## Wake And Implement
+
+Wait for the scoped implementation stage:
+
+\`\`\`bash
+zenith watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+\`\`\`
+
+After waking:
+
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith phase show <phase-id> --json\`.
+2. Run \`zenith diff --json\` to inspect handoff activity since the latest ended session.
+3. Implement only the scoped phase.
+4. Verify with the checks expected by the phase, typically \`bun x tsc --noEmit\`, \`bun test\`, and \`bun run build\`.
+
+## Blockers And Review Handoff
+
+If implementation cannot proceed, record a concise finding linked to the active plan and phase:
+
+\`\`\`bash
+zenith finding record --json --input -
+\`\`\`
+
+Then return control to planning:
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "plan",
+  "role": "planner",
+  "note": "Implementation blocked; see linked finding."
+}
+\`\`\`
+
+If implementation and verification are complete, set \`stage=review\`:
+
+\`\`\`bash
+zenith stage set --json --input -
+\`\`\`
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "review",
+  "role": "reviewer",
+  "note": "Implementation verified and ready for review."
+}
+\`\`\`
+
+Generated for ${agent}.
+`;
+}
+
+function reviewerSkillTemplate(agent: AgentKind): string {
+  return `---
+name: zenith-reviewer
+description: Use as the reviewer role in Zenith wake-on-event choreography; waits for review stage, reviews the scoped implementation, records findings, and advances clean phases.
+---
+
+# Zenith Reviewer
+
+Use this skill when acting as the reviewer in a decentralized local agent workflow. The reviewer owns independent review, finding recording, and final phase advancement after clean review.
+
+## Ground Rules
+
+- Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
+- Keep this role in tmux or screen when waiting in the background.
+- Always use explicit \`zenith watch\` timeouts and poll intervals.
+- Stop instead of reviewing when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, \`create_plan_empty\`, or a different plan/phase than the handoff.
+- Do not advance the phase until review is clean and verification evidence is available.
+
+## Wake And Review
+
+Wait for the scoped review stage:
+
+\`\`\`bash
+zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+\`\`\`
+
+After waking:
+
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith phase show <phase-id> --json\`.
+2. Run \`zenith diff --json\` to inspect what changed since the latest ended session.
+3. Review the scoped diff and rerun or inspect verification as needed.
+4. If issues are found, record actionable findings with \`relatedPlanId\` and \`relatedPhaseId\`.
+
+Finding command:
+
+\`\`\`bash
+zenith finding record --json --input -
+\`\`\`
+
+Return actionable issues to implementation:
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "implement",
+  "role": "implementer",
+  "note": "Review found actionable issues; see linked finding."
+}
+\`\`\`
+
+## Clean Review Closeout
+
+When the implementation is clean, advance the phase with evidence:
+
+\`\`\`bash
+zenith plan advance --json --input -
+\`\`\`
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "completedPhaseId": "phase_id",
+  "evidence": [
+    { "kind": "command", "value": "bun x tsc --noEmit passed" },
+    { "kind": "command", "value": "bun test passed" },
+    { "kind": "command", "value": "bun run build passed" }
+  ]
+}
+\`\`\`
+
+Then publish \`stage=done\`:
+
+\`\`\`bash
+zenith stage set --json --input -
+\`\`\`
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "done",
+  "role": "reviewer",
+  "note": "Review clean; phase advanced with evidence."
+}
+\`\`\`
+
+If \`AdvanceResult.planCompleted\` is \`true\`, the linked roadmap item is already advanced through \`roadmapItemAdvanced\`.
 
 Generated for ${agent}.
 `;
@@ -715,6 +979,8 @@ If all phases are done after the advance, \`planCompleted\` is \`true\` and (if 
 
 \`watch --until\` accepts comma-separated \`key=value\` clauses with \`stage\` required and optional \`plan\`/\`phase\` (or \`planId\`/\`phaseId\`) scope keys. Use explicit \`--timeout\` and \`--poll-interval\` for long-running agent wake loops.
 
+Installed role skills use this same protocol: \`zenith-planner\` creates/selects executable work and sets \`stage=implement\`; \`zenith-implementer\` waits for implementation, verifies changes, and sets \`stage=review\`; \`zenith-reviewer\` records actionable findings or runs \`zenith plan advance --json --input -\` after clean review, then sets \`stage=done\`.
+
 ## Context
 
 - \`zenith context get --json\`
@@ -1053,6 +1319,16 @@ zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3
 \`\`\`
 
 Stages are \`plan\`, \`implement\`, \`review\`, and \`done\`. Stage state is additive and does not affect \`plan next\`. Use \`zenith diff --json\` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
+
+## Role-Based Choreography Skills
+
+The agent pack installs role-specific skills for the same stage/watch protocol:
+
+- \`zenith-planner\`: reads \`context compact\`, \`plan next\`, and \`phase show\`; creates roadmap-backed plans when \`next.kind=create_plan\`; sets \`stage=implement\` for the scoped phase.
+- \`zenith-implementer\`: waits for \`stage=implement\`; inspects \`zenith diff --json\` and phase context; implements and verifies the phase; sets \`stage=review\`.
+- \`zenith-reviewer\`: waits for \`stage=review\`; reviews the scoped implementation; records findings with \`relatedPlanId\`/\`relatedPhaseId\`; runs \`zenith plan advance --json --input -\` only after clean review; sets \`stage=done\`.
+
+All role skills require explicit watch timeouts and poll intervals, support tmux/screen handoffs, and preserve the rule that Zenith never spawns provider agent CLIs.
 
 ## Record Findings
 

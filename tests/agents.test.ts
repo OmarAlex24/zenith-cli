@@ -21,6 +21,9 @@ describe("agent installer", () => {
     expect(result.files.some((file) => file.path.endsWith("AGENTS.md") && file.action === "created")).toBe(true);
     expect(result.files.some((file) => file.path.endsWith(join(".codex", "skills", "zenith-pr-review", "SKILL.md")))).toBe(true);
     expect(result.files.some((file) => file.path.endsWith(join(".codex", "skills", "zenith-multi-agent", "SKILL.md")))).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".codex", "skills", "zenith-planner", "SKILL.md")))).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".codex", "skills", "zenith-implementer", "SKILL.md")))).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".codex", "skills", "zenith-reviewer", "SKILL.md")))).toBe(true);
     const rootInstructions = readFileSync(join(dir, "AGENTS.md"), "utf8");
     expect(rootInstructions).toContain("BEGIN ZENITH CLI");
     const skill = readFileSync(join(dir, ".codex", "skills", "zenith-memory", "SKILL.md"), "utf8");
@@ -28,6 +31,9 @@ describe("agent installer", () => {
     const workflows = readFileSync(join(dir, ".codex", "skills", "zenith-memory", "references", "workflows.md"), "utf8");
     const prReviewSkill = readFileSync(join(dir, ".codex", "skills", "zenith-pr-review", "SKILL.md"), "utf8");
     const multiAgentSkill = readFileSync(join(dir, ".codex", "skills", "zenith-multi-agent", "SKILL.md"), "utf8");
+    const plannerSkill = readFileSync(join(dir, ".codex", "skills", "zenith-planner", "SKILL.md"), "utf8");
+    const implementerSkill = readFileSync(join(dir, ".codex", "skills", "zenith-implementer", "SKILL.md"), "utf8");
+    const reviewerSkill = readFileSync(join(dir, ".codex", "skills", "zenith-reviewer", "SKILL.md"), "utf8");
     const prReviewReferenceFiles = [
       "correctness.md",
       "simplification.md",
@@ -40,7 +46,18 @@ describe("agent installer", () => {
     const prReviewReferences = prReviewReferenceFiles.map((file) =>
       readFileSync(join(dir, ".codex", "skills", "zenith-pr-review", "references", file), "utf8"),
     );
-    const generated = [rootInstructions, skill, cliReference, workflows, prReviewSkill, multiAgentSkill, ...prReviewReferences].join("\n");
+    const generated = [
+      rootInstructions,
+      skill,
+      cliReference,
+      workflows,
+      prReviewSkill,
+      multiAgentSkill,
+      plannerSkill,
+      implementerSkill,
+      reviewerSkill,
+      ...prReviewReferences,
+    ].join("\n");
 
     expect(skill).toContain("name: zenith-memory");
     expect(skill).toContain("description: Use when working in a repository that uses Zenith CLI");
@@ -55,6 +72,14 @@ describe("agent installer", () => {
     expect(rootInstructions).toContain(".codex/skills/zenith-pr-review/SKILL.md");
     expect(rootInstructions).toContain("Use the zenith-multi-agent skill");
     expect(rootInstructions).toContain(".codex/skills/zenith-multi-agent/SKILL.md");
+    expect(rootInstructions).toContain("designing or debugging the shared wake-on-event choreography protocol");
+    expect(rootInstructions).toContain("coordinating non-standard role handoffs beyond planner/implementer/reviewer");
+    expect(rootInstructions).toContain("Use the zenith-planner skill");
+    expect(rootInstructions).toContain(".codex/skills/zenith-planner/SKILL.md");
+    expect(rootInstructions).toContain("Use the zenith-implementer skill");
+    expect(rootInstructions).toContain(".codex/skills/zenith-implementer/SKILL.md");
+    expect(rootInstructions).toContain("Use the zenith-reviewer skill");
+    expect(rootInstructions).toContain(".codex/skills/zenith-reviewer/SKILL.md");
     expect(rootInstructions).toContain("reviewing a PR, MR, branch, diff, staged changes");
     expect(prReviewSkill).toContain("name: zenith-pr-review");
     expect(prReviewSkill).toContain("description: Use when reviewing a PR, MR, diff, branch");
@@ -71,9 +96,45 @@ describe("agent installer", () => {
     expect(prReviewReferences[5]).toContain("Existing PR Comments");
     expect(prReviewReferences[6]).toContain("resolveReviewThread");
     expect(multiAgentSkill).toContain("name: zenith-multi-agent");
+    expect(multiAgentSkill).toContain("Use this skill as the protocol reference");
+    expect(multiAgentSkill).toContain("For normal phase work, use the role-specific skills instead");
+    expect(multiAgentSkill).toContain("zenith-planner");
+    expect(multiAgentSkill).toContain("zenith-implementer");
+    expect(multiAgentSkill).toContain("zenith-reviewer");
+    expect(multiAgentSkill).toContain("Use this only for custom roles");
     expect(multiAgentSkill).toContain("zenith stage set --json --input -");
     expect(multiAgentSkill).toContain("zenith watch --until stage=implement");
     expect(multiAgentSkill).toContain("Do not make Zenith spawn Codex");
+    expect(plannerSkill).toContain("name: zenith-planner");
+    expect(plannerSkill).toContain("zenith context compact --json");
+    expect(plannerSkill).toContain("zenith plan next --json");
+    expect(plannerSkill).toContain("zenith phase show <phase-id> --json");
+    expect(plannerSkill).toContain("zenith roadmap create-plan <roadmap-id> --json --input -");
+    expect(plannerSkill).toContain("zenith stage set --json --input -");
+    expect(plannerSkill).toContain("stage=implement");
+    expect(plannerSkill).toContain("zenith watch --until stage=review");
+    expect(plannerSkill).toContain("zenith diff --json");
+    expect(plannerSkill).toContain("tmux or screen");
+    expect(plannerSkill).toContain("blocking_finding");
+    expect(plannerSkill).toContain("Do not make Zenith spawn Codex");
+    expect(implementerSkill).toContain("name: zenith-implementer");
+    expect(implementerSkill).toContain("zenith watch --until stage=implement");
+    expect(implementerSkill).toContain("zenith diff --json");
+    expect(implementerSkill).toContain("zenith phase show <phase-id> --json");
+    expect(implementerSkill).toContain("zenith finding record --json --input -");
+    expect(implementerSkill).toContain("stage=review");
+    expect(implementerSkill).toContain("tmux or screen");
+    expect(implementerSkill).toContain("blocking_finding");
+    expect(implementerSkill).toContain("does not mark the phase done");
+    expect(reviewerSkill).toContain("name: zenith-reviewer");
+    expect(reviewerSkill).toContain("zenith watch --until stage=review");
+    expect(reviewerSkill).toContain("zenith diff --json");
+    expect(reviewerSkill).toContain("relatedPlanId");
+    expect(reviewerSkill).toContain("relatedPhaseId");
+    expect(reviewerSkill).toContain("zenith plan advance --json --input -");
+    expect(reviewerSkill).toContain("stage=done");
+    expect(reviewerSkill).toContain("tmux or screen");
+    expect(reviewerSkill).toContain("blocking_finding");
     expect(cliReference).toContain("zenith plan update <plan-id> --json --input -");
     expect(cliReference).toContain("zenith decision list --json");
     expect(cliReference).toContain("zenith finding show <finding-id> --json");
@@ -110,12 +171,19 @@ describe("agent installer", () => {
     expect(cliReference).toContain("Agent Choreography");
     expect(cliReference).toContain("zenith stage set --json --input -");
     expect(cliReference).toContain("zenith watch --until stage=review");
+    expect(cliReference).toContain("zenith-planner");
+    expect(cliReference).toContain("zenith-implementer");
+    expect(cliReference).toContain("zenith-reviewer");
     expect(cliReference).toContain("zenith drift");
     expect(cliReference).toContain("zenith activity");
     expect(cliReference).toContain("staleness");
     expect(workflows).toContain("Sequence Phases With Dependencies");
     expect(workflows).toContain("Self-Tracking Telemetry");
     expect(workflows).toContain("Multi-Agent Choreography");
+    expect(workflows).toContain("Role-Based Choreography Skills");
+    expect(workflows).toContain("zenith-planner");
+    expect(workflows).toContain("zenith-implementer");
+    expect(workflows).toContain("zenith-reviewer");
     expect(workflows).toContain("stage=review");
     expect(workflows).toContain("zenith watch --until");
     expect(workflows).toContain("zenith adherence");
@@ -163,9 +231,12 @@ describe("agent installer", () => {
     expect(content).toContain("zenith plan next --json");
     expect(content).toContain("zenith-pr-review");
     expect(content).toContain("zenith-multi-agent");
+    expect(content).toContain("zenith-planner");
+    expect(content).toContain("zenith-implementer");
+    expect(content).toContain("zenith-reviewer");
   });
 
-  test("creates claude root instructions and PR review skill files", () => {
+  test("creates claude root instructions and role skill files", () => {
     const dir = makeTempDir();
     tempDirs.push(dir);
     const result = installAgentPack("claude", dir);
@@ -173,17 +244,30 @@ describe("agent installer", () => {
     expect(result.files.some((file) => file.path.endsWith("CLAUDE.md") && file.action === "created")).toBe(true);
     expect(result.files.some((file) => file.path.endsWith(join(".claude", "skills", "zenith-pr-review", "SKILL.md")))).toBe(true);
     expect(result.files.some((file) => file.path.endsWith(join(".claude", "skills", "zenith-multi-agent", "SKILL.md")))).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".claude", "skills", "zenith-planner", "SKILL.md")))).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".claude", "skills", "zenith-implementer", "SKILL.md")))).toBe(true);
+    expect(result.files.some((file) => file.path.endsWith(join(".claude", "skills", "zenith-reviewer", "SKILL.md")))).toBe(true);
 
     const rootInstructions = readFileSync(join(dir, "CLAUDE.md"), "utf8");
     const prReviewSkill = readFileSync(join(dir, ".claude", "skills", "zenith-pr-review", "SKILL.md"), "utf8");
     const multiAgentSkill = readFileSync(join(dir, ".claude", "skills", "zenith-multi-agent", "SKILL.md"), "utf8");
+    const plannerSkill = readFileSync(join(dir, ".claude", "skills", "zenith-planner", "SKILL.md"), "utf8");
+    const implementerSkill = readFileSync(join(dir, ".claude", "skills", "zenith-implementer", "SKILL.md"), "utf8");
+    const reviewerSkill = readFileSync(join(dir, ".claude", "skills", "zenith-reviewer", "SKILL.md"), "utf8");
     const correctness = readFileSync(join(dir, ".claude", "skills", "zenith-pr-review", "references", "correctness.md"), "utf8");
 
     expect(rootInstructions).toContain(".claude/skills/zenith-memory/SKILL.md");
     expect(rootInstructions).toContain(".claude/skills/zenith-pr-review/SKILL.md");
     expect(rootInstructions).toContain(".claude/skills/zenith-multi-agent/SKILL.md");
+    expect(rootInstructions).toContain(".claude/skills/zenith-planner/SKILL.md");
+    expect(rootInstructions).toContain(".claude/skills/zenith-implementer/SKILL.md");
+    expect(rootInstructions).toContain(".claude/skills/zenith-reviewer/SKILL.md");
     expect(prReviewSkill).toContain("Generated for claude.");
     expect(multiAgentSkill).toContain("Generated for claude.");
+    expect(plannerSkill).toContain("Generated for claude.");
+    expect(implementerSkill).toContain("Generated for claude.");
+    expect(reviewerSkill).toContain("Generated for claude.");
+    expect(reviewerSkill).toContain("zenith plan advance --json --input -");
     expect(correctness).toContain("Security footguns");
   });
 

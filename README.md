@@ -198,7 +198,7 @@ bun run zenith agents install codex --json
 bun run zenith agents install claude --json
 ```
 
-The agent pack installs `zenith-memory` for project memory workflows, `zenith-pr-review` for PR, MR, diff, branch, staged-change, committed-change, and pre-merge reviews, and `zenith-multi-agent` for wake-on-event choreography using `stage set` plus `watch`.
+The agent pack installs `zenith-memory` for project memory workflows, `zenith-pr-review` for PR, MR, diff, branch, staged-change, committed-change, and pre-merge reviews, `zenith-multi-agent` for general wake-on-event choreography, and role-focused `zenith-planner`, `zenith-implementer`, and `zenith-reviewer` skills for stage/watch handoffs.
 
 ## Agent Workflow
 
@@ -224,7 +224,7 @@ zenith phase show <phase-id> --json
 
 For code reviews, use the installed `zenith-pr-review` skill. It reads Zenith context and decisions before reviewing, runs focused review passes, and records only validated actionable issues with `zenith finding record --json --input -`.
 
-For multi-agent handoffs, use the installed `zenith-multi-agent` skill. It keeps Zenith as local memory and a blocking predicate surface while each agent uses its own terminal/harness. The core loop is: set `stage=implement`, wait with `zenith watch --until stage=implement,plan=<plan-id>,phase=<phase-id>`, inspect `zenith diff --json` after wake, then transition to `stage=review` or `stage=done`.
+For multi-agent handoffs, use the installed `zenith-multi-agent` skill for the general protocol, or the role-specific `zenith-planner`, `zenith-implementer`, and `zenith-reviewer` skills for concrete planner/implementer/reviewer sessions. Zenith stays local memory plus a blocking predicate surface while each agent uses its own terminal/harness. The core loop is: planner sets `stage=implement`, implementer waits with `zenith watch --until stage=implement,plan=<plan-id>,phase=<phase-id>`, implementer inspects `zenith diff --json` after wake and sets `stage=review`, then reviewer records findings or advances the phase with `zenith plan advance --json --input -` and sets `stage=done`.
 
 Plan metadata can be updated without touching SQLite directly:
 

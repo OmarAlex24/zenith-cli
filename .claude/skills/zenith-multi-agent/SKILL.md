@@ -63,4 +63,4 @@ For this common path, invoke the role-specific skills:
 - `zenith-implementer` waits for `stage=implement`, edits code, verifies, then sets `stage=review`.
 - `zenith-reviewer` waits for `stage=review`, records findings or runs `zenith plan advance --json --input -`, then sets `stage=done` or returns to `stage=implement` with a concrete note.
 
-Generated for codex.
+Generated for claude.
