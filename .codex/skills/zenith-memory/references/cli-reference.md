@@ -27,7 +27,7 @@ If the `zenith` binary is not on PATH while working inside this source checkout,
 - `zenith roadmap import-plan <plan-id> --json --input -`
 - `zenith roadmap create-plan <roadmap-id> --json --input -`
 
-Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan. Roadmap items use `todo / in_progress / done / deferred`; plan phases use `todo / in_progress / done / blocked`. Legacy `pending`/`planned`/`completed` inputs are still accepted and normalized.
+Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan next`; `deferred` is parked backlog and must be reactivated before creating an executable plan; `discarded` is an auditable no-longer-planned scope decision and is not recommended as future work. Roadmap items use `todo / in_progress / done / deferred / discarded`; plan phases use `todo / in_progress / done / blocked`. Legacy `pending`/`planned`/`completed` inputs are still accepted and normalized; `canceled`/`cancelled` normalize to `discarded`.
 
 ## Plans
 
@@ -44,7 +44,7 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 
 `plan update-phase` JSON input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. When all remaining `todo` phases are gated by unmet dependencies, `plan next` returns a recommendation prefixed `Blocked by dependency:` with a `blockedBy` array.
 
-`plan next` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
+`plan next` will not auto-create work from deferred or discarded roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first. Discarded roadmap items are ignored until explicitly moved back to `todo` or `in_progress`.
 
 ### plan next — NextStep.kind discriminant
 
@@ -54,7 +54,7 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 |---|---|
 | `implement_phase` | Implement the identified phase (in-progress or ready todo) |
 | `create_plan` | Create a plan from the roadmap item |
-| `review_deferred` | Reactivate a deferred roadmap item |
+| `review_deferred` | Reactivate or discard a deferred roadmap item |
 | `blocking_finding` | Fix or triage the critical/high finding |
 | `review_finding` | Review an open finding (no active plan) |
 | `ambiguous_focus` | Set `zenith focus set <roadmap-id>` to resolve multiple active plans |
@@ -81,6 +81,15 @@ Response `data`:
 ```
 
 If all phases are done after the advance, `planCompleted` is `true` and (if linked) `roadmapItemAdvanced` contains `{ roadmapId, itemId }`.
+
+## Agent Choreography
+
+- `zenith stage set --json --input -` — set additive project/plan/phase stage state for local multi-agent handoffs
+- `zenith watch --until stage=review,plan=<plan-id>,phase=<phase-id> --json [--timeout <ms>] [--poll-interval <ms>]` — block until a local memory predicate matches
+
+`stage set` accepts `stage` values `plan / implement / review / done`, optional `planId`, optional `phaseId`, optional `role`, and optional `note`. If `phaseId` is provided without `planId`, Zenith derives and returns the parent plan. Stage state is additive choreography metadata; it does not affect `plan next`.
+
+`watch --until` accepts comma-separated `key=value` clauses with `stage` required and optional `plan`/`phase` (or `planId`/`phaseId`) scope keys. Use explicit `--timeout` and `--poll-interval` for long-running agent wake loops.
 
 ## Context
 

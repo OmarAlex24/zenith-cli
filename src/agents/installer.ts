@@ -25,6 +25,7 @@ export function installAgentPack(agent: AgentKind, rootPath: string): AgentInsta
   const skillsDir = join(rootPath, skillRoot, "skills");
   const memorySkillDir = join(skillsDir, "zenith-memory");
   const reviewSkillDir = join(skillsDir, "zenith-pr-review");
+  const multiAgentSkillDir = join(skillsDir, "zenith-multi-agent");
 
   files.push(writeMarkedFile(rootFilePath, rootInstructions(agent)));
 
@@ -38,6 +39,9 @@ export function installAgentPack(agent: AgentKind, rootPath: string): AgentInsta
   for (const reference of prReviewReferenceTemplates()) {
     files.push(writeCompleteFile(join(reviewSkillDir, "references", reference.file), reference.content));
   }
+
+  mkdirSync(multiAgentSkillDir, { recursive: true });
+  files.push(writeCompleteFile(join(multiAgentSkillDir, "SKILL.md"), multiAgentSkillTemplate(agent)));
 
   return { agent, rootPath, files };
 }
@@ -94,6 +98,7 @@ function findMarkedBlock(previous: string, startMarker: string, endMarker: strin
 function rootInstructions(agent: AgentKind): string {
   const memorySkillPath = agent === "codex" ? ".codex/skills/zenith-memory/SKILL.md" : ".claude/skills/zenith-memory/SKILL.md";
   const reviewSkillPath = agent === "codex" ? ".codex/skills/zenith-pr-review/SKILL.md" : ".claude/skills/zenith-pr-review/SKILL.md";
+  const multiAgentSkillPath = agent === "codex" ? ".codex/skills/zenith-multi-agent/SKILL.md" : ".claude/skills/zenith-multi-agent/SKILL.md";
 
   return `
 # Zenith Memory
@@ -118,6 +123,11 @@ Use the zenith-pr-review skill at ${reviewSkillPath} when:
 - checking whether code is safe to merge
 - synthesizing existing PR comments with fresh review passes
 - recording validated actionable review findings into Zenith memory
+
+Use the zenith-multi-agent skill at ${multiAgentSkillPath} when:
+- coordinating multiple local agent sessions with wake-on-event choreography
+- using \`zenith stage set\` and \`zenith watch --until ...\` for role handoffs
+- building decentralized plan/implement/review loops without spawning vendor CLIs from Zenith
 
 Before planning:
 - Run \`zenith context compact --json\`.
@@ -222,6 +232,66 @@ Scope reviewed: <N files, subsystems, base..head>
 \`\`\`
 
 Each finding should be concrete: \`file:line - problem - consequence - suggested fix or question\`. If the reviewed change is clean, say so directly and do not invent concerns.
+
+Generated for ${agent}.
+`;
+}
+
+function multiAgentSkillTemplate(agent: AgentKind): string {
+  return `---
+name: zenith-multi-agent
+description: Use when coordinating multiple local AI agent sessions with Zenith wake-on-event choreography; relies on stage state, watch predicates, and each agent's own harness instead of Zenith spawning vendor CLIs.
+---
+
+# Zenith Multi-Agent Choreography
+
+Use this skill when a project wants decentralized plan/implement/review handoffs across local agent sessions. Zenith is the deterministic memory and wake predicate surface; each agent session stays responsible for its own terminal, model, and harness.
+
+## Ground Rules
+
+- Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
+- Do not use MCP/Channels as the handoff mechanism for this workflow.
+- Keep each agent in a live terminal session such as tmux or screen when its harness needs a background watcher to wake it.
+- Stop instead of looping when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, or \`create_plan_empty\`.
+- Use timeouts on watches so a stalled workflow returns control.
+
+## Stage Contract
+
+Stages are additive choreography state and do not change \`plan next\` determinism.
+
+\`\`\`bash
+zenith stage set --json --input -
+zenith watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+\`\`\`
+
+Stage payload:
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "implement",
+  "role": "opencode",
+  "note": "Implementation can start."
+}
+\`\`\`
+
+Use \`plan\`, \`implement\`, \`review\`, and \`done\` as the shared stage vocabulary. Include \`planId\` and \`phaseId\` when coordinating a specific phase; omit both only for project-level coordination.
+
+## Wake Loop
+
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith phase show <phase-id> --json\`.
+2. If this role should wait, start a background watch with the local harness primitive: \`zenith watch --until stage=<your-role>,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>\`.
+3. When the watch exits successfully, run \`zenith diff --json\` to inspect handoff activity since the latest ended session.
+4. Perform only this role's work.
+5. Transition to the next stage with \`zenith stage set --json --input -\`.
+6. Relaunch the next watch or stop when the phase/plan is done.
+
+## Typical Handoff
+
+- Planner sets \`stage=implement\` with role \`opencode\`.
+- Implementer waits for \`stage=implement\`, edits code, verifies, then sets \`stage=review\` with role \`codex\`.
+- Reviewer waits for \`stage=review\`, reviews or records findings, then sets \`stage=done\` or returns to \`stage=implement\` with a concrete note.
 
 Generated for ${agent}.
 `;
@@ -581,7 +651,7 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 - \`zenith roadmap import-plan <plan-id> --json --input -\`
 - \`zenith roadmap create-plan <roadmap-id> --json --input -\`
 
-Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \`plan next\`; \`deferred\` is parked backlog and must be reactivated before creating an executable plan. Roadmap items use \`todo / in_progress / done / deferred\`; plan phases use \`todo / in_progress / done / blocked\`. Legacy \`pending\`/\`planned\`/\`completed\` inputs are still accepted and normalized.
+Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \`plan next\`; \`deferred\` is parked backlog and must be reactivated before creating an executable plan; \`discarded\` is an auditable no-longer-planned scope decision and is not recommended as future work. Roadmap items use \`todo / in_progress / done / deferred / discarded\`; plan phases use \`todo / in_progress / done / blocked\`. Legacy \`pending\`/\`planned\`/\`completed\` inputs are still accepted and normalized; \`canceled\`/\`cancelled\` normalize to \`discarded\`.
 
 ## Plans
 
@@ -598,7 +668,7 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 
 \`plan update-phase\` JSON input accepts optional \`dependsOn\` (array of phase ids) to declare phase prerequisites. When all remaining \`todo\` phases are gated by unmet dependencies, \`plan next\` returns a recommendation prefixed \`Blocked by dependency:\` with a \`blockedBy\` array.
 
-\`plan next\` will not auto-create work from deferred roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first.
+\`plan next\` will not auto-create work from deferred or discarded roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first. Discarded roadmap items are ignored until explicitly moved back to \`todo\` or \`in_progress\`.
 
 ### plan next — NextStep.kind discriminant
 
@@ -608,7 +678,7 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 |---|---|
 | \`implement_phase\` | Implement the identified phase (in-progress or ready todo) |
 | \`create_plan\` | Create a plan from the roadmap item |
-| \`review_deferred\` | Reactivate a deferred roadmap item |
+| \`review_deferred\` | Reactivate or discard a deferred roadmap item |
 | \`blocking_finding\` | Fix or triage the critical/high finding |
 | \`review_finding\` | Review an open finding (no active plan) |
 | \`ambiguous_focus\` | Set \`zenith focus set <roadmap-id>\` to resolve multiple active plans |
@@ -635,6 +705,15 @@ Response \`data\`:
 \`\`\`
 
 If all phases are done after the advance, \`planCompleted\` is \`true\` and (if linked) \`roadmapItemAdvanced\` contains \`{ roadmapId, itemId }\`.
+
+## Agent Choreography
+
+- \`zenith stage set --json --input -\` — set additive project/plan/phase stage state for local multi-agent handoffs
+- \`zenith watch --until stage=review,plan=<plan-id>,phase=<phase-id> --json [--timeout <ms>] [--poll-interval <ms>]\` — block until a local memory predicate matches
+
+\`stage set\` accepts \`stage\` values \`plan / implement / review / done\`, optional \`planId\`, optional \`phaseId\`, optional \`role\`, and optional \`note\`. If \`phaseId\` is provided without \`planId\`, Zenith derives and returns the parent plan. Stage state is additive choreography metadata; it does not affect \`plan next\`.
+
+\`watch --until\` accepts comma-separated \`key=value\` clauses with \`stage\` required and optional \`plan\`/\`phase\` (or \`planId\`/\`phaseId\`) scope keys. Use explicit \`--timeout\` and \`--poll-interval\` for long-running agent wake loops.
 
 ## Context
 
@@ -808,7 +887,7 @@ Payload:
 
 Created plans preserve \`sourceRoadmapId\`, \`sourceRoadmapItemId\`, and source evidence. Use \`itemTitle\` instead of \`itemId\` only when the title is unique.
 
-Do not create a plan from a \`deferred\` roadmap item. \`plan next\` treats \`in_progress\` and \`todo\` roadmap items as actionable; if only deferred items remain, reactivate one with \`roadmap update-item\` before creating a plan.
+Do not create a plan from a \`deferred\` or \`discarded\` roadmap item. \`plan next\` treats \`in_progress\` and \`todo\` roadmap items as actionable; if only deferred items remain, reactivate or discard one with \`roadmap update-item\` before creating a plan. Discarded items remain visible but do not trigger future work recommendations.
 
 ## Insert Intermediate Roadmap Work
 
@@ -846,6 +925,16 @@ Payload:
   "itemTitle": "MVP 5 - PR Review Skill",
   "status": "deferred",
   "justification": "Core TUI and context behavior should be stronger before review skills."
+}
+\`\`\`
+
+Use \`discarded\` when roadmap work should stay auditable but should no longer be planned, deferred, or counted as completed:
+
+\`\`\`json
+{
+  "itemTitle": "MVP 6 - Agent Backends",
+  "status": "discarded",
+  "justification": "Provider CLI spawning is no longer in scope; wake-on-event choreography covers the useful local-agent workflow."
 }
 \`\`\`
 
@@ -934,6 +1023,36 @@ Evidence payload:
   ]
 }
 \`\`\`
+
+## Multi-Agent Choreography
+
+Use this when multiple local agent sessions coordinate plan/implement/review work without Zenith spawning vendor CLIs. Zenith stores stage state and exposes blocking watches; each agent uses its own harness/background primitive.
+
+Set a stage:
+
+\`\`\`bash
+zenith stage set --json --input -
+\`\`\`
+
+Payload:
+
+\`\`\`json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "review",
+  "role": "codex",
+  "note": "Implementation is ready for review."
+}
+\`\`\`
+
+Wait for a role handoff:
+
+\`\`\`bash
+zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+\`\`\`
+
+Stages are \`plan\`, \`implement\`, \`review\`, and \`done\`. Stage state is additive and does not affect \`plan next\`. Use \`zenith diff --json\` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
 
 ## Record Findings
 

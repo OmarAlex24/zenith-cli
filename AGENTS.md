@@ -22,6 +22,11 @@ Use the zenith-pr-review skill at .codex/skills/zenith-pr-review/SKILL.md when:
 - synthesizing existing PR comments with fresh review passes
 - recording validated actionable review findings into Zenith memory
 
+Use the zenith-multi-agent skill at .codex/skills/zenith-multi-agent/SKILL.md when:
+- coordinating multiple local agent sessions with wake-on-event choreography
+- using `zenith stage set` and `zenith watch --until ...` for role handoffs
+- building decentralized plan/implement/review loops without spawning vendor CLIs from Zenith
+
 Before planning:
 - Run `zenith context compact --json`.
 - Run `zenith plan next --json`.

@@ -159,6 +159,15 @@ bun run zenith focus set <roadmap-id> --json
 bun run zenith focus clear --json
 ```
 
+Agent choreography (decentralized wake-on-event handoffs; Zenith does not spawn agent CLIs):
+
+```bash
+bun run zenith stage set --json --input -
+bun run zenith watch --until stage=review,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>
+```
+
+`stage set` accepts `stage` values `plan`, `implement`, `review`, and `done`, with optional `planId`, `phaseId`, `role`, and `note`. `watch --until` accepts comma-separated `key=value` clauses with `stage` required and optional `plan`/`phase` scope keys. Stage state is additive choreography metadata and does not affect `plan next`.
+
 Operational memory:
 
 ```bash
@@ -189,7 +198,7 @@ bun run zenith agents install codex --json
 bun run zenith agents install claude --json
 ```
 
-The agent pack installs `zenith-memory` for project memory workflows and `zenith-pr-review` for PR, MR, diff, branch, staged-change, committed-change, and pre-merge reviews that can record validated findings back into Zenith.
+The agent pack installs `zenith-memory` for project memory workflows, `zenith-pr-review` for PR, MR, diff, branch, staged-change, committed-change, and pre-merge reviews, and `zenith-multi-agent` for wake-on-event choreography using `stage set` plus `watch`.
 
 ## Agent Workflow
 
@@ -214,6 +223,8 @@ zenith phase show <phase-id> --json
 ```
 
 For code reviews, use the installed `zenith-pr-review` skill. It reads Zenith context and decisions before reviewing, runs focused review passes, and records only validated actionable issues with `zenith finding record --json --input -`.
+
+For multi-agent handoffs, use the installed `zenith-multi-agent` skill. It keeps Zenith as local memory and a blocking predicate surface while each agent uses its own terminal/harness. The core loop is: set `stage=implement`, wait with `zenith watch --until stage=implement,plan=<plan-id>,phase=<phase-id>`, inspect `zenith diff --json` after wake, then transition to `stage=review` or `stage=done`.
 
 Plan metadata can be updated without touching SQLite directly:
 
@@ -246,7 +257,7 @@ zenith spike conclude <spike-id> --json --input -
 
 Use `roadmap create-plan` when product direction needs to become executable work. The payload must identify exactly one roadmap item by `itemId` or `itemTitle`; optional `phases` can expand the item into a real implementation plan. Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence.
 
-`plan next` treats roadmap items with `in_progress` or `planned` status as actionable. Items marked `deferred` are intentionally parked; Zenith will recommend reviewing or reactivating deferred work instead of creating a plan from it automatically. To resume deferred work, update that roadmap item back to `planned` or `in_progress` with a justification.
+`plan next` treats roadmap items with `in_progress` or `todo` status as actionable. Items marked `deferred` are intentionally parked; Zenith will recommend reviewing or reactivating deferred work instead of creating a plan from it automatically. Items marked `discarded` are visible scope decisions and are not recommended as future work. To resume deferred or discarded work, update that roadmap item back to `todo` or `in_progress` with a justification.
 
 When a project has multiple roadmaps with active plans, `plan next` may return an ambiguity recommendation (`Set roadmap focus for this worktree: zenith focus set <roadmap-id>`). Use `zenith focus set <roadmap-id>` to bind the current worktree to one roadmap so the agent knows which plan to implement. `zenith focus show --json` reports the current binding and any ambiguity. Multiple roadmaps can coexist, each with its own active plan.
 
@@ -267,6 +278,16 @@ Use `deferred` to postpone future roadmap work without renaming or deleting it:
   "itemTitle": "MVP 5 - PR Review Skill",
   "status": "deferred",
   "justification": "Core TUI and context behavior should be stronger before review skills."
+}
+```
+
+Use `discarded` when roadmap work should remain auditable but should no longer be treated as planned, deferred, or completed:
+
+```json
+{
+  "itemTitle": "MVP 6 - Agent Backends",
+  "status": "discarded",
+  "justification": "Provider CLI spawning is no longer in scope; wake-on-event choreography covers the useful local-agent workflow."
 }
 ```
 

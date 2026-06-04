@@ -100,7 +100,7 @@ Payload:
 
 Created plans preserve `sourceRoadmapId`, `sourceRoadmapItemId`, and source evidence. Use `itemTitle` instead of `itemId` only when the title is unique.
 
-Do not create a plan from a `deferred` roadmap item. `plan next` treats `in_progress` and `todo` roadmap items as actionable; if only deferred items remain, reactivate one with `roadmap update-item` before creating a plan.
+Do not create a plan from a `deferred` or `discarded` roadmap item. `plan next` treats `in_progress` and `todo` roadmap items as actionable; if only deferred items remain, reactivate or discard one with `roadmap update-item` before creating a plan. Discarded items remain visible but do not trigger future work recommendations.
 
 ## Insert Intermediate Roadmap Work
 
@@ -138,6 +138,16 @@ Payload:
   "itemTitle": "MVP 5 - PR Review Skill",
   "status": "deferred",
   "justification": "Core TUI and context behavior should be stronger before review skills."
+}
+```
+
+Use `discarded` when roadmap work should stay auditable but should no longer be planned, deferred, or counted as completed:
+
+```json
+{
+  "itemTitle": "MVP 6 - Agent Backends",
+  "status": "discarded",
+  "justification": "Provider CLI spawning is no longer in scope; wake-on-event choreography covers the useful local-agent workflow."
 }
 ```
 
@@ -226,6 +236,36 @@ Evidence payload:
   ]
 }
 ```
+
+## Multi-Agent Choreography
+
+Use this when multiple local agent sessions coordinate plan/implement/review work without Zenith spawning vendor CLIs. Zenith stores stage state and exposes blocking watches; each agent uses its own harness/background primitive.
+
+Set a stage:
+
+```bash
+zenith stage set --json --input -
+```
+
+Payload:
+
+```json
+{
+  "planId": "plan_id",
+  "phaseId": "phase_id",
+  "stage": "review",
+  "role": "codex",
+  "note": "Implementation is ready for review."
+}
+```
+
+Wait for a role handoff:
+
+```bash
+zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+```
+
+Stages are `plan`, `implement`, `review`, and `done`. Stage state is additive and does not affect `plan next`. Use `zenith diff --json` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
 
 ## Record Findings
 
