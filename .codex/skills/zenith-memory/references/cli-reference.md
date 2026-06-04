@@ -98,6 +98,7 @@ Use `--since <eventId|iso>` to return only events after a checkpoint cursor (ISO
 - `zenith diff --json [--since <eventId|iso>] [--limit <n>]` — events since a cursor, or since the latest ended session by default
 - `zenith drift --json [--stale-after-days <n>]` — roadmap-vs-active-plan alignment report; default stale threshold 7 days
 - `zenith adherence --json [--days <n>]` — event-derived velocity and completion metrics; default 14 days
+- `zenith activity --json` — uncapped 53-week activity heatmap from grouped event counts; used by the TUI Pulse view
 
 ## Decisions
 

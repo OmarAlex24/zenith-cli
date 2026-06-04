@@ -51,11 +51,14 @@ import { resolveActivePlan, type FocusCandidate, type FocusResolution } from "./
 import { buildRoadmapWorkspace, type RoadmapWorkspace } from "./roadmap-workspace";
 import {
   activePlanSummary,
+  activityWindow,
+  buildActivityReport,
   completionMetrics,
   eventStatsFromSummary,
   findingSignals,
   roadmapProgress,
   windowFromDays,
+  type ActivityReport,
   type CompletionMetrics,
   type EventStats,
   type FindingSignals,
@@ -147,6 +150,8 @@ export type AdherenceReport = {
   eventsPerDay: number;
   completionEventsPerDay: number;
 };
+
+export type { ActivityReport };
 
 type PlanSummaryForTelemetry = {
   id: string;
@@ -878,6 +883,20 @@ export class ZenithApp {
       eventsPerDay: roundMetric(stats.total / days),
       completionEventsPerDay: roundMetric(completionEvents / days),
     };
+  }
+
+  async activity(options: { weeks?: number } = {}): Promise<ActivityReport> {
+    const project = await this.requireProject();
+    const now = nowIso();
+    const window = activityWindow(now, options.weeks);
+    const dayCounts = this.repository.countEventsByDay(project.id, {
+      sinceDate: window.startDate,
+      untilDate: window.endDate,
+    });
+    return buildActivityReport(dayCounts, {
+      now,
+      ...(options.weeks ? { weeks: options.weeks } : {}),
+    });
   }
 
   private async computeNextForProject(project: Project, options: { staleAfterDays?: number } = {}): Promise<PlanNextResult> {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, type ReactNode } from "react";
 import { useKeyboard, useRenderer, useTerminalDimensions, useTimeline } from "@opentui/react";
-import type { ProjectStatus } from "../app/decode-app";
+import type { ActivityReport, ProjectStatus } from "../app/decode-app";
 import type { RoadmapWorkspace, WorkspaceGroup, WorkspaceItem } from "../app/roadmap-workspace";
 import type {
   CompactContext,
@@ -40,6 +40,7 @@ export type DashboardData = {
   decisions: Decision[];
   context: CompactContext;
   timeline: Event[];
+  activity: ActivityReport;
 };
 
 export type DashboardProps = {
@@ -58,6 +59,7 @@ const sections = [
   { id: "sessions", label: "Sessions" },
   { id: "decisions", label: "Decisions" },
   { id: "context", label: "Context" },
+  { id: "pulse", label: "Pulse" },
 ] as const;
 
 const sidebarWidth = 18;
@@ -370,7 +372,7 @@ function Footer({ status, overlayOpen, motion }: { status: ProjectStatus; overla
       {overlayOpen ? (
         <text fg={palette.faint}>t/esc close timeline · ↑↓ scroll · q quit</text>
       ) : (
-        <text fg={palette.faint}>↑↓ nav · enter focus · ⌫ back · 1-8 jump · t timeline · r refresh · q quit</text>
+        <text fg={palette.faint}>↑↓ nav · enter focus · ⌫ back · 1-9 jump · t timeline · r refresh · q quit</text>
       )}
     </box>
   );
@@ -443,6 +445,7 @@ function Main({
   if (section === "home") return <HomeView data={data} bodyHeight={bodyHeight} />;
   if (section === "brief") return <BriefView data={data} />;
   if (section === "context") return <ContextView data={data} />;
+  if (section === "pulse") return <PulseView data={data} />;
   if (section === "roadmap")
     return (
       <RoadmapWorkspaceView
@@ -543,6 +546,61 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
       </box>
     </box>
   );
+}
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const ACTIVITY_RAMP = [palette.border, "#31533a", "#4d7c4f", "#78a75f", palette.success] as const;
+
+function PulseView({ data }: { data: DashboardData }) {
+  const activity = data.activity;
+  const weeks = activity.grid.weeks;
+  return (
+    <Panel title="Pulse Activity">
+      <text>
+        <span fg={palette.accent}>{"Activity  "}</span>
+        <span fg={palette.faint}>{`${activity.window.weeks} weeks · ${activity.window.weekStartsOn}-start · ${activity.generatedAt}`}</span>
+      </text>
+      <text fg={palette.muted}>{" "}</text>
+      {WEEKDAY_LABELS.map((label, rowIndex) => (
+        <text key={label}>
+          <span fg={palette.faint}>{`${label} `}</span>
+          {weeks.map((week, weekIndex) => {
+            const day = week[rowIndex];
+            return (
+              <span key={`${label}-${weekIndex}`} fg={day ? activityCellColor(day) : palette.border}>
+                {"■"}
+              </span>
+            );
+          })}
+        </text>
+      ))}
+      <text fg={palette.muted}>{" "}</text>
+      <box style={{ flexDirection: "row", gap: 2 }}>
+        <StatLine label="events" value={`${activity.stats.totalEvents}`} />
+        <StatLine label="active" value={`${activity.stats.activeDays} days`} />
+        <StatLine label="current" value={`${activity.stats.currentStreak} days`} />
+      </box>
+      <box style={{ flexDirection: "row", gap: 2 }}>
+        <StatLine label="longest" value={`${activity.stats.longestStreak} days`} />
+        <StatLine label="max/day" value={`${activity.stats.maxDailyEvents}`} />
+        <StatLine label="range" value={`${activity.window.since.slice(0, 10)}..${activity.window.until.slice(0, 10)}`} />
+      </box>
+    </Panel>
+  );
+}
+
+function StatLine({ label, value }: { label: string; value: string }) {
+  return (
+    <text>
+      <span fg={palette.faint}>{`${label} `}</span>
+      <span fg={palette.accent}>{value}</span>
+    </text>
+  );
+}
+
+function activityCellColor(day: ActivityReport["grid"]["days"][number]): string {
+  if (day.future) return palette.faint;
+  return ACTIVITY_RAMP[day.level] ?? palette.border;
 }
 
 function BriefView({ data }: { data: DashboardData }) {

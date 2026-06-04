@@ -131,9 +131,10 @@ bun run zenith diff --json
 bun run zenith diff --json --since <event-id-or-iso>
 bun run zenith drift --json
 bun run zenith adherence --json
+bun run zenith activity --json
 ```
 
-`zenith timeline` is a read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`. Self-tracking telemetry commands are also read-only: `standup` gives a daily digest, `diff` shows changes since a cursor or the latest ended session, `drift` compares roadmap and active plan alignment, and `adherence` reports event-derived velocity.
+`zenith timeline` is a read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`. Self-tracking telemetry commands are also read-only: `standup` gives a daily digest, `diff` shows changes since a cursor or the latest ended session, `drift` compares roadmap and active plan alignment, `adherence` reports event-derived velocity, and `activity` returns the uncapped 53-week activity heatmap used by the TUI Pulse view.
 
 Long-running memory:
 
@@ -199,9 +200,10 @@ zenith context compact --json
 zenith plan next --json
 zenith timeline --json
 zenith standup --json
+zenith activity --json
 ```
 
-`zenith timeline` shows recent project activity (read-only event log); accepts `--limit <n>` and `--since <eventId|iso>`. Use `zenith standup --json`, `zenith diff --json`, `zenith drift --json`, and `zenith adherence --json` when you need read-only self-tracking telemetry before choosing the next work.
+`zenith timeline` shows recent project activity (read-only event log); accepts `--limit <n>` and `--since <eventId|iso>`. Use `zenith standup --json`, `zenith diff --json`, `zenith drift --json`, `zenith adherence --json`, and `zenith activity --json` when you need read-only self-tracking telemetry before choosing the next work.
 
 When working from this source checkout and the `zenith` binary is not on `PATH`, use `bun run zenith ...` for the same commands.
 

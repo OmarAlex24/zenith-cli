@@ -3,6 +3,7 @@
 import { CliRenderEvents, createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { createZenithApp, type AppFactoryOptions } from "../app/factory";
+import { buildActivityReport } from "../app/telemetry";
 import { Dashboard, type DashboardData } from "./Dashboard";
 
 export type RunTuiOptions = AppFactoryOptions;
@@ -43,5 +44,6 @@ async function loadDashboardData(app: ReturnType<typeof createZenithApp>["app"])
   const decisions = registered ? await app.listDecisions() : [];
   const context = await app.compactContext();
   const timeline = registered ? await app.timeline({ limit: 50 }) : [];
-  return { status, brief, plans, roadmaps, workspace, spikes, findings, sessions, decisions, context, timeline };
+  const activity = registered ? await app.activity() : buildActivityReport([], { now: new Date().toISOString() });
+  return { status, brief, plans, roadmaps, workspace, spikes, findings, sessions, decisions, context, timeline, activity };
 }

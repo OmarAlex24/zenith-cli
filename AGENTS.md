@@ -13,7 +13,7 @@ Use the zenith-memory skill at .codex/skills/zenith-memory/SKILL.md when:
 - recording and closing findings
 - starting, capturing, ending, or summarizing a coding session
 - viewing recent project activity (`zenith timeline --json`)
-- viewing self-tracking telemetry (`zenith standup/diff/drift/adherence --json`)
+- viewing self-tracking telemetry (`zenith standup/diff/drift/adherence/activity --json`)
 - sequencing plan phases with dependencies (`dependsOn` via `plan update-phase`; `plan next` reports `Blocked by dependency` when gated)
 
 Use the zenith-pr-review skill at .codex/skills/zenith-pr-review/SKILL.md when:

@@ -7,6 +7,7 @@ import type { CapturedFrame, CapturedLine } from "@opentui/core";
 import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
 import { buildRoadmapWorkspace } from "../src/app/roadmap-workspace";
+import { buildActivityReport, type ActivityReport } from "../src/app/telemetry";
 import type { CompactContext, Decision, Event, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
 import { palette } from "../src/tui/theme";
 
@@ -201,6 +202,29 @@ describe("OpenTUI dashboard", () => {
     const roadmapFrame = setup.captureCharFrame();
     expect(roadmapFrame).toContain("Roadmap");
     expect(roadmapFrame).not.toContain("TIMELINE");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("pressing 9 opens the Pulse activity heatmap", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressKey("9");
+    });
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+
+    expect(frame).toContain("Pulse Activity");
+    expect(frame).toContain("53 weeks");
+    expect(frame).toContain("events");
+    expect(frame).toContain("longest");
+    expect(frame).toContain("max/day");
+    expect(frame).toContain("1-9 jump");
 
     act(() => {
       setup.renderer.destroy();
@@ -464,7 +488,14 @@ function hexByte(value: number) {
 }
 
 function makeDashboardData(
-  options: { findings?: Finding[]; projectName?: string; timeline?: Event[]; roadmaps?: Roadmap[]; plans?: Plan[] } = {},
+  options: {
+    findings?: Finding[];
+    projectName?: string;
+    timeline?: Event[];
+    roadmaps?: Roadmap[];
+    plans?: Plan[];
+    activity?: ActivityReport;
+  } = {},
 ): DashboardData {
   const findings = options.findings ?? [makeFinding()];
   const status = makeStatus({ findings, ...(options.projectName ? { projectName: options.projectName } : {}) });
@@ -483,7 +514,19 @@ function makeDashboardData(
     decisions: status.recentDecisions,
     context: makeContext(status),
     timeline: options.timeline ?? makeTimeline(),
+    activity: options.activity ?? makeActivity(),
   };
+}
+
+function makeActivity(): ActivityReport {
+  return buildActivityReport(
+    [
+      { date: "2026-01-05", count: 3 },
+      { date: "2026-01-06", count: 6 },
+      { date: "2026-01-07", count: 9 },
+    ],
+    { now: "2026-01-07T12:00:00.000Z" },
+  );
 }
 
 function makeTimeline(): Event[] {

@@ -592,6 +592,14 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.adherence({ ...parseDaysOption(commandOptions.days) }), humanAdherence);
     });
 
+  program
+    .command("activity")
+    .description("Show project activity heatmap data")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.activity(), humanActivity);
+    });
+
   const agents = program.command("agents").description("Agent pack installer");
 
   agents
@@ -1036,5 +1044,26 @@ function humanAdherence(report: {
     `Active days: ${report.activeDayCount}`,
     `Events/day: ${report.eventsPerDay}`,
     `Completion events/day: ${report.completionEventsPerDay}`,
+  ].join("\n");
+}
+
+function humanActivity(report: {
+  window: { since: string; until: string; weeks: number };
+  stats: {
+    totalEvents: number;
+    activeDays: number;
+    currentStreak: number;
+    longestStreak: number;
+    maxDailyEvents: number;
+  };
+}): string {
+  return [
+    `Window: ${report.window.since} → ${report.window.until}`,
+    `Grid: ${report.window.weeks} weeks`,
+    `Events: ${report.stats.totalEvents}`,
+    `Active days: ${report.stats.activeDays}`,
+    `Current streak: ${report.stats.currentStreak} days`,
+    `Longest streak: ${report.stats.longestStreak} days`,
+    `Max daily events: ${report.stats.maxDailyEvents}`,
   ].join("\n");
 }

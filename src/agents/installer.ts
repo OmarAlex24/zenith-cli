@@ -110,7 +110,7 @@ Use the zenith-memory skill at ${memorySkillPath} when:
 - recording and closing findings
 - starting, capturing, ending, or summarizing a coding session
 - viewing recent project activity (\`zenith timeline --json\`)
-- viewing self-tracking telemetry (\`zenith standup/diff/drift/adherence --json\`)
+- viewing self-tracking telemetry (\`zenith standup/diff/drift/adherence/activity --json\`)
 - sequencing plan phases with dependencies (\`dependsOn\` via \`plan update-phase\`; \`plan next\` reports \`Blocked by dependency\` when gated)
 
 Use the zenith-pr-review skill at ${reviewSkillPath} when:
@@ -495,7 +495,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
 - Use \`zenith timeline --json\` (with optional \`--limit <n>\` and \`--since <eventId|iso>\`) for a read-only view of recent project activity.
-- Use \`zenith standup --json\`, \`zenith diff --json\`, \`zenith drift --json\`, and \`zenith adherence --json\` for read-only self-tracking telemetry when auditing progress or resuming work.
+- Use \`zenith standup --json\`, \`zenith diff --json\`, \`zenith drift --json\`, \`zenith adherence --json\`, and \`zenith activity --json\` for read-only self-tracking telemetry when auditing progress or resuming work.
 - Phase prerequisites are expressed with \`dependsOn\` (array of phase ids) via \`plan update-phase\`; when all remaining phases are gated, \`plan next\` reports \`Blocked by dependency\`.
 - Use \`plan next\` \`kind\` field to dispatch in agent loops: \`implement_phase\` → implement; \`blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty\` → STOP.
 - Use \`zenith plan advance --json --input -\` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
@@ -652,6 +652,7 @@ Use \`--since <eventId|iso>\` to return only events after a checkpoint cursor (I
 - \`zenith diff --json [--since <eventId|iso>] [--limit <n>]\` — events since a cursor, or since the latest ended session by default
 - \`zenith drift --json [--stale-after-days <n>]\` — roadmap-vs-active-plan alignment report; default stale threshold 7 days
 - \`zenith adherence --json [--days <n>]\` — event-derived velocity and completion metrics; default 14 days
+- \`zenith activity --json\` — uncapped 53-week activity heatmap from grouped event counts; used by the TUI Pulse view
 
 ## Decisions
 
@@ -749,6 +750,7 @@ zenith diff --json                    # changes since latest ended session
 zenith diff --json --since <cursor>   # event id or ISO timestamp
 zenith drift --json                   # roadmap-vs-active-plan alignment
 zenith adherence --json               # velocity/adherence; accepts --days <n>
+zenith activity --json                # 53-week activity heatmap from grouped event counts
 zenith plan next --json --stale-after-days 7
 \`\`\`
 

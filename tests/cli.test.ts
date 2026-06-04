@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
+import { createZenithApp } from "../src/app/factory";
 import { cleanupTempDir, makeTempDir, runDecode, runWithLegacyDecodeHome } from "./helpers";
 
 const tempDirs: string[] = [];
@@ -1214,6 +1216,37 @@ describe("cli json commands", () => {
     expect((next.json as any).data.staleness.staleAfterDays).toBe(1);
   });
 
+  test("activity reports uncapped day counts for app and cli callers", async () => {
+    const cwd = realpathSync(makeTempDir());
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    const services = createZenithApp({ cwd, zenithHome });
+    await services.app.registerProject();
+    for (let index = 0; index < 520; index += 1) {
+      await services.app.recordDecision({
+        title: `Activity event ${index}`,
+        context: "Need more than the timeline cap.",
+        decision: "Count grouped events directly.",
+      });
+    }
+
+    const appActivity = await services.app.activity();
+    services.close();
+
+    const cliActivity = await runDecode(["activity", "--json"], { cwd, zenithHome });
+    const humanActivity = await runRawZenith(["activity"], { cwd, zenithHome });
+
+    expect(appActivity.stats.totalEvents).toBeGreaterThan(500);
+    expect(appActivity.grid.columns).toBe(53);
+    expect(appActivity.grid.rows).toBe(7);
+    expect(cliActivity.exitCode).toBe(0);
+    expect((cliActivity.json as any).data.stats.totalEvents).toBe(appActivity.stats.totalEvents);
+    expect((cliActivity.json as any).data.grid.days).toHaveLength(371);
+    expect(humanActivity.exitCode).toBe(0);
+    expect(humanActivity.stdout).toContain("Current streak:");
+  });
+
   test("completePlan is idempotent: second call is a no-op and does not emit duplicate events", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();
@@ -1288,3 +1321,23 @@ describe("cli json commands", () => {
     expect((show.json as any).data.status).not.toBe("completed");
   });
 });
+
+async function runRawZenith(args: string[], options: { cwd: string; zenithHome: string }) {
+  const entrypoint = join(process.cwd(), "src", "index.ts");
+  const proc = Bun.spawn(["bun", "run", entrypoint, ...args], {
+    cwd: options.cwd,
+    env: {
+      ...Bun.env,
+      ZENITH_HOME: options.zenithHome,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}

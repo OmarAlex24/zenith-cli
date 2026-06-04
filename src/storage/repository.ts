@@ -211,6 +211,11 @@ export type EventWindowSummary = {
   lastEventAt?: string;
 };
 
+export type EventDayCount = {
+  date: string;
+  count: number;
+};
+
 export type InsertPlanInput = {
   projectId: string;
   title: string;
@@ -1664,6 +1669,32 @@ export class ZenithRepository {
       ...(summary?.first_event_at ? { firstEventAt: summary.first_event_at } : {}),
       ...(summary?.last_event_at ? { lastEventAt: summary.last_event_at } : {}),
     };
+  }
+
+  countEventsByDay(projectId: string, options: { sinceDate?: string; untilDate?: string } = {}): EventDayCount[] {
+    const params: string[] = [projectId];
+    let sql = `
+      SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS count
+      FROM events
+      WHERE project_id = ?
+    `;
+
+    if (options.sinceDate) {
+      sql += " AND substr(created_at, 1, 10) >= ?";
+      params.push(options.sinceDate);
+    }
+
+    if (options.untilDate) {
+      sql += " AND substr(created_at, 1, 10) <= ?";
+      params.push(options.untilDate);
+    }
+
+    sql += `
+      GROUP BY substr(created_at, 1, 10)
+      ORDER BY date ASC
+    `;
+
+    return this.db.query<EventDayCount, string[]>(sql).all(...params);
   }
 
   private recordEvent(

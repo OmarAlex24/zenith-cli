@@ -42,6 +42,7 @@ zenith diff --json                    # changes since latest ended session
 zenith diff --json --since <cursor>   # event id or ISO timestamp
 zenith drift --json                   # roadmap-vs-active-plan alignment
 zenith adherence --json               # velocity/adherence; accepts --days <n>
+zenith activity --json                # 53-week activity heatmap from grouped event counts
 zenith plan next --json --stale-after-days 7
 ```
 
