@@ -111,6 +111,14 @@ Use `--since <eventId|iso>` to return only events after a checkpoint cursor (ISO
 - `zenith adherence --json [--days <n>]` — event-derived velocity and completion metrics; default 14 days
 - `zenith activity --json` — uncapped 53-week activity heatmap from grouped event counts; used by the TUI Pulse view
 
+## Memory Discovery
+
+- `zenith search --json --query <text> [--tag <tag>] [--entity-type <type>] [--limit <n>]` — deterministic search over briefs, roadmaps, roadmap items, plans, phases, spikes, decisions, findings, and sessions
+- `zenith tag set <entity-type> <entity-id> --json --input -` — replace normalized tags for a memory entity; payload: `{ "tags": ["release", "docs"] }`
+- `zenith tag list --json [--tag <tag>] [--entity-type <type>] [--entity-id <id>]` — list normalized tag records
+
+Supported discovery entity types: `brief`, `roadmap`, `roadmap_item`, `plan`, `phase`, `spike`, `decision`, `finding`, `session`.
+
 ## Decisions
 
 - `zenith decision record --json --input -`

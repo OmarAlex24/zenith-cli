@@ -18,6 +18,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - `decision`: technical or strategic choice.
 - `finding`: bug, risk, debt, or gap.
 - `session`: work continuity log.
+- `tag`: normalized labels attached to memory entities for deterministic discovery.
 
 ## Core Rules
 
@@ -32,6 +33,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Never store secrets, full diffs, or long transcripts in Zenith.
 - Use `zenith timeline --json` (with optional `--limit <n>` and `--since <eventId|iso>`) for a read-only view of recent project activity.
 - Use `zenith standup --json`, `zenith diff --json`, `zenith drift --json`, `zenith adherence --json`, and `zenith activity --json` for read-only self-tracking telemetry when auditing progress or resuming work.
+- Use `zenith search --json --query <text>` and `zenith tag list --json` to discover existing memory before creating duplicate records.
 - Phase prerequisites are expressed with `dependsOn` (array of phase ids) via `plan update-phase`; when all remaining phases are gated, `plan next` reports `Blocked by dependency`.
 - Use `plan next` `kind` field to dispatch in agent loops: `implement_phase` → implement; `blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty` → STOP.
 - Use `zenith plan advance --json --input -` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).

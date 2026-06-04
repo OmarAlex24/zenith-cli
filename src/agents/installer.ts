@@ -816,6 +816,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - \`decision\`: technical or strategic choice.
 - \`finding\`: bug, risk, debt, or gap.
 - \`session\`: work continuity log.
+- \`tag\`: normalized labels attached to memory entities for deterministic discovery.
 
 ## Core Rules
 
@@ -830,6 +831,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Never store secrets, full diffs, or long transcripts in Zenith.
 - Use \`zenith timeline --json\` (with optional \`--limit <n>\` and \`--since <eventId|iso>\`) for a read-only view of recent project activity.
 - Use \`zenith standup --json\`, \`zenith diff --json\`, \`zenith drift --json\`, \`zenith adherence --json\`, and \`zenith activity --json\` for read-only self-tracking telemetry when auditing progress or resuming work.
+- Use \`zenith search --json --query <text>\` and \`zenith tag list --json\` to discover existing memory before creating duplicate records.
 - Phase prerequisites are expressed with \`dependsOn\` (array of phase ids) via \`plan update-phase\`; when all remaining phases are gated, \`plan next\` reports \`Blocked by dependency\`.
 - Use \`plan next\` \`kind\` field to dispatch in agent loops: \`implement_phase\` → implement; \`blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty\` → STOP.
 - Use \`zenith plan advance --json --input -\` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
@@ -999,6 +1001,14 @@ Use \`--since <eventId|iso>\` to return only events after a checkpoint cursor (I
 - \`zenith adherence --json [--days <n>]\` — event-derived velocity and completion metrics; default 14 days
 - \`zenith activity --json\` — uncapped 53-week activity heatmap from grouped event counts; used by the TUI Pulse view
 
+## Memory Discovery
+
+- \`zenith search --json --query <text> [--tag <tag>] [--entity-type <type>] [--limit <n>]\` — deterministic search over briefs, roadmaps, roadmap items, plans, phases, spikes, decisions, findings, and sessions
+- \`zenith tag set <entity-type> <entity-id> --json --input -\` — replace normalized tags for a memory entity; payload: \`{ "tags": ["release", "docs"] }\`
+- \`zenith tag list --json [--tag <tag>] [--entity-type <type>] [--entity-id <id>]\` — list normalized tag records
+
+Supported discovery entity types: \`brief\`, \`roadmap\`, \`roadmap_item\`, \`plan\`, \`phase\`, \`spike\`, \`decision\`, \`finding\`, \`session\`.
+
 ## Decisions
 
 - \`zenith decision record --json --input -\`
@@ -1100,6 +1110,19 @@ zenith plan next --json --stale-after-days 7
 \`\`\`
 
 Telemetry is derived from existing events and memory records. It must stay read-only; record progress with \`plan advance\`, sessions, findings, or decisions instead.
+
+## Discover Existing Memory
+
+Use deterministic search before creating duplicate memory:
+
+\`\`\`bash
+zenith search --json --query "release docs"
+zenith search --json --query "review" --tag pr-review
+zenith tag list --json --entity-type plan
+zenith tag set plan plan_id --json --input -
+\`\`\`
+
+\`tag set\` replaces tags for the entity. Tags normalize to lowercase ASCII slugs such as \`release-docs\`.
 
 ## Create A Plan
 

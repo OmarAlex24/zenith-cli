@@ -16,7 +16,8 @@
     "typecheck": "bun x tsc --noEmit",
     "ci": "bun run typecheck && bun test && bun run build",
     "build": "bun build ./src/index.ts --target=bun --outdir=dist",
-    "compile": "bun build ./src/cli/headless.ts --target=bun --outfile dist/zenith"
+    "compile": "bun build --compile ./src/cli/headless.ts --outfile dist/zenith",
+    "package:release": "scripts/package-release.sh"
   },
   "dependencies": {
     "@opentui/core": "^0.3.1",

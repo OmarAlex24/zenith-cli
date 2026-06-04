@@ -25,6 +25,9 @@ type CommandOptions = {
   until?: string;
   timeout?: string;
   pollInterval?: string;
+  query?: string;
+  tag?: string;
+  entityType?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -614,6 +617,57 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.activity(), humanActivity);
     });
 
+  const tag = program.command("tag").description("Tag project memory entities");
+
+  tag
+    .command("set")
+    .description("Replace tags for a memory entity")
+    .argument("<entity-type>")
+    .argument("<entity-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .action(async (entityType: string, entityId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.setMemoryTags(entityType, entityId, await readJsonInput(commandOptions.input)),
+      humanMemoryTagList);
+    });
+
+  tag
+    .command("list")
+    .description("List memory tags")
+    .option("--json", "Emit stable JSON")
+    .option("--tag <tag>", "Filter by normalized tag")
+    .option("--entity-type <type>", "Filter by memory entity type")
+    .option("--entity-id <id>", "Filter by memory entity id")
+    .action(async (commandOptions: CommandOptions & { entityId?: string }) => {
+      await handle(commandOptions, options, async (app) =>
+        app.listMemoryTags({
+          ...(commandOptions.tag ? { tag: commandOptions.tag } : {}),
+          ...(commandOptions.entityType ? { entityType: commandOptions.entityType } : {}),
+          ...(commandOptions.entityId ? { entityId: commandOptions.entityId } : {}),
+        }),
+      humanMemoryTagList);
+    });
+
+  program
+    .command("search")
+    .description("Search project memory deterministically")
+    .requiredOption("--query <text>", "Search query")
+    .option("--json", "Emit stable JSON")
+    .option("--tag <tag>", "Filter by normalized tag")
+    .option("--entity-type <type>", "Filter by memory entity type")
+    .option("--limit <n>", "Max number of results (default 50)")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.searchMemory({
+          ...(commandOptions.query ? { query: commandOptions.query } : {}),
+          ...(commandOptions.tag ? { tag: commandOptions.tag } : {}),
+          ...(commandOptions.entityType ? { entityType: commandOptions.entityType } : {}),
+          ...parseLimitOption(commandOptions.limit),
+        }),
+      humanMemorySearchResults);
+    });
+
   program
     .command("watch")
     .description("Block until a local project memory predicate matches")
@@ -1146,4 +1200,25 @@ function humanActivity(report: {
     `Longest streak: ${report.stats.longestStreak} days`,
     `Max daily events: ${report.stats.maxDailyEvents}`,
   ].join("\n");
+}
+
+function humanMemoryTagList(tags: Array<{ entityType: string; entityId: string; tag: string }>): string {
+  if (tags.length === 0) {
+    return "No tags.";
+  }
+  return tags.map((tag) => `${tag.tag}  ${tag.entityType}:${tag.entityId}`).join("\n");
+}
+
+function humanMemorySearchResults(
+  results: Array<{ entityType: string; entityId: string; title: string; score: number; tags: string[]; snippet: string }>,
+): string {
+  if (results.length === 0) {
+    return "No matching memory.";
+  }
+  return results
+    .map((result) => {
+      const tags = result.tags.length > 0 ? ` tags:${result.tags.join(",")}` : "";
+      return `${result.score}  ${result.entityType}:${result.entityId}  ${result.title}${tags}\n  ${result.snippet}`;
+    })
+    .join("\n");
 }

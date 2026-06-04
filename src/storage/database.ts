@@ -220,6 +220,10 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 10,
     sql: "",
   },
+  {
+    version: 11,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -281,6 +285,8 @@ export function runMigrations(db: Database): void {
         runAgentStagesMigration(db);
       } else if (migration.version === 10) {
         runRoadmapItemDiscardedStatusMigration(db);
+      } else if (migration.version === 11) {
+        runMemoryTagsMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -329,6 +335,48 @@ function runAgentStagesMigration(db: Database): void {
       WHEN NEW.stage NOT IN ('plan', 'implement', 'review', 'done')
       BEGIN
         SELECT RAISE(ABORT, 'invalid agent_stages.stage');
+      END`,
+  );
+}
+
+function runMemoryTagsMigration(db: Database): void {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS memory_tags (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_tags_unique
+      ON memory_tags(project_id, entity_type, entity_id, tag)`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_memory_tags_project_tag
+      ON memory_tags(project_id, tag, entity_type, entity_id)`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_memory_tags_entity
+      ON memory_tags(project_id, entity_type, entity_id)`,
+  );
+  db.run(
+    `CREATE TRIGGER IF NOT EXISTS trg_memory_tags_entity_type_insert
+      BEFORE INSERT ON memory_tags
+      WHEN NEW.entity_type NOT IN ('brief', 'roadmap', 'roadmap_item', 'plan', 'phase', 'spike', 'decision', 'finding', 'session')
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid memory_tags.entity_type');
+      END`,
+  );
+  db.run(
+    `CREATE TRIGGER IF NOT EXISTS trg_memory_tags_entity_type_update
+      BEFORE UPDATE OF entity_type ON memory_tags
+      WHEN NEW.entity_type NOT IN ('brief', 'roadmap', 'roadmap_item', 'plan', 'phase', 'spike', 'decision', 'finding', 'session')
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid memory_tags.entity_type');
       END`,
   );
 }

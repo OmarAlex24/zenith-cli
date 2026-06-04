@@ -15,6 +15,18 @@ export const BriefStatusSchema = z.enum(["current", "archived"]);
 export const RoadmapStatusSchema = z.enum(["active", "paused", "completed", "archived"]);
 export const SpikeStatusSchema = z.enum(["open", "concluded", "abandoned"]);
 export const AgentStageSchema = z.enum(["plan", "implement", "review", "done"]);
+export const MEMORY_ENTITY_TYPES = [
+  "brief",
+  "roadmap",
+  "roadmap_item",
+  "plan",
+  "phase",
+  "spike",
+  "decision",
+  "finding",
+  "session",
+] as const;
+export const MemoryEntityTypeSchema = z.enum(MEMORY_ENTITY_TYPES);
 
 const PHASE_STATUS_ALIASES: Record<string, string> = { pending: "todo", completed: "done" };
 const ROADMAP_ITEM_STATUS_ALIASES: Record<string, string> = {
@@ -184,6 +196,26 @@ export const AgentStageStateSchema = z.object({
   role: z.string().min(1).optional(),
   note: z.string().min(1).optional(),
   createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const MemoryTagSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  entityType: MemoryEntityTypeSchema,
+  entityId: z.string().min(1),
+  tag: z.string().min(1),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const MemorySearchResultSchema = z.object({
+  entityType: MemoryEntityTypeSchema,
+  entityId: z.string().min(1),
+  title: z.string().min(1),
+  snippet: z.string().min(1),
+  tags: z.array(z.string().min(1)).default([]),
+  score: z.number().int().nonnegative(),
   updatedAt: z.string().min(1),
 });
 
@@ -709,6 +741,10 @@ export const SetStageInputSchema = z.object({
   note: z.string().min(1).optional(),
 });
 
+export const SetMemoryTagsInputSchema = z.object({
+  tags: z.array(z.string().min(1)).default([]),
+});
+
 export type Project = z.infer<typeof ProjectSchema>;
 export type Plan = z.infer<typeof PlanSchema>;
 export type PlanPhase = z.infer<typeof PlanPhaseSchema>;
@@ -725,6 +761,9 @@ export type Spike = z.infer<typeof SpikeSchema>;
 export type SpikeStatus = z.infer<typeof SpikeStatusSchema>;
 export type AgentStage = z.infer<typeof AgentStageSchema>;
 export type AgentStageState = z.infer<typeof AgentStageStateSchema>;
+export type MemoryEntityType = z.infer<typeof MemoryEntityTypeSchema>;
+export type MemoryTag = z.infer<typeof MemoryTagSchema>;
+export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>;
 export type Finding = z.infer<typeof FindingSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type GitContext = z.infer<typeof GitContextSchema>;
@@ -762,6 +801,7 @@ export type StartSessionInput = z.infer<typeof StartSessionInputSchema>;
 export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;
 export type SetStageInput = z.infer<typeof SetStageInputSchema>;
+export type SetMemoryTagsInput = z.infer<typeof SetMemoryTagsInputSchema>;
 export type Event = z.infer<typeof EventSchema>;
 export type NextStepKind = z.infer<typeof NextStepKindSchema>;
 export type NextStepStaleness = z.infer<typeof NextStepStalenessSchema>;

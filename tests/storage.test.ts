@@ -773,6 +773,27 @@ describe("sqlite repository", () => {
     db.close();
   });
 
+  test("v11 migration creates normalized memory tags table", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+
+    const tables = db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_tags'")
+      .all()
+      .map((row) => row.name);
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(memory_tags)")
+      .all()
+      .map((column) => column.name);
+
+    expect(tables).toEqual(["memory_tags"]);
+    expect(columns).toContain("entity_type");
+    expect(columns).toContain("entity_id");
+    expect(columns).toContain("tag");
+    db.close();
+  });
+
   test("agent stages round-trip by scope, emit events, and isolate projects", () => {
     const root = makeTempDir();
     tempDirs.push(root);
@@ -822,6 +843,42 @@ describe("sqlite repository", () => {
       phaseId,
       role: "codex",
     });
+    repo.close();
+  });
+
+  test("memory tags replace, dedupe, filter, and isolate projects", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+    const otherProject = repo.registerProject({ name: "atlas", rootPath: "/work/atlas" });
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Searchable Plan",
+      status: "active",
+      phases: [{ title: "Index Memory", status: "todo", acceptanceCriteria: [], evidence: [] }],
+    });
+
+    const first = repo.setMemoryTags({
+      projectId: project.id,
+      entityType: "plan",
+      entityId: plan.id,
+      tags: ["release", "docs", "release"],
+    });
+    const replaced = repo.setMemoryTags({
+      projectId: project.id,
+      entityType: "plan",
+      entityId: plan.id,
+      tags: ["discovery"],
+    });
+
+    expect(first.map((tag) => tag.tag).sort()).toEqual(["docs", "release"]);
+    expect(replaced.map((tag) => tag.tag)).toEqual(["discovery"]);
+    expect(repo.listMemoryTags(project.id, { tag: "release" })).toHaveLength(0);
+    expect(repo.listMemoryTags(project.id, { entityType: "plan", entityId: plan.id })[0]?.tag).toBe("discovery");
+    expect(repo.listMemoryTags(otherProject.id)).toHaveLength(0);
+    expect(repo.listSearchableMemoryEntities(project.id).some((entity) => entity.entityId === plan.phases[0]!.id)).toBe(true);
     repo.close();
   });
 

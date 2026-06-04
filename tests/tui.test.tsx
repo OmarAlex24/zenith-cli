@@ -8,7 +8,7 @@ import { Dashboard, type DashboardData } from "../src/tui/Dashboard";
 import type { ProjectStatus } from "../src/app/decode-app";
 import { buildRoadmapWorkspace } from "../src/app/roadmap-workspace";
 import { buildActivityReport, type ActivityReport } from "../src/app/telemetry";
-import type { CompactContext, Decision, Event, Finding, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
+import type { CompactContext, Decision, Event, Finding, MemorySearchResult, Plan, ProjectBrief, Roadmap, Session, Spike } from "../src/domain/schemas";
 import { palette } from "../src/tui/theme";
 
 describe("OpenTUI dashboard", () => {
@@ -225,6 +225,38 @@ describe("OpenTUI dashboard", () => {
     expect(frame).toContain("longest");
     expect(frame).toContain("max/day");
     expect(frame).toContain("1-9 jump");
+
+    act(() => {
+      setup.renderer.destroy();
+    });
+  });
+
+  test("pressing 0 opens Search and typed query filters results", async () => {
+    const data = makeDashboardData();
+    const setup = await testRender(<Dashboard initialData={data} />, { width: 120, height: 32 });
+    await setup.flush();
+
+    await act(async () => {
+      setup.mockInput.pressKey("0");
+    });
+    await setup.flush();
+    const initial = setup.captureCharFrame();
+    expect(initial).toContain("Search Query");
+    expect(initial).toContain("Results (2)");
+    expect(initial).toContain("Zenith MVP");
+    expect(initial).toContain("0 search");
+
+    await act(async () => {
+      setup.mockInput.pressKey("m");
+      setup.mockInput.pressKey("v");
+      setup.mockInput.pressKey("p");
+    });
+    await setup.flush();
+    const filtered = setup.captureCharFrame();
+    expect(filtered).toContain("query mvp");
+    expect(filtered).toContain("Results (1)");
+    expect(filtered).toContain("Zenith MVP");
+    expect(filtered).not.toContain("Missing session close");
 
     act(() => {
       setup.renderer.destroy();
@@ -495,6 +527,7 @@ function makeDashboardData(
     roadmaps?: Roadmap[];
     plans?: Plan[];
     activity?: ActivityReport;
+    search?: MemorySearchResult[];
   } = {},
 ): DashboardData {
   const findings = options.findings ?? [makeFinding()];
@@ -515,7 +548,31 @@ function makeDashboardData(
     context: makeContext(status),
     timeline: options.timeline ?? makeTimeline(),
     activity: options.activity ?? makeActivity(),
+    search: options.search ?? makeSearchResults(),
   };
+}
+
+function makeSearchResults(): MemorySearchResult[] {
+  return [
+    {
+      entityType: "plan",
+      entityId: "plan_1",
+      title: "Zenith MVP",
+      snippet: "Build the Zenith MVP plan.",
+      tags: ["mvp", "release"],
+      score: 0,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      entityType: "finding",
+      entityId: "finding_1",
+      title: "Missing session close",
+      snippet: "Sessions should be closed before handoff.",
+      tags: ["ops"],
+      score: 0,
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    },
+  ];
 }
 
 function makeActivity(): ActivityReport {

@@ -45,5 +45,6 @@ async function loadDashboardData(app: ReturnType<typeof createZenithApp>["app"])
   const context = await app.compactContext();
   const timeline = registered ? await app.timeline({ limit: 50 }) : [];
   const activity = registered ? await app.activity() : buildActivityReport([], { now: new Date().toISOString() });
-  return { status, brief, plans, roadmaps, workspace, spikes, findings, sessions, decisions, context, timeline, activity };
+  const search = registered ? await app.searchMemory({ limit: 200 }) : [];
+  return { status, brief, plans, roadmaps, workspace, spikes, findings, sessions, decisions, context, timeline, activity, search };
 }

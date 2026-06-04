@@ -5,6 +5,7 @@ import {
   DecisionSchema,
   EventSchema,
   FindingSchema,
+  MemoryTagSchema,
   PlanSchema,
   ProjectBriefSchema,
   ProjectSchema,
@@ -17,6 +18,8 @@ import {
   type Event,
   type Evidence,
   type Finding,
+  type MemoryEntityType,
+  type MemoryTag,
   type Plan,
   type PlanPhase,
   type PlanStatus,
@@ -195,6 +198,16 @@ type AgentStageRow = {
   updated_at: string;
 };
 
+type MemoryTagRow = {
+  id: string;
+  project_id: string;
+  entity_type: MemoryEntityType;
+  entity_id: string;
+  tag: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RegisterProjectInput = {
   name: string;
   rootPath: string;
@@ -235,6 +248,20 @@ export type EventDayCount = {
 export type AgentStageScope = {
   planId?: string;
   phaseId?: string;
+};
+
+export type MemoryTagFilters = {
+  tag?: string;
+  entityType?: MemoryEntityType;
+  entityId?: string;
+};
+
+export type SearchableMemoryEntity = {
+  entityType: MemoryEntityType;
+  entityId: string;
+  title: string;
+  text: string;
+  updatedAt: string;
 };
 
 export type InsertPlanInput = {
@@ -1060,6 +1087,215 @@ export class ZenithRepository {
     return this.getAgentStage(input.projectId, scope)!;
   }
 
+  // Memory discovery tags
+  setMemoryTags(input: {
+    projectId: string;
+    entityType: MemoryEntityType;
+    entityId: string;
+    tags: string[];
+  }): MemoryTag[] {
+    const timestamp = nowIso();
+    const uniqueTags = [...new Set(input.tags)];
+
+    this.db.transaction(() => {
+      this.db
+        .query("DELETE FROM memory_tags WHERE project_id = ? AND entity_type = ? AND entity_id = ?")
+        .run(input.projectId, input.entityType, input.entityId);
+
+      for (const tag of uniqueTags) {
+        this.db
+          .query(
+            `
+            INSERT INTO memory_tags (
+              id, project_id, entity_type, entity_id, tag, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(createId("tag"), input.projectId, input.entityType, input.entityId, tag, timestamp, timestamp);
+      }
+
+      this.recordEvent(input.projectId, "memory.tags_set", "memory_tag", `${input.entityType}:${input.entityId}`, {
+        entityType: input.entityType,
+        entityId: input.entityId,
+        tags: uniqueTags,
+      });
+    })();
+
+    return this.listMemoryTags(input.projectId, {
+      entityType: input.entityType,
+      entityId: input.entityId,
+    });
+  }
+
+  listMemoryTags(projectId: string, filters: MemoryTagFilters = {}): MemoryTag[] {
+    const params: string[] = [projectId];
+    let sql = "SELECT * FROM memory_tags WHERE project_id = ?";
+
+    if (filters.tag) {
+      sql += " AND tag = ?";
+      params.push(filters.tag);
+    }
+    if (filters.entityType) {
+      sql += " AND entity_type = ?";
+      params.push(filters.entityType);
+    }
+    if (filters.entityId) {
+      sql += " AND entity_id = ?";
+      params.push(filters.entityId);
+    }
+
+    sql += " ORDER BY tag ASC, entity_type ASC, entity_id ASC";
+
+    return this.db.query<MemoryTagRow, string[]>(sql).all(...params).map(mapMemoryTag);
+  }
+
+  listSearchableMemoryEntities(projectId: string): SearchableMemoryEntity[] {
+    const records: SearchableMemoryEntity[] = [];
+    const briefs = this.listProjectBriefs(projectId, 1000);
+    const roadmaps = this.listRoadmaps(projectId, 1000);
+    const plans = this.listPlans(projectId);
+    const spikes = this.listSpikes(projectId, 1000);
+    const decisions = this.listDecisions(projectId, 1000);
+    const findings = this.listFindings(projectId, "all");
+    const sessions = this.listSessions(projectId, 1000);
+
+    for (const brief of briefs) {
+      records.push({
+        entityType: "brief",
+        entityId: brief.id,
+        title: brief.title,
+        text: joinSearchText([brief.title, brief.summary, brief.body, brief.source, brief.status]),
+        updatedAt: brief.updatedAt,
+      });
+    }
+
+    for (const roadmap of roadmaps) {
+      records.push({
+        entityType: "roadmap",
+        entityId: roadmap.id,
+        title: roadmap.title,
+        text: joinSearchText([roadmap.title, roadmap.description, roadmap.status]),
+        updatedAt: roadmap.updatedAt,
+      });
+      for (const item of roadmap.items) {
+        records.push({
+          entityType: "roadmap_item",
+          entityId: item.id,
+          title: item.title,
+          text: joinSearchText([
+            item.title,
+            item.description,
+            item.justification,
+            item.status,
+            ...item.evidence.map((evidence) => evidence.value),
+          ]),
+          updatedAt: roadmap.updatedAt,
+        });
+      }
+    }
+
+    for (const plan of plans) {
+      records.push({
+        entityType: "plan",
+        entityId: plan.id,
+        title: plan.title,
+        text: joinSearchText([plan.title, plan.description, plan.status, plan.priority, plan.sourceRoadmapId, plan.sourceRoadmapItemId]),
+        updatedAt: plan.updatedAt,
+      });
+      for (const phase of plan.phases) {
+        records.push({
+          entityType: "phase",
+          entityId: phase.id,
+          title: phase.title,
+          text: joinSearchText([
+            phase.title,
+            phase.description,
+            phase.status,
+            ...phase.acceptanceCriteria,
+            ...phase.dependsOn,
+            ...phase.evidence.map((evidence) => evidence.value),
+          ]),
+          updatedAt: plan.updatedAt,
+        });
+      }
+    }
+
+    for (const spike of spikes) {
+      records.push({
+        entityType: "spike",
+        entityId: spike.id,
+        title: spike.title,
+        text: joinSearchText([
+          spike.title,
+          spike.question,
+          spike.hypothesis,
+          ...spike.options,
+          spike.result,
+          spike.recommendation,
+          spike.status,
+          ...spike.evidence.map((evidence) => evidence.value),
+        ]),
+        updatedAt: spike.updatedAt,
+      });
+    }
+
+    for (const decision of decisions) {
+      records.push({
+        entityType: "decision",
+        entityId: decision.id,
+        title: decision.title,
+        text: joinSearchText([
+          decision.title,
+          decision.context,
+          decision.decision,
+          decision.consequences,
+          ...decision.alternatives,
+          ...decision.relatedPlanIds,
+        ]),
+        updatedAt: decision.createdAt,
+      });
+    }
+
+    for (const finding of findings) {
+      records.push({
+        entityType: "finding",
+        entityId: finding.id,
+        title: finding.title,
+        text: joinSearchText([
+          finding.title,
+          finding.description,
+          finding.type,
+          finding.severity,
+          finding.status,
+          ...finding.relatedFiles,
+          finding.relatedPlanId,
+          finding.relatedPhaseId,
+        ]),
+        updatedAt: finding.closedAt ?? finding.createdAt,
+      });
+    }
+
+    for (const session of sessions) {
+      records.push({
+        entityType: "session",
+        entityId: session.id,
+        title: session.summary ?? session.id,
+        text: joinSearchText([
+          session.id,
+          session.summary,
+          session.branch,
+          session.relatedPlanId,
+          ...session.changedFiles,
+          ...session.nextSteps,
+        ]),
+        updatedAt: session.endedAt ?? session.startedAt,
+      });
+    }
+
+    return records;
+  }
+
   updatePlan(planId: string, patch: UpdatePlanPatch): Plan {
     const plan = this.getPlanById(planId);
     if (!plan) {
@@ -1873,6 +2109,18 @@ function mapAgentStage(row: AgentStageRow): AgentStageState {
   });
 }
 
+function mapMemoryTag(row: MemoryTagRow): MemoryTag {
+  return MemoryTagSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    tag: row.tag,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
 function agentStageScopeKey(scope: AgentStageScope): string {
   if (scope.phaseId) {
     return `phase:${scope.phaseId}`;
@@ -2004,6 +2252,10 @@ function mapEvent(row: EventRow): Event {
 function parseJsonArray<T>(value: string): T[] {
   const parsed = JSON.parse(value) as unknown;
   return Array.isArray(parsed) ? (parsed as T[]) : [];
+}
+
+function joinSearchText(parts: Array<string | undefined>): string {
+  return parts.filter((part): part is string => Boolean(part && part.trim().length > 0)).join("\n");
 }
 
 function resolveRoadmapInsertPosition(items: RoadmapItem[], input: AddRoadmapItemInput): number {

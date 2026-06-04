@@ -141,10 +141,17 @@ describe("agent installer", () => {
     expect(cliReference).toContain("zenith finding update <finding-id> --json --input -");
     expect(cliReference).toContain("zenith session start --json --input -");
     expect(cliReference).toContain("zenith session show <session-id> --json");
+    expect(cliReference).toContain("Memory Discovery");
+    expect(cliReference).toContain("zenith search --json --query <text>");
+    expect(cliReference).toContain("zenith tag set <entity-type> <entity-id> --json --input -");
+    expect(cliReference).toContain("zenith tag list --json");
     expect(cliReference).toContain("deferred");
     expect(cliReference).toContain("discarded");
     expect(cliReference).toContain("bun run zenith");
     expect(workflows).toContain("Continue With Minimal Prompt");
+    expect(workflows).toContain("Discover Existing Memory");
+    expect(workflows).toContain('zenith search --json --query "release docs"');
+    expect(workflows).toContain("zenith tag set plan plan_id --json --input -");
     expect(workflows).toContain("Insert Intermediate Roadmap Work");
     expect(workflows).toContain("Defer Roadmap Work");
     expect(workflows).toContain("Targeted insertions");

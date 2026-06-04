@@ -9,6 +9,7 @@ import type {
   Decision,
   Event,
   Finding,
+  MemorySearchResult,
   Plan,
   ProjectBrief,
   Roadmap,
@@ -41,6 +42,7 @@ export type DashboardData = {
   context: CompactContext;
   timeline: Event[];
   activity: ActivityReport;
+  search: MemorySearchResult[];
 };
 
 export type DashboardProps = {
@@ -60,6 +62,7 @@ const sections = [
   { id: "decisions", label: "Decisions" },
   { id: "context", label: "Context" },
   { id: "pulse", label: "Pulse" },
+  { id: "search", label: "Search" },
 ] as const;
 
 const sidebarWidth = 18;
@@ -95,10 +98,12 @@ export function Dashboard({ initialData, reload, motion = false }: DashboardProp
   const [refreshing, setRefreshing] = useState(false);
   const [overlay, setOverlay] = useState<"timeline" | null>(null);
   const [timelineScrollIndex, setTimelineScrollIndex] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
   const renderer = useRenderer();
   const { height, width } = useTerminalDimensions();
 
-  const count = selectionCount(activeSection, data);
+  const searchResults = filterDashboardSearch(data.search, searchQuery);
+  const count = activeSection === "search" ? searchResults.length : selectionCount(activeSection, data);
   const selectedIndex = clamp(selectionBySection[activeSection] ?? 0, count);
 
   const goToSection = (section: SectionId) => setActiveSection(section);
@@ -181,10 +186,33 @@ export function Dashboard({ initialData, reload, motion = false }: DashboardProp
 
     // focusRegion === "content"
     if (key.name === "backspace" || key.name === "left") {
+      if (activeSection === "search" && key.name === "backspace" && searchQuery.length > 0) {
+        setSearchQuery((prev) => prev.slice(0, -1));
+        setSelectionBySection((prev) => ({ ...prev, search: 0 }));
+        return;
+      }
       if (activeSection === "roadmap" && workspaceState.level > 0) {
         setWorkspaceState((prev) => stepWorkspaceLevel(prev, data.workspace, -1));
       } else {
         setFocusRegion("sidebar");
+      }
+      return;
+    }
+
+    if (activeSection === "search") {
+      if (key.name === "up" || key.name === "k") {
+        setSelectionBySection((prev) => ({ ...prev, search: clamp(selectedIndex - 1, count) }));
+        return;
+      }
+      if (key.name === "down" || key.name === "j") {
+        setSelectionBySection((prev) => ({ ...prev, search: clamp(selectedIndex + 1, count) }));
+        return;
+      }
+      const raw = key.raw ?? key.sequence ?? "";
+      if (raw.length === 1 && raw >= " " && raw <= "~") {
+        setSearchQuery((prev) => prev + raw);
+        setSelectionBySection((prev) => ({ ...prev, search: 0 }));
+        return;
       }
       return;
     }
@@ -235,6 +263,8 @@ export function Dashboard({ initialData, reload, motion = false }: DashboardProp
               terminalWidth={width}
               workspaceState={workspaceState}
               contentHasFocus={focusRegion === "content"}
+              searchQuery={searchQuery}
+              searchResults={searchResults}
             />
           )}
         </box>
@@ -372,7 +402,7 @@ function Footer({ status, overlayOpen, motion }: { status: ProjectStatus; overla
       {overlayOpen ? (
         <text fg={palette.faint}>t/esc close timeline · ↑↓ scroll · q quit</text>
       ) : (
-        <text fg={palette.faint}>↑↓ nav · enter focus · ⌫ back · 1-9 jump · t timeline · r refresh · q quit</text>
+        <text fg={palette.faint}>↑↓ nav · enter focus · ⌫ back · 1-9 jump · 0 search · t timeline · r refresh · q quit</text>
       )}
     </box>
   );
@@ -433,6 +463,8 @@ function Main({
   terminalWidth,
   workspaceState,
   contentHasFocus,
+  searchQuery,
+  searchResults,
 }: {
   data: DashboardData;
   section: SectionId;
@@ -441,11 +473,15 @@ function Main({
   terminalWidth: number;
   workspaceState: WorkspaceState;
   contentHasFocus: boolean;
+  searchQuery: string;
+  searchResults: MemorySearchResult[];
 }) {
   if (section === "home") return <HomeView data={data} bodyHeight={bodyHeight} />;
   if (section === "brief") return <BriefView data={data} />;
   if (section === "context") return <ContextView data={data} />;
   if (section === "pulse") return <PulseView data={data} />;
+  if (section === "search")
+    return <SearchView results={searchResults} query={searchQuery} selectedIndex={selectedIndex} bodyHeight={bodyHeight} contentHasFocus={contentHasFocus} />;
   if (section === "roadmap")
     return (
       <RoadmapWorkspaceView
@@ -601,6 +637,78 @@ function StatLine({ label, value }: { label: string; value: string }) {
 function activityCellColor(day: ActivityReport["grid"]["days"][number]): string {
   if (day.future) return palette.faint;
   return ACTIVITY_RAMP[day.level] ?? palette.border;
+}
+
+function SearchView({
+  results,
+  query,
+  selectedIndex,
+  bodyHeight,
+  contentHasFocus,
+}: {
+  results: MemorySearchResult[];
+  query: string;
+  selectedIndex: number;
+  bodyHeight: number;
+  contentHasFocus: boolean;
+}) {
+  const selected = results[selectedIndex];
+  const rows: Row[] = results.map((result) => ({
+    key: `${result.entityType}:${result.entityId}`,
+    glyph: "⌕",
+    glyphColor: palette.accentDim,
+    title: truncate(result.title, 22),
+    badge: { text: result.entityType, color: palette.muted },
+  }));
+
+  return (
+    <box style={{ flexDirection: "column", flexGrow: 1, gap: 1 }}>
+      <Panel title="Search Query" grow={false}>
+        <text>
+          <span fg={palette.faint}>query </span>
+          <span fg={query.length > 0 ? palette.accent : palette.muted}>{query.length > 0 ? query : "type to filter memory"}</span>
+        </text>
+      </Panel>
+      <box style={{ flexDirection: "row", flexGrow: 1, gap: 1 }}>
+        <ListPanel
+          title={`Results (${results.length})`}
+          rows={rows}
+          selectedIndex={selectedIndex}
+          visibleRows={Math.max(3, bodyHeight - 5)}
+          active={contentHasFocus}
+          titleMax={28}
+          width={34}
+        />
+        <box
+          title="Result detail"
+          border
+          borderStyle="rounded"
+          borderColor={contentHasFocus ? palette.borderActive : palette.border}
+          backgroundColor={contentHasFocus ? palette.panelAlt : palette.panel}
+          style={{ flexGrow: 1, flexBasis: 0, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+        >
+          <scrollbox focused style={{ flexGrow: 1 }}>
+            {selected ? (
+              <>
+                <text fg={palette.accent}>{selected.title}</text>
+                <DetailRow label="Type" value={selected.entityType} />
+                <DetailRow label="ID" value={selected.entityId} />
+                <DetailRow label="Score" value={`${selected.score}`} color={palette.accentAlt} />
+                <DetailText label="Snippet" value={selected.snippet} />
+                <DetailText label="Tags" value={selected.tags.join("\n") || "none"} />
+                <DetailRow label="Updated" value={truncate(selected.updatedAt, 24)} />
+              </>
+            ) : (
+              <>
+                <text fg={palette.accentDim}>⌕  no matching memory</text>
+                <text fg={palette.faint}>zenith search --query ...</text>
+              </>
+            )}
+          </scrollbox>
+        </box>
+      </box>
+    </box>
+  );
 }
 
 function BriefView({ data }: { data: DashboardData }) {
@@ -1093,6 +1201,7 @@ function selectionCount(section: SectionId, data: DashboardData): number {
   if (section === "findings") return data.findings.length;
   if (section === "sessions") return data.sessions.length;
   if (section === "decisions") return data.decisions.length;
+  if (section === "search") return data.search.length;
   return 0;
 }
 
@@ -1113,8 +1222,37 @@ function clamp(index: number, count: number): number {
 }
 
 function sectionByNumber(token: string): SectionId | null {
+  if (token === "0") {
+    return "search";
+  }
   const index = Number(token) - 1;
   return sections[index]?.id ?? null;
+}
+
+function filterDashboardSearch(results: MemorySearchResult[], query: string): MemorySearchResult[] {
+  const tokens = query.toLowerCase().split(/[^a-z0-9_./:-]+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return results;
+  }
+
+  return results
+    .map((result) => {
+      const haystack = [result.entityType, result.entityId, result.title, result.snippet, ...result.tags].join("\n").toLowerCase();
+      if (!tokens.every((token) => haystack.includes(token))) {
+        return null;
+      }
+      const score = tokens.reduce((total, token) => total + (result.title.toLowerCase().includes(token) ? 5 : 1), 0);
+      return { result, score };
+    })
+    .filter((entry): entry is { result: MemorySearchResult; score: number } => entry !== null)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.result.score !== a.result.score) return b.result.score - a.result.score;
+      if (b.result.updatedAt !== a.result.updatedAt) return b.result.updatedAt.localeCompare(a.result.updatedAt);
+      if (a.result.entityType !== b.result.entityType) return a.result.entityType.localeCompare(b.result.entityType);
+      return a.result.entityId.localeCompare(b.result.entityId);
+    })
+    .map((entry) => entry.result);
 }
 
 function stepSection(active: SectionId, delta: number): SectionId {

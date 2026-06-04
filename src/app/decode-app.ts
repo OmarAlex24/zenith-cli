@@ -17,6 +17,8 @@ import {
   CreateSpikeInputSchema,
   EndSessionInputSchema,
   ImportPlanToRoadmapInputSchema,
+  MEMORY_ENTITY_TYPES,
+  MemoryEntityTypeSchema,
   type PhaseDetail,
   type PlanPath,
   RecordFindingInputSchema,
@@ -25,6 +27,7 @@ import {
   type ResumeContext,
   SessionSummaryInputSchema,
   SetBriefInputSchema,
+  SetMemoryTagsInputSchema,
   SetStageInputSchema,
   StartSessionInputSchema,
   UpdateFindingInputSchema,
@@ -35,6 +38,9 @@ import {
   type Decision,
   type Event,
   type Finding,
+  type MemoryEntityType,
+  type MemorySearchResult,
+  type MemoryTag,
   type Plan,
   type PlanPhase,
   type ProjectBrief,
@@ -46,7 +52,7 @@ import {
 } from "../domain/schemas";
 import type { GitSummary } from "../integrations/git/git-adapter";
 import { GitAdapter } from "../integrations/git/git-adapter";
-import type { ZenithRepository } from "../storage/repository";
+import type { ZenithRepository, SearchableMemoryEntity } from "../storage/repository";
 import type { FindingListStatus } from "../storage/repository";
 import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
@@ -990,6 +996,84 @@ export class ZenithApp {
     });
   }
 
+  async setMemoryTags(entityTypeRaw: string, entityId: string, rawInput: unknown): Promise<MemoryTag[]> {
+    const project = await this.requireProject();
+    const entityType = parseMemoryEntityType(entityTypeRaw);
+    this.requireMemoryEntity(project.id, entityType, entityId);
+    const input = SetMemoryTagsInputSchema.parse(rawInput);
+    const tags = normalizeMemoryTags(input.tags);
+
+    return this.repository.setMemoryTags({
+      projectId: project.id,
+      entityType,
+      entityId,
+      tags,
+    });
+  }
+
+  async listMemoryTags(options: { tag?: string; entityType?: string; entityId?: string } = {}): Promise<MemoryTag[]> {
+    const project = await this.requireProject();
+    const entityType = options.entityType ? parseMemoryEntityType(options.entityType) : undefined;
+    const tag = options.tag ? normalizeMemoryTag(options.tag) : undefined;
+
+    if (options.entityId && entityType) {
+      this.requireMemoryEntity(project.id, entityType, options.entityId);
+    }
+
+    return this.repository.listMemoryTags(project.id, {
+      ...(tag ? { tag } : {}),
+      ...(entityType ? { entityType } : {}),
+      ...(options.entityId ? { entityId: options.entityId } : {}),
+    });
+  }
+
+  async searchMemory(options: { query?: string; tag?: string; entityType?: string; limit?: number } = {}): Promise<MemorySearchResult[]> {
+    const project = await this.requireProject();
+    const entityType = options.entityType ? parseMemoryEntityType(options.entityType) : undefined;
+    const tag = options.tag ? normalizeMemoryTag(options.tag) : undefined;
+    const query = (options.query ?? "").trim();
+    const queryTokens = tokenizeSearchText(query);
+    const queryText = normalizeSearchText(query);
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 500));
+    const tagsByEntity = groupMemoryTags(this.repository.listMemoryTags(project.id));
+    const records = this.repository.listSearchableMemoryEntities(project.id);
+    const results: MemorySearchResult[] = [];
+
+    for (const record of records) {
+      if (entityType && record.entityType !== entityType) {
+        continue;
+      }
+      const tags = tagsByEntity.get(memoryEntityKey(record.entityType, record.entityId)) ?? [];
+      if (tag && !tags.includes(tag)) {
+        continue;
+      }
+
+      const score = scoreMemoryRecord(record, queryTokens, queryText);
+      if (score === null) {
+        continue;
+      }
+
+      results.push({
+        entityType: record.entityType,
+        entityId: record.entityId,
+        title: record.title,
+        snippet: memorySnippet(record, queryTokens),
+        tags,
+        score,
+        updatedAt: record.updatedAt,
+      });
+    }
+
+    return results
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.updatedAt !== a.updatedAt) return b.updatedAt.localeCompare(a.updatedAt);
+        if (a.entityType !== b.entityType) return a.entityType.localeCompare(b.entityType);
+        return a.entityId.localeCompare(b.entityId);
+      })
+      .slice(0, limit);
+  }
+
   private async computeNextForProject(project: Project, options: { staleAfterDays?: number } = {}): Promise<PlanNextResult> {
     const git = await this.git.inspect(this.cwd);
     const recentSessions = this.repository.listRecentSessions(project.id, 5);
@@ -1338,6 +1422,46 @@ export class ZenithApp {
     return finding;
   }
 
+  private requireMemoryEntity(projectId: string, entityType: MemoryEntityType, entityId: string): void {
+    let exists = false;
+
+    if (entityType === "brief") {
+      exists = this.repository.listProjectBriefs(projectId, 1000).some((brief) => brief.id === entityId);
+    } else if (entityType === "roadmap") {
+      const roadmap = this.repository.getRoadmapById(entityId);
+      exists = Boolean(roadmap && roadmap.projectId === projectId);
+    } else if (entityType === "roadmap_item") {
+      exists = this.repository
+        .listRoadmaps(projectId, 1000)
+        .some((roadmap) => roadmap.items.some((item) => item.id === entityId));
+    } else if (entityType === "plan") {
+      const plan = this.repository.getPlanById(entityId);
+      exists = Boolean(plan && plan.projectId === projectId);
+    } else if (entityType === "phase") {
+      const result = this.repository.getPlanByPhaseId(entityId);
+      exists = Boolean(result && result.plan.projectId === projectId);
+    } else if (entityType === "spike") {
+      const spike = this.repository.getSpikeById(entityId);
+      exists = Boolean(spike && spike.projectId === projectId);
+    } else if (entityType === "decision") {
+      const decision = this.repository.getDecisionById(entityId);
+      exists = Boolean(decision && decision.projectId === projectId);
+    } else if (entityType === "finding") {
+      const finding = this.repository.getFindingById(entityId);
+      exists = Boolean(finding && finding.projectId === projectId);
+    } else if (entityType === "session") {
+      const session = this.repository.getSessionById(entityId);
+      exists = Boolean(session && session.projectId === projectId);
+    }
+
+    if (!exists) {
+      throw new ZenithError(`Memory entity not found: ${entityType}:${entityId}`, {
+        code: "memory_entity_not_found",
+        details: { entityType, entityId },
+      });
+    }
+  }
+
   private resolveRoadmapItem(roadmap: Roadmap, itemIdOrTitle: { itemId?: string; itemTitle?: string }): RoadmapItem {
     if (itemIdOrTitle.itemId) {
       const item = roadmap.items.find((candidate) => candidate.id === itemIdOrTitle.itemId);
@@ -1456,6 +1580,108 @@ function normalizeEvidence(evidence: {
     value: evidence.value,
     createdAt: evidence.createdAt ?? nowIso(),
   };
+}
+
+function parseMemoryEntityType(raw: string): MemoryEntityType {
+  const parsed = MemoryEntityTypeSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ZenithError("Unsupported memory entity type.", {
+      code: "invalid_memory_entity_type",
+      details: { entityType: raw, supported: MEMORY_ENTITY_TYPES },
+    });
+  }
+  return parsed.data;
+}
+
+function normalizeMemoryTags(tags: string[]): string[] {
+  return [...new Set(tags.map(normalizeMemoryTag))];
+}
+
+function normalizeMemoryTag(raw: string): string {
+  const tag = raw
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(tag)) {
+    throw new ZenithError("Memory tag must contain at least one ASCII letter or number.", {
+      code: "invalid_memory_tag",
+      details: { tag: raw },
+    });
+  }
+
+  return tag;
+}
+
+function groupMemoryTags(tags: MemoryTag[]): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const tag of tags) {
+    const key = memoryEntityKey(tag.entityType, tag.entityId);
+    const existing = grouped.get(key) ?? [];
+    existing.push(tag.tag);
+    grouped.set(key, existing);
+  }
+  for (const [key, values] of grouped) {
+    grouped.set(key, [...new Set(values)].sort((a, b) => a.localeCompare(b)));
+  }
+  return grouped;
+}
+
+function memoryEntityKey(entityType: MemoryEntityType, entityId: string): string {
+  return `${entityType}:${entityId}`;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase();
+}
+
+function tokenizeSearchText(value: string): string[] {
+  return [...new Set(normalizeSearchText(value).split(/[^a-z0-9_./:-]+/).filter(Boolean))];
+}
+
+function scoreMemoryRecord(record: SearchableMemoryEntity, tokens: string[], normalizedQuery: string): number | null {
+  if (tokens.length === 0) {
+    return 0;
+  }
+
+  const title = normalizeSearchText(record.title);
+  const text = normalizeSearchText(record.text);
+  let score = normalizedQuery.length > 0 && title.includes(normalizedQuery) ? 12 : 0;
+  if (normalizedQuery.length > 0 && text.includes(normalizedQuery)) {
+    score += 4;
+  }
+
+  for (const token of tokens) {
+    if (title.includes(token)) {
+      score += 5;
+    } else if (text.includes(token)) {
+      score += 1;
+    } else {
+      return null;
+    }
+  }
+
+  return score;
+}
+
+function memorySnippet(record: SearchableMemoryEntity, tokens: string[]): string {
+  const text = record.text.trim() || record.title;
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const matching = tokens.length > 0
+    ? lines.find((line) => {
+        const normalized = normalizeSearchText(line);
+        return tokens.some((token) => normalized.includes(token));
+      })
+    : undefined;
+  return truncateText(matching ?? lines[0] ?? record.title, 180);
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 function parseWatchPredicate(raw: string): WatchPredicate {

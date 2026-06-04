@@ -489,6 +489,68 @@ describe("cli json commands", () => {
     expect((recorded.json as any).errors[0].code).toBe("plan_not_found");
   });
 
+  test("memory tag set list and search emit stable json", async () => {
+    const cwd = makeTempDir();
+    const decodeHome = makeTempDir();
+    tempDirs.push(cwd, decodeHome);
+
+    await runDecode(["init", "--json"], { cwd, decodeHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: {
+        title: "Searchable Release Plan",
+        phases: [
+          {
+            title: "Memory Discovery",
+            acceptanceCriteria: ["taggable memory", "deterministic search"],
+          },
+        ],
+      },
+    });
+    const planId = (created.json as any).data.id as string;
+
+    const tagged = await runDecode(["tag", "set", "plan", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { tags: ["Release Notes", "OSS", "release-notes"] },
+    });
+    const listed = await runDecode(["tag", "list", "--json", "--tag", "Release Notes"], { cwd, decodeHome });
+    const planSearch = await runDecode(["search", "--json", "--query", "searchable release", "--entity-type", "plan"], {
+      cwd,
+      decodeHome,
+    });
+    const taggedSearch = await runDecode(["search", "--json", "--query", "searchable", "--tag", "oss", "--limit", "1"], {
+      cwd,
+      decodeHome,
+    });
+    const invalidEntity = await runDecode(["tag", "set", "plan", "plan_missing", "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { tags: ["missing"] },
+    });
+    const invalidTag = await runDecode(["tag", "set", "plan", planId, "--json", "--input", "-"], {
+      cwd,
+      decodeHome,
+      input: { tags: ["!!!"] },
+    });
+
+    expect(tagged.exitCode).toBe(0);
+    expect((tagged.json as any).data.map((tag: any) => tag.tag)).toEqual(["oss", "release-notes"]);
+    expect((listed.json as any).data[0].entityId).toBe(planId);
+    expect((planSearch.json as any).data[0]).toMatchObject({
+      entityType: "plan",
+      entityId: planId,
+      title: "Searchable Release Plan",
+    });
+    expect((taggedSearch.json as any).data).toHaveLength(1);
+    expect((taggedSearch.json as any).data[0].tags).toContain("oss");
+    expect(invalidEntity.exitCode).toBe(1);
+    expect((invalidEntity.json as any).errors[0].code).toBe("memory_entity_not_found");
+    expect(invalidTag.exitCode).toBe(1);
+    expect((invalidTag.json as any).errors[0].code).toBe("invalid_memory_tag");
+  });
+
   test("session start capture end and summarize emit stable json", async () => {
     const cwd = makeTempDir();
     const decodeHome = makeTempDir();

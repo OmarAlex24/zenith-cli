@@ -8,7 +8,7 @@ The public product name is Zenith CLI. The `decode` binary remains available as 
 
 ## Status
 
-Zenith is private and source-first for now. The supported development and dogfooding path is Bun from this checkout. npm publication and standalone binary distribution are intentionally deferred.
+Zenith is source-first while the repository is prepared for open-source distribution. The supported development and OpenTUI path is Bun from this checkout. A standalone headless binary can be built locally for curl/Homebrew-style distribution templates; npm publication remains intentionally out of scope.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ bun run zenith --help
 bun run zenith project detect --json
 ```
 
-Running `bun run zenith` with no arguments launches the read-only OpenTUI workspace. Use `↑`/`↓` to navigate within the current region, `enter` to move focus forward (sidebar → content, and between columns inside the Roadmap workspace), `backspace` (or `←`) to move focus backward, number keys `1–8` to jump directly to a section, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
+Running `bun run zenith` with no arguments launches the read-only OpenTUI workspace. Use `↑`/`↓` to navigate within the current region, `enter` to move focus forward (sidebar → content, and between columns inside the Roadmap workspace), `backspace` (or `←`) to move focus backward, number keys `1–9` to jump to the main sections, `0` to open Search, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
 
 Register the current project when needed:
 
@@ -57,7 +57,7 @@ bun dist/index.js project detect --json
 
 The bundled JS entrypoint is a verified way to run built output.
 
-Build the local headless executable:
+Build the local standalone headless executable:
 
 ```bash
 bun run compile
@@ -65,7 +65,30 @@ bun run compile
 ./dist/zenith project detect --json
 ```
 
-The `dist/zenith` entrypoint is a Bun executable script, not a standalone binary. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. Use `bun run zenith` from the source checkout for the dashboard. The source checkout remains the supported dogfooding path, and npm publication plus standalone binary distribution are still deferred.
+The `dist/zenith` executable is produced with `bun build --compile`. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. Use `bun run zenith` from the source checkout for the dashboard.
+
+Create a local release archive:
+
+```bash
+ZENITH_VERSION=v0.1.0 bun run package:release
+```
+
+This writes `dist/zenith-<os>-<arch>.tar.gz` plus a `.sha256` file. Release URLs are templated until a repository remote is configured.
+
+## Curl And Homebrew Templates
+
+Install from a release artifact base URL:
+
+```bash
+ZENITH_INSTALL_BASE_URL=https://example.com/zenith/releases \
+ZENITH_VERSION=v0.1.0 \
+ZENITH_INSTALL_DIR="$HOME/.local/bin" \
+sh scripts/install.sh
+```
+
+The install script downloads `zenith-<os>-<arch>.tar.gz`, extracts `zenith`, and installs it into `ZENITH_INSTALL_DIR`.
+
+Homebrew packaging starts from [`packaging/homebrew/zenith.rb`](packaging/homebrew/zenith.rb). Replace `OWNER/REPO` and SHA placeholders after publishing release archives.
 
 ## Storage
 
@@ -135,6 +158,17 @@ bun run zenith activity --json
 ```
 
 `zenith timeline` is a read-only activity log; accepts `--limit <n>` and `--since <eventId|iso>`. Self-tracking telemetry commands are also read-only: `standup` gives a daily digest, `diff` shows changes since a cursor or the latest ended session, `drift` compares roadmap and active plan alignment, `adherence` reports event-derived velocity, and `activity` returns the uncapped 53-week activity heatmap used by the TUI Pulse view.
+
+Memory discovery:
+
+```bash
+bun run zenith search --json --query "release docs"
+bun run zenith search --json --query "review" --tag pr-review
+bun run zenith tag set plan <plan-id> --json --input -
+bun run zenith tag list --json
+```
+
+`search` is deterministic over briefs, roadmaps, roadmap items, plans, phases, spikes, decisions, findings, and sessions. `tag set` replaces tags for a memory entity with normalized lowercase ASCII slugs.
 
 Long-running memory:
 
@@ -336,6 +370,8 @@ bun run ci
 ```
 
 GitHub Actions runs dependency installation, typecheck, tests, and build on pushes to `main` and pull requests.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [docs/release.md](docs/release.md) for release packaging.
 
 ## License
 
