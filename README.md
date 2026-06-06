@@ -1,10 +1,10 @@
 # Zenith CLI
 
-Local-first project memory and agent coordination CLI for developers using AI coding agents.
+Local-first agent guidance and coordination CLI for developers using AI coding agents.
 
-This MVP stores private project memory locally, exposes stable JSON commands for agents, and provides a read-only OpenTUI dashboard for humans.
+This MVP turns private local project context into stable JSON guidance for agents and provides a read-only OpenTUI dashboard for humans.
 
-Zenith does not replace GitHub Issues, Linear, docs, or ADRs. Its job is narrower: keep local continuity of work for humans and agents with lightweight traceability.
+Zenith does not replace GitHub Issues, Linear, docs, or ADRs. Its job is narrower: help humans and agents resume work, choose the next step, and hand off context with lightweight traceability.
 
 ## Status
 
@@ -103,7 +103,7 @@ Homebrew packaging starts from [`packaging/homebrew/zenith.rb`](packaging/homebr
 
 ## Storage
 
-Zenith stores private project memory in a local SQLite database. New installs use `~/.zenith/zenith.db` by default.
+Zenith stores private project guidance context in a local SQLite database. New installs use `~/.zenith/zenith.db` by default.
 
 Storage home precedence:
 
@@ -112,18 +112,18 @@ Storage home precedence:
 
 SQLite enforces core integrity such as foreign keys, status guards, active-plan per-roadmap uniqueness (one active plan per roadmap, plus one standalone), worktree-to-roadmap focus bindings, and source links for roadmap-derived plans. See [`docs/storage-policy.md`](docs/storage-policy.md) for the normalization policy behind embedded JSON arrays.
 
-## Memory Types
+## Guidance Model
 
-- `brief`: stable project intent and why the project exists.
-- `roadmap`: long-running product or technical direction.
-- `plan`: executable phased work being done now.
-- `spike`: bounded investigation to reduce uncertainty.
-- `decision`: technical or strategic choice.
-- `finding`: bug, risk, debt, or gap.
-- `session`: work continuity log.
-- `context_doc`: pinned or ignored documentation anchor for the current project, plan, or phase.
+- `brief`: keeps agents aligned with stable project intent.
+- `roadmap`: turns long-running direction into sequenced work.
+- `plan`: tells agents which executable phases exist now.
+- `spike`: gives bounded research context before implementation.
+- `decision`: carries technical choices forward between agents.
+- `finding`: links risks, bugs, debt, and blockers to affected work.
+- `session`: records continuity checkpoints for resuming later.
+- `context_doc`: anchors documentation that matters to the current project, plan, or phase.
 
-Use `plan` only for executable work. Store non-executable project memory with `memory brief`, `roadmap`, or `memory spike`.
+Use `plan` only for executable work. Store non-executable guidance context with `memory brief`, `roadmap`, or `memory spike`.
 
 ## Daily Flow
 

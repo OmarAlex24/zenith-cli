@@ -1,6 +1,6 @@
 # Zenith Storage Policy
 
-Zenith stores project memory in local SQLite and treats the database as the final integrity boundary.
+Zenith stores local project guidance context in SQLite and treats the database as the final integrity boundary.
 
 ## Relational Data
 
@@ -19,4 +19,4 @@ Move an embedded array into a table when any of these become true:
 - The element needs independent lifecycle state.
 - The element becomes large enough that compact context or TUI views need pagination by element.
 
-Until then, JSON arrays are validated at the domain boundary and kept small enough for local-first project memory.
+Until then, JSON arrays are validated at the domain boundary and kept small enough for local-first agent guidance.

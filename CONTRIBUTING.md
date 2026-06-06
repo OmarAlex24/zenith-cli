@@ -1,6 +1,6 @@
 # Contributing To Zenith CLI
 
-Zenith is a Bun + TypeScript project. It stores project memory locally in SQLite and exposes stable JSON command contracts for agents.
+Zenith is a Bun + TypeScript project. It stores local guidance context in SQLite and exposes stable JSON command contracts for agents.
 
 ## Local Setup
 
@@ -9,7 +9,7 @@ bun install
 bun run zenith project detect --json
 ```
 
-Register a local checkout before dogfooding memory commands:
+Register a local checkout before dogfooding guidance commands:
 
 ```bash
 bun run zenith init --json
@@ -30,9 +30,9 @@ bun run compile
 
 `bun run zenith` launches the OpenTUI from source. The packaged `dist/zenith` launcher is headless and should be used for CLI smoke tests only. It requires Bun on the target machine.
 
-## Memory Workflow
+## Guidance Workflow
 
-Use Zenith memory before planning or continuing work:
+Use Zenith context before planning or continuing work:
 
 ```bash
 bun run zenith context compact --json

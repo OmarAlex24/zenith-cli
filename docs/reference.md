@@ -142,9 +142,9 @@ zenith report adherence --json --days <n>
 zenith report activity --json
 ```
 
-Telemetry is derived from existing events and memory records and remains read-only.
+Telemetry is derived from existing events and context records and remains read-only.
 
-## Memory Discovery
+## Context Discovery
 
 ```bash
 zenith search --json --query <text>
@@ -188,7 +188,7 @@ zenith plan block --phase <phase-id> --plan <plan-id> --json
 
 `plan ready` marks the phase `needs_review`, appends evidence, and sets `stage=review`; it does not count as phase completion. `plan done` marks reviewed work complete. `plan complete` requires all phases to be `done`.
 
-These commands intentionally write memory except the read-only git checkpoint draft. Use the detailed commands below when exact record lifecycle control is needed.
+These commands intentionally write local context records except the read-only git checkpoint draft. Use the detailed commands below when exact record lifecycle control is needed.
 
 Evidence accepts `{ "kind": "note|commit|file|pr|command|link", "value": "..." }` on decisions, findings, sessions/checkpoints, `plan ready`, `plan done`, and `plan block`.
 

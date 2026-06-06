@@ -4,7 +4,7 @@ Este documento esta pensado para pegarse en cualquier chat, hilo de planeacion o
 
 ## Resumen Corto
 
-Zenith es un CLI local-first para memoria de proyecto y coordinacion de agentes de codigo. Ayuda a que humanos y agentes de IA puedan continuar trabajo entre sesiones sin depender de memoria implicita del chat. Guarda localmente contexto compacto sobre que es el proyecto, que se esta haciendo, que cambio, que falta, que esta bloqueado, que evidencia existe y cual deberia ser el siguiente paso.
+Zenith es un CLI local-first para guiar agentes de codigo sin perder contexto. Ayuda a que humanos y agentes de IA puedan continuar trabajo entre sesiones sin depender del contexto implicito del chat. Convierte el estado local del proyecto en instrucciones compactas sobre que es el proyecto, que se esta haciendo, que cambio, que falta, que esta bloqueado, que evidencia existe y cual deberia ser el siguiente paso.
 
 Zenith no reemplaza GitHub Issues, Linear, Jira, documentacion, ADRs, CI ni Git. Vive junto a esas herramientas y cubre un problema mas especifico: continuidad privada, trazabilidad ligera y handoff operativo para desarrollo asistido por IA.
 
@@ -12,7 +12,7 @@ Zenith no reemplaza GitHub Issues, Linear, Jira, documentacion, ADRs, CI ni Git.
 
 El objetivo de Zenith es hacer menos fragil el desarrollo de software de larga duracion con agentes de IA.
 
-Esta pensado para proyectos donde el trabajo se reparte entre multiples chats, agentes, ramas, dias o sesiones. En lugar de pedirle al siguiente agente "lee el repo y continua", Zenith convierte el estado local del proyecto en memoria explicita e inspeccionable:
+Esta pensado para proyectos donde el trabajo se reparte entre multiples chats, agentes, ramas, dias o sesiones. En lugar de pedirle al siguiente agente "lee el repo y continua", Zenith convierte el estado local del proyecto en guia explicita e inspeccionable:
 
 - intencion estable del proyecto
 - direccion de roadmap
@@ -33,7 +33,7 @@ Zenith encaja bien cuando un proyecto tiene una o mas de estas condiciones:
 
 - Se usan agentes de codigo con frecuencia.
 - El trabajo dura mas de una conversacion o sesion.
-- Se quiere memoria privada local en lugar de memoria de proyecto en un SaaS.
+- Se quiere contexto privado local en lugar de depender de contexto guardado en un SaaS.
 - Hay que dividir trabajo en planes, fases y dependencias.
 - Importa separar `needs_review` de `done`.
 - El equipo necesita un resumen compacto de "donde estamos y que sigue".
@@ -55,7 +55,7 @@ Zenith probablemente no debe ser la herramienta principal si el proyecto necesit
 - un archivo de cumplimiento legal o auditoria inmutable
 - CI/CD completo
 
-Puede complementar esas herramientas, pero su alcance intencional es mas estrecho: memoria local de continuidad y coordinacion.
+Puede complementar esas herramientas, pero su alcance intencional es mas estrecho: guia local de continuidad y coordinacion.
 
 ## Conceptos Centrales
 
@@ -70,7 +70,7 @@ Puede complementar esas herramientas, pero su alcance intencional es mas estrech
 - `context_doc`: ancla de documentacion pineada o ignorada.
 - `tag`: etiqueta normalizada para descubrimiento deterministico.
 - `claim`: lease local para coordinar quien trabaja en un scope.
-- `evidence`: prueba normalizada asociada a memoria, por ejemplo commits, archivos, comandos, tests, links, issues, PRs, ADRs o ramas.
+- `evidence`: prueba normalizada asociada a un registro de contexto, por ejemplo commits, archivos, comandos, tests, links, issues, PRs, ADRs o ramas.
 - `lifecycle`: proyeccion comun de estado, como active, done, blocked, stale, superseded o archived.
 
 ## Capacidades Principales
@@ -98,11 +98,11 @@ Ese briefing responde:
 
 `zenith continue` es el comando principal al inicio de una sesion.
 
-### 2. Memoria Privada Local
+### 2. Contexto Privado Local
 
-Zenith guarda memoria en una base SQLite local bajo `ZENITH_HOME` o `~/.zenith`. El repositorio guarda codigo y docs; la memoria de Zenith queda privada y local por defecto.
+Zenith guarda contexto operativo en una base SQLite local bajo `ZENITH_HOME` o `~/.zenith`. El repositorio guarda codigo y docs; el contexto de Zenith queda privado y local por defecto.
 
-La memoria puede incluir briefs, roadmaps, planes, spikes, decisiones, findings, sesiones, docs anchors, tags, lifecycle, evidencia, claims y eventos sanitizados.
+Ese contexto puede incluir briefs, roadmaps, planes, spikes, decisiones, findings, sesiones, docs anchors, tags, lifecycle, evidencia, claims y eventos sanitizados.
 
 ### 3. Roadmaps, Planes Y Fases
 
@@ -164,10 +164,10 @@ Acciones importantes requieren evidencia no generica, incluyendo trabajo listo p
 
 ### 6. Decisiones Y Findings
 
-Zenith registra decisiones y findings como memoria de primera clase:
+Zenith registra decisiones y findings como contexto de primera clase:
 
 ```bash
-zenith decision record "Use SQLite for local memory" --context "..." --decision "..."
+zenith decision record "Use SQLite for local context" --context "..." --decision "..."
 zenith finding record "Missing acceptance criteria" --description "..."
 zenith finding close <finding-id> --evidence "Acceptance criteria added"
 ```
@@ -198,7 +198,7 @@ zenith handoff --to reviewer --compact
 zenith handoff --to implementer --compact --max-tokens 800
 ```
 
-Esto le da a un planner, implementer o reviewer un prompt compacto basado en la memoria actual del proyecto.
+Esto le da a un planner, implementer o reviewer un prompt compacto basado en el contexto actual del proyecto.
 
 Para renderizado de prompt de bajo nivel:
 
@@ -271,11 +271,11 @@ zenith docs ignore docs/old-plan.md --task current
 zenith docs list --task current
 ```
 
-La meta no es copiar documentos completos a memoria. Zenith guarda anchors y resumenes para que los agentes sepan que docs importan para una tarea.
+La meta no es copiar documentos completos a una base de notas. Zenith guarda anchors y resumenes para que los agentes sepan que docs importan para una tarea.
 
 ### 13. Search Y Tags
 
-Zenith soporta descubrimiento deterministico de memoria:
+Zenith soporta descubrimiento deterministico de contexto:
 
 ```bash
 zenith search --query "readiness"
@@ -297,7 +297,7 @@ Los aliases ayudan a reducir tags duplicados o ambiguos.
 
 ### 14. Raw Inspect Y Purge
 
-Zenith incluye comandos administrativos de memoria:
+Zenith incluye comandos administrativos de contexto local:
 
 ```bash
 zenith memory inspect raw <entity-type> <entity-id> --json
@@ -306,7 +306,7 @@ zenith memory purge tag <tag> --confirm
 zenith memory purge project --confirm
 ```
 
-Raw inspect ayuda a diagnosticar memoria guardada. Purge elimina registros solo con confirmacion explicita y escribe eventos tombstone sanitizados.
+Raw inspect ayuda a diagnosticar registros guardados. Purge elimina registros solo con confirmacion explicita y escribe eventos tombstone sanitizados.
 
 ### 15. Dashboard OpenTUI
 
@@ -335,7 +335,7 @@ Las demos explican como se espera usar Zenith. Los benchmarks ayudan a comparar 
 
 ### 17. Privacidad Y Guardrails
 
-Zenith rechaza o redacta escrituras inseguras de memoria. Esta disenado para evitar guardar:
+Zenith rechaza o redacta escrituras inseguras de contexto. Esta disenado para evitar guardar:
 
 - secrets
 - private keys
@@ -436,7 +436,7 @@ Usa este checklist para decidir si Zenith encaja con un proyecto:
 
 - Perdemos contexto entre sesiones de agentes de IA?
 - Los agentes necesitan un siguiente paso confiable en lugar de adivinar desde el repo?
-- Necesitamos memoria privada local en vez de memoria cloud?
+- Necesitamos contexto privado local en vez de depender de contexto cloud?
 - Necesitamos planes por fases con handoff a review?
 - Nos importa exigir evidencia para estados ready, done o blocked?
 - Necesitamos recordar decisiones y findings sin crear tickets pesados?
@@ -449,4 +449,4 @@ Si la mayoria de respuestas son si, Zenith probablemente aporta valor. Si el pro
 
 ## Version De Un Parrafo
 
-Zenith CLI es una capa local-first de memoria y coordinacion para desarrollo de software asistido por IA. Guarda en SQLite privado el brief del proyecto, roadmap, planes ejecutables, fases, decisiones, findings, sesiones, docs anchors, tags, evidencia, claims y eventos sanitizados. Ayuda a una persona o agente a retomar trabajo con `zenith continue`, elegir el siguiente paso con `plan next`, hacer handoff de roles con `handoff`, coordinar agentes locales con `agent stage/watch/claim`, validar readiness con `doctor` e inspeccionar progreso con reportes read-only y un TUI. Encaja mejor en proyectos donde importan continuidad, evidencia, privacidad y handoff entre agentes, y evita convertirse en issue tracker remoto, CI system, archivo de transcripts o almacen de secrets.
+Zenith CLI es una capa local-first de guia y coordinacion para desarrollo de software asistido por IA. Guarda en SQLite privado el brief del proyecto, roadmap, planes ejecutables, fases, decisiones, findings, sesiones, docs anchors, tags, evidencia, claims y eventos sanitizados. Ayuda a una persona o agente a retomar trabajo con `zenith continue`, elegir el siguiente paso con `plan next`, hacer handoff de roles con `handoff`, coordinar agentes locales con `agent stage/watch/claim`, validar readiness con `doctor` e inspeccionar progreso con reportes read-only y un TUI. Encaja mejor en proyectos donde importan continuidad, evidencia, privacidad y handoff entre agentes, y evita convertirse en issue tracker remoto, CI system, archivo de transcripts o almacen de secrets.

@@ -1,7 +1,7 @@
 <!-- BEGIN ZENITH CLI -->
-# Zenith Memory
+# Zenith Agent Guidance
 
-This repository uses Zenith CLI as private local project memory.
+This repository uses Zenith CLI as private local guidance context for agents.
 
 Use the zenith-memory skill at .codex/skills/zenith-memory/SKILL.md when:
 - recording the project brief or long-running roadmap
@@ -23,7 +23,7 @@ Use the zenith-pr-review skill at .codex/skills/zenith-pr-review/SKILL.md when:
 - reviewing a PR, MR, branch, diff, staged changes, committed changes, or pre-merge changes
 - checking whether code is safe to merge
 - synthesizing existing PR comments with fresh review passes
-- recording validated actionable review findings into Zenith memory
+- recording validated actionable review findings into Zenith context
 
 Use the zenith-multi-agent skill at .codex/skills/zenith-multi-agent/SKILL.md when:
 - designing or debugging the shared wake-on-event choreography protocol
@@ -55,7 +55,7 @@ Before planning:
 - If `plan next` recommends deferred roadmap work, reactivate the item before creating an executable plan.
 
 Prefer compact markdown commands for normal handoff. Use `zenith ... --json` and `--input -` for machine-readable commands.
-Use `plan` only for executable phased work. Use `memory brief`, `roadmap`, or `memory spike` for non-executable memory.
+Use `plan` only for executable phased work. Use `memory brief`, `roadmap`, or `memory spike` for non-executable guidance context.
 Use `bun run zenith ...` from this source checkout if the `zenith` binary is not on PATH.
 Do not store secrets, full diffs, or long transcripts in Zenith.
 <!-- END ZENITH CLI -->
