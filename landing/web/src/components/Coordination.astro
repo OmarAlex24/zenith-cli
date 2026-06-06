@@ -1,14 +1,14 @@
 ---
-// Two-up module: agent coordination + local-first privacy.
+// Two-up module: agent handoffs + local-first privacy.
 ---
 <section style="padding:8px 0 96px">
   <div class="wrap">
     <div class="divide-grid mtypes-2 reveal" style="grid-template-columns:1fr 1fr">
       <div class="cell" style="padding:44px 40px">
-        <span class="eyebrow mono">Coordination</span>
-        <h3 style="font-size:1.5rem;margin-top:14px;font-weight:500">Hand work between agents, on cue.</h3>
+        <span class="eyebrow mono">Handoffs</span>
+        <h3 style="font-size:1.5rem;margin-top:14px;font-weight:500">Move work between agents without losing intent.</h3>
         <p style="margin-top:14px;color:var(--muted);font-size:14.5px;max-width:40ch">
-          Set a stage, watch until it changes. Local agents pick up exactly where another left off, with no vendor CLI spawned in the middle.
+          Set a stage, watch until it changes, and let the next local agent pick up the plan, evidence, and blockers another agent left behind.
         </p>
         <div class="mono" style="margin-top:20px;font-size:13px;color:var(--faint)">
           <div><span class="c-blue">$</span> zenith stage set review</div>
@@ -19,7 +19,7 @@
         <span class="eyebrow mono">Local-first</span>
         <h3 style="font-size:1.5rem;margin-top:14px;font-weight:500">Private by default. No cloud.</h3>
         <p style="margin-top:14px;color:var(--muted);font-size:14.5px;max-width:40ch">
-          Memory lives in a single SQLite file at <span class="mono c-fg">~/.zenith/zenith.db</span>. No account, no API key, no telemetry leaving your laptop. Your project context stays yours.
+          Guidance context lives in a single SQLite file at <span class="mono c-fg">~/.zenith/zenith.db</span>. No account, no API key, no telemetry leaving your laptop. Your project context stays yours.
         </p>
         <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap">
           <span class="pill mono">no external API</span>

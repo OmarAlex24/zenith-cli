@@ -1,0 +1,31 @@
+---
+// Divided grid of the six structured context inputs that guide agents.
+const types = [
+  { glyph: '▦', name: 'brief',    desc: 'Keeps the agent aligned with the stable project intent before it changes code.' },
+  { glyph: '◈', name: 'roadmap',  desc: 'Turns long-running direction into concrete work the agent can sequence.' },
+  { glyph: '●', name: 'plan',     desc: 'Breaks active work into phases, dependencies, and evidence the agent can follow.' },
+  { glyph: '◆', name: 'spike',    desc: 'Gives the agent bounded research context before committing to implementation.' },
+  { glyph: '◉', name: 'decision', desc: 'Carries technical choices forward so the next agent does not re-litigate them.' },
+  { glyph: '△', name: 'finding',  desc: 'Links risks, bugs, and gaps to the work they affect so agents can act on them.' },
+];
+---
+<section id="guidance" style="padding:104px 0 96px">
+  <div class="wrap">
+    <div class="reveal" style="max-width:60ch;margin-bottom:44px">
+      <span class="eyebrow mono">Guidance model</span>
+      <h2 style="font-size:clamp(2rem,3.6vw,2.9rem);margin-top:16px">Turn project context into instructions agents can follow.</h2>
+      <p style="margin-top:18px;color:var(--subtle);font-size:1.05rem;max-width:54ch">
+        Briefs, roadmaps, plans, spikes, decisions, and findings are not positioned as a notes database. They are the structured inputs Zenith uses to resume work, choose the next step, and hand context between agents.
+      </p>
+    </div>
+
+    <div class="divide-grid mtypes reveal" style="grid-template-columns:repeat(3,1fr)">
+      {types.map((t) => (
+        <div class="cell">
+          <div class="mono" style="color:var(--accent);font-size:18px">{t.glyph} {t.name}</div>
+          <p style="margin-top:12px;color:var(--muted);font-size:14.5px">{t.desc}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
