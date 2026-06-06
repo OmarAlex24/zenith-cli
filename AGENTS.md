@@ -12,10 +12,11 @@ Use the zenith-memory skill at .codex/skills/zenith-memory/SKILL.md when:
 - recording technical decisions
 - recording and closing findings
 - starting, capturing, ending, or summarizing a coding session
-- viewing recent project activity (`zenith timeline`)
-- viewing continuity ROI (`zenith roi`)
+- viewing recent project activity (`zenith report timeline`)
+- viewing continuity ROI (`zenith report roi`)
 - viewing onboarding demos (`zenith demo list`, `zenith demo show continuity`)
-- viewing self-tracking telemetry (`zenith standup/diff/drift/adherence/activity`)
+- viewing self-tracking telemetry (`zenith report standup/diff/drift/adherence/activity`)
+- suggesting, pinning, ignoring, or listing context docs (`zenith docs suggest/pin/ignore/list`)
 - sequencing plan phases with dependencies (`dependsOn` via `plan update-phase`; `plan next` reports `Blocked by dependency` when gated)
 
 Use the zenith-pr-review skill at .codex/skills/zenith-pr-review/SKILL.md when:
@@ -31,13 +32,13 @@ Use the zenith-multi-agent skill at .codex/skills/zenith-multi-agent/SKILL.md wh
 
 Use the zenith-planner skill at .codex/skills/zenith-planner/SKILL.md when:
 - turning roadmap direction into executable plans for role-based handoffs
-- inspecting `continue`, `plan next`, and `phase show` before dispatch
+- inspecting `continue`, `plan next`, and `plan phase show` before dispatch
 - setting `stage=implement` for the implementer after the plan/phase is ready
 
 Use the zenith-implementer skill at .codex/skills/zenith-implementer/SKILL.md when:
 - waiting for `stage=implement` and implementing the scoped phase
-- inspecting `zenith diff --json` and `zenith phase show <phase-id> --json` after wake
-- verifying work and setting `stage=review` for the reviewer
+- inspecting `zenith report diff --json` and `zenith plan phase show <phase-id> --json` after wake
+- verifying work and running `zenith plan ready` to mark `needs_review` and set `stage=review` for the reviewer
 
 Use the zenith-reviewer skill at .codex/skills/zenith-reviewer/SKILL.md when:
 - waiting for `stage=review` and reviewing the implementer's handoff
@@ -46,14 +47,15 @@ Use the zenith-reviewer skill at .codex/skills/zenith-reviewer/SKILL.md when:
 
 Before planning:
 - Run `zenith continue`.
-- Run `zenith prompt --format codex --max-tokens 800` when a compact handoff prompt is useful.
+- Run `zenith handoff --to implementer --compact --max-tokens 800` when a compact handoff prompt is useful.
+- Run `zenith docs suggest --task current` when repository documentation may affect the task; pin or ignore only with intent.
 - Run `zenith context compact --json` and `zenith plan next --json` only when you need exact fields for dispatch.
-- If structured output returns a `phaseId`, run `zenith phase show <phase-id> --json`.
+- If structured output returns a `phaseId`, run `zenith plan phase show <phase-id> --json`.
 - If `plan next` recommends a roadmap item and no active plan exists, use `zenith roadmap create-plan <roadmap-id> --json --input -`.
 - If `plan next` recommends deferred roadmap work, reactivate the item before creating an executable plan.
 
 Prefer compact markdown commands for normal handoff. Use `zenith ... --json` and `--input -` for machine-readable commands.
-Use `plan` only for executable phased work. Use `brief`, `roadmap`, or `spike` for non-executable memory.
+Use `plan` only for executable phased work. Use `memory brief`, `roadmap`, or `memory spike` for non-executable memory.
 Use `bun run zenith ...` from this source checkout if the `zenith` binary is not on PATH.
 Do not store secrets, full diffs, or long transcripts in Zenith.
 <!-- END ZENITH CLI -->

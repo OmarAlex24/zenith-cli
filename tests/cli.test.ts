@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createZenithApp } from "../src/app/factory";
@@ -76,8 +76,8 @@ describe("cli json commands", () => {
 
     const context = await runDecode(["context", "get", "--json", "--phase", phaseId], { cwd, zenithHome });
     const compact = await runDecode(["context", "compact", "--json", "--phase", phaseId], { cwd, zenithHome });
-    const phase = await runDecode(["phase", "show", phaseId, "--json"], { cwd, zenithHome });
-    const resume = await runDecode(["resume", "--json"], { cwd, zenithHome });
+    const phase = await runDecode(["plan", "phase", "show", phaseId, "--json"], { cwd, zenithHome });
+    const resume = await runDecode(["continue", "--compact", "--json"], { cwd, zenithHome });
 
     expect(context.exitCode).toBe(0);
     expect((context.json as any).data.selectedPhase.phase.id).toBe(phaseId);
@@ -111,8 +111,15 @@ describe("cli json commands", () => {
 
     expect(result.exitCode).toBe(0);
     expect((result.json as any).data.markdown).toStartWith("# Zenith Continue");
+    expect((result.json as any).data.markdown).toContain("## Where We Are");
+    expect((result.json as any).data.markdown).toContain("## Next Action");
+    expect((result.json as any).data.markdown).toContain("## Risk Radar");
+    expect((result.json as any).data.markdown).toContain("## Worktree");
     expect((result.json as any).data.context.activePlan.title).toBe("Continuity Plan");
     expect((result.json as any).data.phase.phase.id).toBe(phaseId);
+    expect((result.json as any).data.actionBriefing.goal).toBe("Continuity Plan");
+    expect((result.json as any).data.actionBriefing.nextAction).toBe("Resume command");
+    expect((result.json as any).data.actionBriefing.freshness.join("\n")).toContain("Working tree clean");
     expect((result.json as any).data.roi.sourceEvents).toBeGreaterThan(0);
     expect((result.json as any).data.markdown).toContain("## ROI");
     expect((result.json as any).data.newSession).toBeNull();
@@ -265,7 +272,7 @@ describe("cli json commands", () => {
         phases: [{ title: "Measure" }],
       },
     });
-    const cursorTimeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
+    const cursorTimeline = await runDecode(["report", "timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     const cursorId = (cursorTimeline.json as any).data[0].id as string;
     await runDecode(["decision", "record", "--json", "--input", "-"], {
       cwd,
@@ -277,9 +284,9 @@ describe("cli json commands", () => {
       },
     });
 
-    const full = await runDecode(["roi", "--json"], { cwd, zenithHome });
-    const since = await runDecode(["roi", "--json", "--since", cursorId], { cwd, zenithHome });
-    const human = await runRawZenith(["roi"], { cwd, zenithHome });
+    const full = await runDecode(["report", "roi", "--json"], { cwd, zenithHome });
+    const since = await runDecode(["report", "roi", "--json", "--since", cursorId], { cwd, zenithHome });
+    const human = await runRawZenith(["report", "roi"], { cwd, zenithHome });
 
     expect(full.exitCode).toBe(0);
     expect((full.json as any).data.sourceEvents).toBeGreaterThan(0);
@@ -312,11 +319,12 @@ describe("cli json commands", () => {
     });
 
     const beforeSessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
-    const markdown = await runDecode(["prompt", "--json"], { cwd, zenithHome });
-    const agent = await runDecode(["prompt", "--json", "--format", "agent"], { cwd, zenithHome });
-    const codex = await runDecode(["prompt", "--json", "--format", "codex"], { cwd, zenithHome });
-    const claude = await runDecode(["prompt", "--json", "--format", "claude", "--metadata"], { cwd, zenithHome });
-    const humanCodex = await runRawZenith(["prompt", "--format", "codex", "--max-tokens", "800"], { cwd, zenithHome });
+    const markdown = await runDecode(["agent", "prompt", "--json"], { cwd, zenithHome });
+    const agent = await runDecode(["agent", "prompt", "--json", "--format", "agent"], { cwd, zenithHome });
+    const codex = await runDecode(["agent", "prompt", "--json", "--format", "codex"], { cwd, zenithHome });
+    const claude = await runDecode(["agent", "prompt", "--json", "--format", "claude", "--metadata"], { cwd, zenithHome });
+    const reviewer = await runDecode(["agent", "prompt", "--json", "--format", "codex", "--role", "reviewer"], { cwd, zenithHome });
+    const humanCodex = await runRawZenith(["agent", "prompt", "--format", "codex", "--max-tokens", "800"], { cwd, zenithHome });
     const afterSessions = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
 
     expect(markdown.exitCode).toBe(0);
@@ -333,6 +341,9 @@ describe("cli json commands", () => {
     expect((claude.json as any).data.content).toContain("You are Claude Code");
     expect((claude.json as any).data.content).toContain("## Metadata");
     expect((claude.json as any).data.metadata.readinessStatus).toBe("ready");
+    expect((reviewer.json as any).data.role).toBe("reviewer");
+    expect((reviewer.json as any).data.content).toContain("Role: reviewer");
+    expect((reviewer.json as any).data.sections.find((section: any) => section.id === "worktree").priority).toBeGreaterThan(65);
     expect(humanCodex.exitCode).toBe(0);
     expect(humanCodex.stdout).toStartWith("# Zenith Prompt (codex)");
     expect(humanCodex.stdout).toContain("You are Codex");
@@ -360,7 +371,7 @@ describe("cli json commands", () => {
       },
     });
 
-    const result = await runDecode(["prompt", "--json", "--format", "codex", "--max-tokens", "120"], { cwd, zenithHome });
+    const result = await runDecode(["agent", "prompt", "--json", "--format", "codex", "--max-tokens", "120"], { cwd, zenithHome });
     const sections = (result.json as any).data.sections as Array<{ id: string; included: boolean }>;
 
     expect(result.exitCode).toBe(0);
@@ -380,8 +391,8 @@ describe("cli json commands", () => {
 
     await runDecode(["init", "--json"], { cwd, zenithHome });
 
-    const invalidFormat = await runDecode(["prompt", "--json", "--format", "xml"], { cwd, zenithHome });
-    const invalidTokens = await runDecode(["prompt", "--json", "--max-tokens", "0"], { cwd, zenithHome });
+    const invalidFormat = await runDecode(["agent", "prompt", "--json", "--format", "xml"], { cwd, zenithHome });
+    const invalidTokens = await runDecode(["agent", "prompt", "--json", "--max-tokens", "0"], { cwd, zenithHome });
 
     expect(invalidFormat.exitCode).toBe(1);
     expect((invalidFormat.json as any).errors[0].code).toBe("invalid_option");
@@ -473,9 +484,11 @@ describe("cli json commands", () => {
     expect((guide.json as any).data.markdown).toContain("# Five-Minute Continuity Demo");
     expect((guide.json as any).data.markdown).toContain("## Privacy And Storage");
     expect((guide.json as any).data.markdown).toContain("bun run zenith continue");
-    expect((guide.json as any).data.markdown).toContain("bun run zenith prompt --format codex --max-tokens 800");
+    expect((guide.json as any).data.markdown).toContain("bun run zenith handoff --to implementer --compact");
+    expect((guide.json as any).data.markdown).toContain("bun run zenith session checkpoint --from-git");
+    expect((guide.json as any).data.markdown).toContain("bun run zenith plan ready --evidence");
     expect((guide.json as any).data.markdown).not.toContain("bun run zenith continue --json");
-    expect((guide.json as any).data.markdown).not.toContain("bun run zenith prompt --format codex --max-tokens 1200 --json");
+    expect((guide.json as any).data.markdown).not.toContain("bun run zenith agent prompt --format codex --max-tokens 1200 --json");
     expect((guide.json as any).data.privacy.join("\n")).toContain("stores project memory locally");
     expect((guide.json as any).data.steps.map((step: any) => step.title)).toContain("Check benchmark proof");
     expect(missing.exitCode).toBe(1);
@@ -810,7 +823,7 @@ describe("cli json commands", () => {
       },
     });
     const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
-    const closed = await runDecode(["finding", "close", findingId, "--json"], { cwd, zenithHome });
+    const closed = await runDecode(["finding", "close", findingId, "--evidence", "Risk reviewed and closed", "--json"], { cwd, zenithHome });
     const afterClose = await runDecode(["finding", "list", "--json"], { cwd, zenithHome });
     const closedList = await runDecode(["finding", "list", "--status", "closed", "--json"], { cwd, zenithHome });
     const allList = await runDecode(["finding", "list", "--status", "all", "--json"], { cwd, zenithHome });
@@ -950,6 +963,83 @@ describe("cli json commands", () => {
     expect((invalidTag.json as any).errors[0].code).toBe("invalid_memory_tag");
   });
 
+  test("hardening commands support tags, claims, handoff, inspect, doctor, purge, and guard errors", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Hardening Plan",
+        phases: [{ title: "Implement", acceptanceCriteria: ["hardening commands work"] }],
+      },
+    });
+    const planId = (plan.json as any).data.id as string;
+
+    const tag = await runDecode(["tag", "create", "area:cli", "--description", "CLI area", "--json"], { cwd, zenithHome });
+    const unusedTag = await runDecode(["tag", "create", "risk:release", "--json"], { cwd, zenithHome });
+    const alias = await runDecode(["tag", "alias", "command-line", "area:cli", "--json"], { cwd, zenithHome });
+    const tagged = await runDecode(["tag", "set", "plan", planId, "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { tags: ["command-line"] },
+    });
+    const unused = await runDecode(["tag", "list", "--unused", "--json"], { cwd, zenithHome });
+    const search = await runDecode(["search", "--query", "Hardening", "--tag", "area:cli", "--since", "1970-01-01T00:00:00.000Z", "--json"], {
+      cwd,
+      zenithHome,
+    });
+
+    const claim = await runDecode(["agent", "claim", "create", planId, "--scope", "src", "--ttl", "1h", "--role", "implementer", "--json"], {
+      cwd,
+      zenithHome,
+    });
+    const claimId = (claim.json as any).data.id as string;
+    const claimList = await runDecode(["agent", "claim", "list", "--json"], { cwd, zenithHome });
+    const refreshed = await runDecode(["agent", "claim", "refresh", claimId, "--ttl", "2h", "--json"], { cwd, zenithHome });
+    const released = await runDecode(["agent", "claim", "release", claimId, "--json"], { cwd, zenithHome });
+
+    const handoff = await runDecode(["handoff", "--to", "implementer", "--compact", "--json"], { cwd, zenithHome });
+    const raw = await runDecode(["memory", "inspect", "raw", "plan", planId, "--json"], { cwd, zenithHome });
+    const doctor = await runDecode(["doctor", "--json"], { cwd, zenithHome });
+    const purgeBlocked = await runDecode(["memory", "purge", "entity", "plan", planId, "--json"], { cwd, zenithHome });
+    const purged = await runDecode(["memory", "purge", "entity", "plan", planId, "--confirm", "--json"], { cwd, zenithHome });
+    const guarded = await runDecode(["decision", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Reject secret",
+        context: "api_key=super-secret-token-value-12345",
+        decision: "Should not persist.",
+      },
+    });
+
+    expect(tag.exitCode).toBe(0);
+    expect((tag.json as any).data.tag).toBe("area:cli");
+    expect(unusedTag.exitCode).toBe(0);
+    expect((alias.json as any).data).toMatchObject({ alias: "command-line", tag: "area:cli" });
+    expect((tagged.json as any).data.map((item: any) => item.tag)).toEqual(["area:cli"]);
+    expect((unused.json as any).data.map((item: any) => item.tag)).toContain("risk:release");
+    expect((search.json as any).data[0].tags).toContain("area:cli");
+
+    expect(claim.exitCode).toBe(0);
+    expect((claimList.json as any).data[0].id).toBe(claimId);
+    expect((refreshed.json as any).data.id).toBe(claimId);
+    expect((released.json as any).data[0].status).toBe("released");
+
+    expect((handoff.json as any).data.role).toBe("implementer");
+    expect((raw.json as any).data.lifecycle).toBe("active");
+    expect((doctor.json as any).data.summary).toBeDefined();
+    expect(purgeBlocked.exitCode).toBe(1);
+    expect((purgeBlocked.json as any).errors[0].code).toBe("purge_confirmation_required");
+    expect((purged.json as any).data.purged).toBe(true);
+    expect(guarded.exitCode).toBe(1);
+    expect((guarded.json as any).errors[0].code).toBe("secret_detected");
+  });
+
   test("session start capture end and summarize emit stable json", async () => {
     const cwd = makeTempDir();
     const zenithHome = makeTempDir();
@@ -1045,14 +1135,15 @@ describe("cli json commands", () => {
     });
     const planId = (plan.json as any).data.id as string;
 
-    const checkpoint = await runDecode(["checkpoint", "Reached a useful state", "--next", "Run tests", "--plan", planId, "--json"], {
+    const checkpoint = await runDecode(["session", "checkpoint", "Reached a useful state", "--next", "Run tests", "--plan", planId, "--json"], {
       cwd,
       zenithHome,
     });
-    const note = await runDecode(["note", "Remember to update generated skills", "--json"], { cwd, zenithHome });
+    const note = await runDecode(["session", "note", "Remember to update generated skills", "--json"], { cwd, zenithHome });
     const decision = await runDecode(
       [
-        "decide",
+        "decision",
+        "record",
         "Use explicit wrappers",
         "--context",
         "Nested commands are verbose for frequent capture.",
@@ -1086,6 +1177,86 @@ describe("cli json commands", () => {
     expect((sessions.json as any).data).toHaveLength(2);
   });
 
+  test("checkpoint from git drafts read-only and saves only with --save", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runCommand(["git", "init", "-b", "main"], cwd);
+    writeFileSync(join(cwd, "README.md"), "# Git Project\n");
+    await runCommand(["git", "add", "README.md"], cwd);
+    await runCommand(["git", "-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "Initial commit"], cwd);
+    writeFileSync(join(cwd, "README.md"), "# Git Project\n\nChanged\n");
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Git Checkpoint Plan", phases: [{ title: "Inspect git", status: "todo" }] },
+    });
+
+    const draft = await runDecode(["session", "checkpoint", "--from-git", "--json"], { cwd, zenithHome });
+    const sessionsAfterDraft = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+    const saved = await runDecode(["session", "checkpoint", "--from-git", "--save", "--summary", "Git summary", "--next", "Review diff", "--json"], {
+      cwd,
+      zenithHome,
+    });
+    const sessionsAfterSave = await runDecode(["session", "list", "--json"], { cwd, zenithHome });
+
+    expect(draft.exitCode).toBe(0);
+    expect((draft.json as any).data.kind).toBe("draft");
+    expect((draft.json as any).data.draft.branch).toBe("main");
+    expect((draft.json as any).data.draft.git.headSubject).toBe("Initial commit");
+    expect((draft.json as any).data.draft.changedFiles).toContain("README.md");
+    expect((draft.json as any).data.draft.nextSteps).toEqual(["Inspect git"]);
+    expect((sessionsAfterDraft.json as any).data).toHaveLength(0);
+
+    expect(saved.exitCode).toBe(0);
+    expect((saved.json as any).data.kind).toBe("session");
+    expect((saved.json as any).data.session.summary).toBe("Git summary");
+    expect((saved.json as any).data.session.nextSteps).toEqual(["Review diff"]);
+    expect((saved.json as any).data.session.changedFiles).toContain("README.md");
+    expect((saved.json as any).data.session.evidence.some((item: any) => item.kind === "command")).toBe(true);
+    expect((sessionsAfterSave.json as any).data).toHaveLength(1);
+  });
+
+  test("docs suggest, pin, ignore, and list context anchors", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+    mkdirSync(join(cwd, "docs"), { recursive: true });
+    writeFileSync(join(cwd, "AGENTS.md"), "# Agent Instructions\nUse Zenith before planning.\n");
+    writeFileSync(join(cwd, "README.md"), "# Zenith Test\nCLI docs.\n");
+    writeFileSync(join(cwd, "docs", "INDEX.md"), "# Docs Index\n- reference\n");
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Docs Plan", phases: [{ title: "Update docs", status: "todo" }] },
+    });
+
+    const suggested = await runDecode(["docs", "suggest", "--task", "current", "--json"], { cwd, zenithHome });
+    const pinned = await runDecode(["docs", "pin", "AGENTS.md", "--task", "current", "--json"], { cwd, zenithHome });
+    const ignored = await runDecode(["docs", "ignore", "README.md", "--task", "current", "--json"], { cwd, zenithHome });
+    const listed = await runDecode(["docs", "list", "--task", "current", "--json"], { cwd, zenithHome });
+    const afterIgnore = await runDecode(["docs", "suggest", "--task", "current", "--json"], { cwd, zenithHome });
+
+    expect(suggested.exitCode).toBe(0);
+    expect((suggested.json as any).data.map((doc: any) => doc.path)).toContain("AGENTS.md");
+    expect((suggested.json as any).data.map((doc: any) => doc.path)).toContain("README.md");
+    expect(pinned.exitCode).toBe(0);
+    expect((pinned.json as any).data.status).toBe("pinned");
+    expect((pinned.json as any).data.path).toBe("AGENTS.md");
+    expect((pinned.json as any).data.summary).toBe("Agent Instructions");
+    expect(ignored.exitCode).toBe(0);
+    expect((ignored.json as any).data.status).toBe("ignored");
+    expect((listed.json as any).data.map((doc: any) => `${doc.status}:${doc.path}`)).toEqual(
+      expect.arrayContaining(["pinned:AGENTS.md", "ignored:README.md"]),
+    );
+    expect((afterIgnore.json as any).data.map((doc: any) => doc.path)).not.toContain("README.md");
+  });
+
   test("done and blocked wrappers advance phases and close findings", async () => {
     const cwd = makeTempDir();
     const zenithHome = makeTempDir();
@@ -1107,50 +1278,80 @@ describe("cli json commands", () => {
     const implementPhaseId = (plan.json as any).data.phases[0].id as string;
     const verifyPhaseId = (plan.json as any).data.phases[1].id as string;
 
-    const done = await runDecode(["done", "--evidence", "Implementation verified", "--json"], { cwd, zenithHome });
-    const blockedFinding = await runDecode(
-      [
-        "blocked",
-        "External API unavailable",
-        "--description",
-        "Cannot verify until the API fixture is available.",
-        "--phase",
-        verifyPhaseId,
-        "--plan",
-        planId,
-        "--file",
-        "src/index.ts",
-        "--json",
-      ],
-      { cwd, zenithHome },
-    );
-    const findingId = (blockedFinding.json as any).data.finding.id as string;
-    const closedFinding = await runDecode(["done", "--finding", findingId, "--json"], { cwd, zenithHome });
-    const blockedPhase = await runDecode(["blocked", "--mark-phase", verifyPhaseId, "--plan", planId, "--evidence", "Waiting", "--json"], {
+    const done = await runDecode(["plan", "done", "--evidence", "Implementation verified", "--json"], { cwd, zenithHome });
+    const blockedFinding = await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        type: "risk",
+        title: "External API unavailable",
+        description: "Cannot verify until the API fixture is available.",
+        severity: "high",
+        relatedPhaseId: verifyPhaseId,
+        relatedPlanId: planId,
+        relatedFiles: ["src/index.ts"],
+      },
+    });
+    const findingId = (blockedFinding.json as any).data.id as string;
+    const closedFinding = await runDecode(["finding", "close", findingId, "--evidence", "Finding reviewed and closed", "--json"], { cwd, zenithHome });
+    const blockedPhase = await runDecode(["plan", "block", "--phase", verifyPhaseId, "--plan", planId, "--evidence", "Waiting", "--json"], {
       cwd,
       zenithHome,
     });
-    const phase = await runDecode(["phase", "show", verifyPhaseId, "--json"], { cwd, zenithHome });
+    const phase = await runDecode(["plan", "phase", "show", verifyPhaseId, "--json"], { cwd, zenithHome });
 
     expect(done.exitCode).toBe(0);
     expect((done.json as any).data.kind).toBe("phase");
     expect((done.json as any).data.result.completed).toEqual({ phaseId: implementPhaseId, status: "done" });
 
     expect(blockedFinding.exitCode).toBe(0);
-    expect((blockedFinding.json as any).data.kind).toBe("finding");
-    expect((blockedFinding.json as any).data.finding.severity).toBe("high");
-    expect((blockedFinding.json as any).data.finding.relatedPlanId).toBe(planId);
-    expect((blockedFinding.json as any).data.finding.relatedPhaseId).toBe(verifyPhaseId);
-    expect((blockedFinding.json as any).data.finding.relatedFiles).toEqual(["src/index.ts"]);
+    expect((blockedFinding.json as any).data.severity).toBe("high");
+    expect((blockedFinding.json as any).data.relatedPlanId).toBe(planId);
+    expect((blockedFinding.json as any).data.relatedPhaseId).toBe(verifyPhaseId);
+    expect((blockedFinding.json as any).data.relatedFiles).toEqual(["src/index.ts"]);
 
     expect(closedFinding.exitCode).toBe(0);
-    expect((closedFinding.json as any).data.kind).toBe("finding");
-    expect((closedFinding.json as any).data.finding.status).toBe("closed");
+    expect((closedFinding.json as any).data.status).toBe("closed");
 
     expect(blockedPhase.exitCode).toBe(0);
     expect((blockedPhase.json as any).data.kind).toBe("phase");
     expect((blockedPhase.json as any).data.result.completed).toEqual({ phaseId: verifyPhaseId, status: "blocked" });
     expect((phase.json as any).data.phase.status).toBe("blocked");
+  });
+
+  test("ready marks a phase needs_review and sets review stage", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const plan = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Ready Plan",
+        phases: [{ title: "Implement", status: "in_progress" }],
+      },
+    });
+    const planId = (plan.json as any).data.id as string;
+    const phaseId = (plan.json as any).data.phases[0].id as string;
+
+    const ready = await runDecode(
+      ["plan", "ready", "--plan", planId, "--phase", phaseId, "--role", "codex", "--evidence", "Tests passed", "--json"],
+      { cwd, zenithHome },
+    );
+    const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
+    const complete = await runDecode(["plan", "complete", planId, "--json"], { cwd, zenithHome });
+
+    expect(ready.exitCode).toBe(0);
+    expect((ready.json as any).data.phase.phase.status).toBe("needs_review");
+    expect((ready.json as any).data.phase.phase.evidence[0].value).toBe("Tests passed");
+    expect((ready.json as any).data.stage.stage).toBe("review");
+    expect((ready.json as any).data.stage.role).toBe("codex");
+    expect((ready.json as any).data.next.kind).toBe("review_phase");
+    expect((next.json as any).data.kind).toBe("review_phase");
+    expect(complete.exitCode).toBe(1);
+    expect((complete.json as any).errors[0].code).toBe("plan_has_open_phases");
   });
 
   test("done reports exact suggested commands when current phase is ambiguous", async () => {
@@ -1188,14 +1389,14 @@ describe("cli json commands", () => {
     const phaseAId = (planA.json as any).data.phases[0].id as string;
     const phaseBId = (planB.json as any).data.phases[0].id as string;
 
-    const result = await runDecode(["done", "--json"], { cwd, zenithHome });
+    const result = await runDecode(["plan", "done", "--json"], { cwd, zenithHome });
 
     expect(result.exitCode).toBe(1);
     expect((result.json as any).errors[0].code).toBe("ambiguous_current_phase");
-    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith focus set ${roadmapAId}`);
-    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith focus set ${roadmapBId}`);
-    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith done --plan ${planAId} --phase ${phaseAId}`);
-    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith done --plan ${planBId} --phase ${phaseBId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith agent focus set ${roadmapAId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith agent focus set ${roadmapBId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith plan done --plan ${planAId} --phase ${phaseAId}`);
+    expect((result.json as any).errors[0].details.suggestedCommands).toContain(`zenith plan done --plan ${planBId} --phase ${phaseBId}`);
   });
 
   test("phase show returns phase_not_found for unknown ids", async () => {
@@ -1204,7 +1405,7 @@ describe("cli json commands", () => {
     tempDirs.push(cwd, zenithHome);
 
     await runDecode(["init", "--json"], { cwd, zenithHome });
-    const missing = await runDecode(["phase", "show", "phase_missing", "--json"], { cwd, zenithHome });
+    const missing = await runDecode(["plan", "phase", "show", "phase_missing", "--json"], { cwd, zenithHome });
 
     expect(missing.exitCode).toBe(1);
     expect((missing.json as any).errors[0].code).toBe("phase_not_found");
@@ -1227,6 +1428,49 @@ describe("cli json commands", () => {
     expect(stdout).toContain("zenith");
     expect(stdout).toContain("Zenith");
     expect(stdout).not.toContain("Decode");
+
+    const commandBlock = stdout.split("Commands:\n")[1] ?? "";
+    const commandNames = commandBlock
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/)[0])
+      .filter((name): name is string => Boolean(name) && name !== "help")
+      .sort();
+    expect(commandNames).toEqual(
+      [
+        "agent",
+        "benchmark",
+        "context",
+        "continue",
+        "decision",
+        "demo",
+        "docs",
+        "doctor",
+        "finding",
+        "handoff",
+        "init",
+        "memory",
+        "plan",
+        "project",
+        "report",
+        "roadmap",
+        "search",
+        "session",
+        "tag",
+      ].sort(),
+    );
+  });
+
+  test("removed top-level commands fail as unknown commands", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    for (const command of ["checkpoint", "ready", "done", "watch", "timeline", "prompt", "focus", "brief", "spike"]) {
+      const result = await runRawZenith([command], { cwd, zenithHome });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(`unknown command '${command}'`);
+    }
   });
 
   test("invalid stdin json returns an error envelope", async () => {
@@ -1259,7 +1503,7 @@ describe("cli json commands", () => {
 
     await runDecode(["init", "--json"], { cwd, zenithHome });
 
-    const result = await runDecode(["timeline", "--json"], { cwd, zenithHome });
+    const result = await runDecode(["report", "timeline", "--json"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).ok).toBe(true);
     expect(Array.isArray((result.json as any).data)).toBe(true);
@@ -1337,7 +1581,7 @@ describe("cli json commands", () => {
       input: { title: "Timeline Test Plan", phases: [{ title: "Phase 1" }] },
     });
 
-    const result = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
+    const result = await runDecode(["report", "timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).data).toHaveLength(1);
   });
@@ -1386,19 +1630,19 @@ describe("cli json commands", () => {
     expect((ambiguousContinue.json as any).data.readiness.status).toBe("ambiguous");
 
     // Binding the worktree to Roadmap Alpha resolves the active plan.
-    const setFocus = await runDecode(["focus", "set", roadmapAId, "--json"], { cwd, zenithHome });
+    const setFocus = await runDecode(["agent", "focus", "set", roadmapAId, "--json"], { cwd, zenithHome });
     expect(setFocus.exitCode).toBe(0);
     expect((setFocus.json as any).data.focus.roadmapId).toBe(roadmapAId);
 
     const focused = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     expect((focused.json as any).data.recommendation).toBe("Alpha Phase");
 
-    const show = await runDecode(["focus", "show", "--json"], { cwd, zenithHome });
+    const show = await runDecode(["agent", "focus", "show", "--json"], { cwd, zenithHome });
     expect((show.json as any).data.focus.roadmapId).toBe(roadmapAId);
     expect((show.json as any).data.activePlan.title).toContain("Alpha");
 
     // Clearing focus restores ambiguity.
-    const cleared = await runDecode(["focus", "clear", "--json"], { cwd, zenithHome });
+    const cleared = await runDecode(["agent", "focus", "clear", "--json"], { cwd, zenithHome });
     expect((cleared.json as any).data.focus).toBeNull();
     const ambiguousAgain = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
     expect((ambiguousAgain.json as any).data.recommendation).toContain("Set roadmap focus");
@@ -1449,7 +1693,7 @@ describe("cli json commands", () => {
     const planId = (plan.json as any).data.id as string;
     const phaseId = (plan.json as any).data.phases[0].id as string;
 
-    const stage = await runDecode(["stage", "set", "--json", "--input", "-"], {
+    const stage = await runDecode(["agent", "stage", "set", "--json", "--input", "-"], {
       cwd,
       zenithHome,
       input: {
@@ -1460,7 +1704,7 @@ describe("cli json commands", () => {
       },
     });
     const watch = await runDecode(
-      ["watch", "--until", `stage=review,plan=${planId},phase=${phaseId}`, "--timeout", "100", "--poll-interval", "1", "--json"],
+      ["agent", "watch", "--until", `stage=review,plan=${planId},phase=${phaseId}`, "--timeout", "100", "--poll-interval", "1", "--json"],
       { cwd, zenithHome },
     );
     const next = await runDecode(["plan", "next", "--json"], { cwd, zenithHome });
@@ -1481,11 +1725,11 @@ describe("cli json commands", () => {
     tempDirs.push(cwd, zenithHome);
 
     await runDecode(["init", "--json"], { cwd, zenithHome });
-    const timeout = await runDecode(["watch", "--until", "stage=review", "--timeout", "1", "--poll-interval", "1", "--json"], {
+    const timeout = await runDecode(["agent", "watch", "--until", "stage=review", "--timeout", "1", "--poll-interval", "1", "--json"], {
       cwd,
       zenithHome,
     });
-    const invalid = await runDecode(["watch", "--until", "stage=bogus", "--timeout", "1", "--poll-interval", "1", "--json"], {
+    const invalid = await runDecode(["agent", "watch", "--until", "stage=bogus", "--timeout", "1", "--poll-interval", "1", "--json"], {
       cwd,
       zenithHome,
     });
@@ -1693,7 +1937,7 @@ describe("cli json commands", () => {
     const result = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
       zenithHome,
-      input: { planId, completedPhaseId: phaseId },
+      input: { planId, completedPhaseId: phaseId, evidence: [{ kind: "note", value: "Only phase complete" }] },
     });
     expect(result.exitCode).toBe(0);
     expect((result.json as any).data.planCompleted).toBe(true);
@@ -1797,7 +2041,7 @@ describe("cli json commands", () => {
       input: { title: "Since Test Plan", phases: [{ title: "Phase A" }] },
     });
 
-    const result = await runDecode(["timeline", "--json", "--since", after], { cwd, zenithHome });
+    const result = await runDecode(["report", "timeline", "--json", "--since", after], { cwd, zenithHome });
     expect(result.exitCode).toBe(0);
     // Only events after 'after' — should include plan.created but not project.registered
     const events = (result.json as any).data as any[];
@@ -1816,7 +2060,7 @@ describe("cli json commands", () => {
     await runDecode(["init", "--json"], { cwd, zenithHome });
 
     // Get the first event id from timeline
-    const timeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
+    const timeline = await runDecode(["report", "timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     // The most recent event (DESC order) — use this as the cursor
     const firstEventId = (timeline.json as any).data[0].id;
 
@@ -1828,7 +2072,7 @@ describe("cli json commands", () => {
     });
 
     // Pass that event id as --since; we should get the plan events but not the init event
-    const sinceResult = await runDecode(["timeline", "--json", "--since", firstEventId], { cwd, zenithHome });
+    const sinceResult = await runDecode(["report", "timeline", "--json", "--since", firstEventId], { cwd, zenithHome });
     expect(sinceResult.exitCode).toBe(0);
     const events = (sinceResult.json as any).data as any[];
     // There should be new events (plan.created at minimum)
@@ -1842,7 +2086,7 @@ describe("cli json commands", () => {
 
     await runDecode(["init", "--json"], { cwd, zenithHome });
 
-    const result = await runDecode(["timeline", "--json", "--since", "evt_nonexistent_xyz"], { cwd, zenithHome });
+    const result = await runDecode(["report", "timeline", "--json", "--since", "evt_nonexistent_xyz"], { cwd, zenithHome });
     expect(result.exitCode).toBe(1);
     expect((result.json as any).errors[0].code).toBe("event_not_found");
   });
@@ -1897,7 +2141,7 @@ describe("cli json commands", () => {
       },
     });
 
-    const cursorTimeline = await runDecode(["timeline", "--json", "--limit", "1"], { cwd, zenithHome });
+    const cursorTimeline = await runDecode(["report", "timeline", "--json", "--limit", "1"], { cwd, zenithHome });
     const cursorId = (cursorTimeline.json as any).data[0].id as string;
     await runDecode(["finding", "record", "--json", "--input", "-"], {
       cwd,
@@ -1911,11 +2155,11 @@ describe("cli json commands", () => {
       },
     });
 
-    const standup = await runDecode(["standup", "--json", "--days", "7"], { cwd, zenithHome });
-    const diffDefault = await runDecode(["diff", "--json"], { cwd, zenithHome });
-    const diff = await runDecode(["diff", "--json", "--since", cursorId, "--limit", "10"], { cwd, zenithHome });
-    const drift = await runDecode(["drift", "--json"], { cwd, zenithHome });
-    const adherence = await runDecode(["adherence", "--json", "--days", "7"], { cwd, zenithHome });
+    const standup = await runDecode(["report", "standup", "--json", "--days", "7"], { cwd, zenithHome });
+    const diffDefault = await runDecode(["report", "diff", "--json"], { cwd, zenithHome });
+    const diff = await runDecode(["report", "diff", "--json", "--since", cursorId, "--limit", "10"], { cwd, zenithHome });
+    const drift = await runDecode(["report", "drift", "--json"], { cwd, zenithHome });
+    const adherence = await runDecode(["report", "adherence", "--json", "--days", "7"], { cwd, zenithHome });
     const next = await runDecode(["plan", "next", "--json", "--stale-after-days", "1"], { cwd, zenithHome });
 
     expect(standup.exitCode).toBe(0);
@@ -1959,8 +2203,8 @@ describe("cli json commands", () => {
     const appActivity = await services.app.activity();
     services.close();
 
-    const cliActivity = await runDecode(["activity", "--json"], { cwd, zenithHome });
-    const humanActivity = await runRawZenith(["activity"], { cwd, zenithHome });
+    const cliActivity = await runDecode(["report", "activity", "--json"], { cwd, zenithHome });
+    const humanActivity = await runRawZenith(["report", "activity"], { cwd, zenithHome });
 
     expect(appActivity.stats.totalEvents).toBeGreaterThan(500);
     expect(appActivity.grid.columns).toBe(53);
@@ -1991,13 +2235,13 @@ describe("cli json commands", () => {
     const advance = await runDecode(["plan", "advance", "--json", "--input", "-"], {
       cwd,
       zenithHome,
-      input: { planId, completedPhaseId: phaseId },
+      input: { planId, completedPhaseId: phaseId, evidence: [{ kind: "note", value: "Only phase complete" }] },
     });
     expect(advance.exitCode).toBe(0);
     expect((advance.json as any).data.planCompleted).toBe(true);
 
     // Count events after first completion
-    const timelineAfterFirst = await runDecode(["timeline", "--json"], { cwd, zenithHome });
+    const timelineAfterFirst = await runDecode(["report", "timeline", "--json"], { cwd, zenithHome });
     expect(timelineAfterFirst.exitCode).toBe(0);
     const countAfterFirst = ((timelineAfterFirst.json as any).data as any[]).length;
 
@@ -2006,7 +2250,7 @@ describe("cli json commands", () => {
     expect(second.exitCode).toBe(0);
 
     // Timeline should not have grown (no new events emitted)
-    const timelineAfterSecond = await runDecode(["timeline", "--json"], { cwd, zenithHome });
+    const timelineAfterSecond = await runDecode(["report", "timeline", "--json"], { cwd, zenithHome });
     expect(timelineAfterSecond.exitCode).toBe(0);
     const countAfterSecond = ((timelineAfterSecond.json as any).data as any[]).length;
     expect(countAfterSecond).toBe(countAfterFirst);

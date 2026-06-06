@@ -174,7 +174,7 @@ describe("memory taxonomy", () => {
     tempDirs.push(cwd, zenithHome);
 
     await runDecode(["init", "--json"], { cwd, zenithHome });
-    const brief = await runDecode(["brief", "set", "--json", "--input", "-"], {
+    const brief = await runDecode(["memory", "brief", "set", "--json", "--input", "-"], {
       cwd,
       zenithHome,
       input: {
@@ -183,8 +183,8 @@ describe("memory taxonomy", () => {
         body: "Keep project intent separate from executable plans.",
       },
     });
-    const briefShow = await runDecode(["brief", "show", "--json"], { cwd, zenithHome });
-    const briefList = await runDecode(["brief", "list", "--json"], { cwd, zenithHome });
+    const briefShow = await runDecode(["memory", "brief", "show", "--json"], { cwd, zenithHome });
+    const briefList = await runDecode(["memory", "brief", "list", "--json"], { cwd, zenithHome });
 
     const roadmap = await runDecode(["roadmap", "create", "--json", "--input", "-"], {
       cwd,
@@ -225,7 +225,7 @@ describe("memory taxonomy", () => {
       input: { archivePlan: true },
     });
 
-    const spike = await runDecode(["spike", "create", "--json", "--input", "-"], {
+    const spike = await runDecode(["memory", "spike", "create", "--json", "--input", "-"], {
       cwd,
       zenithHome,
       input: {
@@ -234,7 +234,7 @@ describe("memory taxonomy", () => {
       },
     });
     const spikeId = (spike.json as any).data.id as string;
-    const spikeRecord = await runDecode(["spike", "record", "--json", "--input", "-"], {
+    const spikeRecord = await runDecode(["memory", "spike", "record", "--json", "--input", "-"], {
       cwd,
       zenithHome,
       input: {
@@ -243,9 +243,9 @@ describe("memory taxonomy", () => {
         recommendation: "Use roadmaps.",
       },
     });
-    const spikeList = await runDecode(["spike", "list", "--json"], { cwd, zenithHome });
-    const spikeShow = await runDecode(["spike", "show", spikeId, "--json"], { cwd, zenithHome });
-    const spikeConclude = await runDecode(["spike", "conclude", spikeId, "--json", "--input", "-"], {
+    const spikeList = await runDecode(["memory", "spike", "list", "--json"], { cwd, zenithHome });
+    const spikeShow = await runDecode(["memory", "spike", "show", spikeId, "--json"], { cwd, zenithHome });
+    const spikeConclude = await runDecode(["memory", "spike", "conclude", spikeId, "--json", "--input", "-"], {
       cwd,
       zenithHome,
       input: {

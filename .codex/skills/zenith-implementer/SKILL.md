@@ -11,8 +11,8 @@ Use this skill when acting as the implementer in a decentralized local agent wor
 
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Keep this role in tmux or screen when waiting in the background.
-- Always use explicit `zenith watch` timeouts and poll intervals.
-- Stop instead of implementing when `zenith plan next --json` returns `blocking_finding`, `ambiguous_focus`, `blocked_dependency`, `review_finding`, `review_deferred`, `create_plan_empty`, or a different plan/phase than the handoff.
+- Always use explicit `zenith agent watch` timeouts and poll intervals.
+- Stop instead of implementing when `zenith plan next --json` returns `review_phase`, `blocking_finding`, `ambiguous_focus`, `blocked_dependency`, `review_finding`, `review_deferred`, `create_plan_empty`, or a different plan/phase than the handoff.
 - Preserve unrelated dirty worktree changes; work with them when they affect the phase and do not revert them.
 
 ## Wake And Implement
@@ -20,13 +20,13 @@ Use this skill when acting as the implementer in a decentralized local agent wor
 Wait for the scoped implementation stage:
 
 ```bash
-zenith watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 ```
 
 After waking:
 
-1. Run `zenith context compact --json`, `zenith plan next --json`, and `zenith phase show <phase-id> --json`.
-2. Run `zenith diff --json` to inspect handoff activity since the latest ended session.
+1. Run `zenith context compact --json`, `zenith plan next --json`, and `zenith plan phase show <phase-id> --json`.
+2. Run `zenith report diff --json` to inspect handoff activity since the latest ended session.
 3. Implement only the scoped phase.
 4. Verify with the checks expected by the phase, typically `bun x tsc --noEmit`, `bun test`, and `bun run build`.
 
@@ -50,20 +50,10 @@ Then return control to planning:
 }
 ```
 
-If implementation and verification are complete, set `stage=review`:
+If implementation and verification are complete, use `plan ready` to mark durable phase state and set `stage=review`:
 
 ```bash
-zenith stage set --json --input -
-```
-
-```json
-{
-  "planId": "plan_id",
-  "phaseId": "phase_id",
-  "stage": "review",
-  "role": "reviewer",
-  "note": "Implementation verified and ready for review."
-}
+zenith plan ready --plan plan_id --phase phase_id --evidence "Verification passed"
 ```
 
 Generated for codex.

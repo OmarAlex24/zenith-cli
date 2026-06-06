@@ -1,23 +1,37 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { hostname } from "node:os";
+import { basename, extname, relative, resolve } from "node:path";
 import { ZenithError } from "../cli/json-output";
 import { createId, nowIso } from "../domain/ids";
 import {
   AddRoadmapItemInputSchema,
   AdvancePlanInputSchema,
   AgentStageSchema,
+  ActionBriefingSchema,
   BlockedInputSchema,
+  CheckpointFromGitResultSchema,
+  ClaimInputSchema,
   ConcludeSpikeInputSchema,
   CaptureSessionInputSchema,
   CheckpointInputSchema,
+  ContextDocSuggestionSchema,
+  CreateTagAliasInputSchema,
+  CreateTagInputSchema,
   DecideInputSchema,
+  DoctorReportSchema,
+  DocsTaskSchema,
   DoneInputSchema,
   DoneResultSchema,
   type AgentStage,
   type AgentStageState,
+  type ActionBriefing,
   type AdvanceResult,
   BlockedResultSchema,
   type BlockedResult,
   type CompactContext,
   ContinueResultSchema,
+  type ContextDoc,
+  type ContextDocSuggestion,
   type ContextSnapshot,
   CreatePlanFromRoadmapInputSchema,
   CreateRoadmapInputSchema,
@@ -31,9 +45,13 @@ import {
   type PhaseDetail,
   type PlanPath,
   PromptFormatSchema,
+  PromptRoleSchema,
   PromptResultSchema,
+  ReadyInputSchema,
+  ReadyResultSchema,
   RecordFindingInputSchema,
   RecordDecisionInputSchema,
+  RefreshClaimInputSchema,
   RecordSpikeInputSchema,
   type ResumeContext,
   ResumeContextSchema,
@@ -54,20 +72,30 @@ import {
   type MemoryEntityType,
   type MemorySearchResult,
   type MemoryTag,
+  type MemoryClaim,
+  type RawMemoryEntity,
+  type TagAlias,
+  type TagCatalogEntry,
   type ContinueResult,
   type ContinuityReadiness,
   type ContextRoiReport,
+  type CheckpointFromGitResult,
+  type Evidence,
   type NextStep,
   type Plan,
   type PlanPhase,
   type ProjectBrief,
   type Project,
   type PromptFormat,
+  type PromptRole,
   type PromptResult,
+  type ReadyResult,
   type Roadmap,
   type RoadmapItem,
   type Session,
   type Spike,
+  type DoctorIssue,
+  type DoctorReport,
 } from "../domain/schemas";
 import type { GitSummary } from "../integrations/git/git-adapter";
 import { GitAdapter } from "../integrations/git/git-adapter";
@@ -78,6 +106,7 @@ import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next"
 import { computePlanPath, validatePhaseDependencies } from "./plan-graph";
 import { resolveActivePlan, type FocusCandidate, type FocusResolution } from "./focus";
 import { buildRoadmapWorkspace, type RoadmapWorkspace } from "./roadmap-workspace";
+import { guardMemoryWrite, memoryGuardErrorForText, requireEvidenceForAction } from "./memory-guard";
 import {
   activePlanSummary,
   activityWindow,
@@ -109,8 +138,28 @@ export type ContinueOptions = {
 
 export type PromptOptions = {
   format?: PromptFormat;
+  role?: PromptRole;
   maxTokens?: number;
   includeMetadata?: boolean;
+};
+
+export type HandoffOptions = {
+  to: "planner" | "implementer" | "reviewer";
+  compact?: boolean;
+  maxTokens?: number;
+};
+
+export type DoctorOptions = {
+  compact?: boolean;
+  since?: string;
+};
+
+export type SearchMemoryOptions = {
+  query?: string;
+  tag?: string;
+  entityType?: string;
+  limit?: number;
+  since?: string;
 };
 
 export type ProjectStatus = {
@@ -130,7 +179,10 @@ export type ProjectStatus = {
     severity: string;
     title: string;
     relatedFiles: string[];
+    relatedPlanId?: string;
+    relatedPhaseId?: string;
   }>;
+  contextDocs: ContextDoc[];
   focus: FocusInfo | null;
   focusAmbiguous: boolean;
   next: PlanNextResult;
@@ -269,6 +321,7 @@ export class ZenithApp {
         recentSessions: [],
         recentDecisions: [],
         openFindings: [],
+        contextDocs: [],
         focus: null,
         focusAmbiguous: false,
         next: {
@@ -285,6 +338,7 @@ export class ZenithApp {
     const recentSessions = this.repository.listRecentSessions(detection.project.id, 5);
     const recentDecisions = this.repository.listDecisions(detection.project.id, 5);
     const openFindings = this.repository.listOpenFindings(detection.project.id);
+    const contextDocs = this.repository.listContextDocs(detection.project.id);
 
     const { resolution, focus } = this.resolveFocus(detection.project.id, detection.git.worktreeRoot);
     const activePlan = resolution.activePlan;
@@ -308,7 +362,10 @@ export class ZenithApp {
         severity: finding.severity,
         title: finding.title,
         relatedFiles: finding.relatedFiles,
+        ...(finding.relatedPlanId ? { relatedPlanId: finding.relatedPlanId } : {}),
+        ...(finding.relatedPhaseId ? { relatedPhaseId: finding.relatedPhaseId } : {}),
       })),
+      contextDocs,
       focus,
       focusAmbiguous: resolution.ambiguous,
       next,
@@ -672,6 +729,7 @@ export class ZenithApp {
     let completedPhaseResult: { phaseId: string; status: Plan["phases"][number]["status"] } | null = null;
 
     if (input.completedPhaseId) {
+      requireEvidenceForAction(input.evidence, "plan advance");
       const phase = plan.phases.find((p) => p.id === input.completedPhaseId);
       if (!phase) {
         throw new ZenithError(`Phase not found: ${input.completedPhaseId}`, {
@@ -991,6 +1049,162 @@ export class ZenithApp {
     };
   }
 
+  async doctor(options: DoctorOptions = {}): Promise<DoctorReport> {
+    const context = await this.compactContext();
+    const detection = await this.detectProject();
+    const issues: DoctorIssue[] = [];
+    const now = nowIso();
+
+    if (!detection.project) {
+      issues.push({
+        id: "project_not_registered",
+        severity: "error",
+        title: "Project is not registered",
+        detail: "Run `zenith init` before relying on continuity memory.",
+        evidence: [detection.git.rootPath],
+      });
+      return buildDoctorReport(now, issues);
+    }
+
+    const project = detection.project;
+    const since = options.since ? this.resolveEventSince(project.id, options.since).since : null;
+    const records = this.repository
+      .listSearchableMemoryEntities(project.id)
+      .filter((record) => !since || record.updatedAt > since.createdAt);
+    const activeClaims = this.repository.listClaims(project.id, { status: "active" });
+    const allClaims = this.repository.listClaims(project.id, { includeExpired: true });
+    const tags = this.repository.listMemoryTags(project.id);
+    const catalog = this.repository.listTagCatalog(project.id);
+    const catalogTags = new Set(catalog.map((tag) => tag.tag));
+    const plans = this.repository.listPlans(project.id);
+    const findings = this.repository.listFindings(project.id, "all");
+    const docs = this.repository.listContextDocs(project.id);
+
+    if (context.git.dirty) {
+      issues.push({
+        id: "dirty_worktree",
+        severity: "warning",
+        title: "Working tree is dirty",
+        detail: `${context.git.changedFiles.length} changed file(s) are present.`,
+        evidence: context.git.changedFiles.slice(0, 10),
+      });
+    }
+    if (project.branch && context.git.branch && project.branch !== context.git.branch) {
+      issues.push({
+        id: "branch_changed",
+        severity: "warning",
+        title: "Project branch differs from current branch",
+        detail: `Registered branch ${project.branch}, current branch ${context.git.branch}.`,
+        evidence: [project.branch, context.git.branch],
+      });
+    }
+
+    for (const plan of plans) {
+      for (const phase of plan.phases) {
+        if (phase.acceptanceCriteria.length === 0 && phase.status !== "done") {
+          issues.push({
+            id: `missing_acceptance:${phase.id}`,
+            severity: "warning",
+            title: "Phase has no acceptance criteria",
+            detail: phase.title,
+            entityType: "phase",
+            entityId: phase.id,
+          });
+        }
+        if ((phase.status === "done" || phase.status === "needs_review" || phase.status === "blocked") && phase.evidence.length === 0) {
+          issues.push({
+            id: `weak_phase_evidence:${phase.id}`,
+            severity: "error",
+            title: "Phase state lacks evidence",
+            detail: `${phase.title} is ${phase.status} without evidence.`,
+            entityType: "phase",
+            entityId: phase.id,
+          });
+        }
+      }
+    }
+    for (const finding of findings) {
+      if (finding.status === "closed" && finding.evidence.length === 0) {
+        issues.push({
+          id: `closed_finding_without_evidence:${finding.id}`,
+          severity: "error",
+          title: "Closed finding lacks evidence",
+          detail: finding.title,
+          entityType: "finding",
+          entityId: finding.id,
+        });
+      }
+    }
+    for (const doc of docs.filter((doc) => doc.status === "pinned")) {
+      const absolutePath = resolve(contextWorkspaceRoot(context), doc.path);
+      if (!existsSync(absolutePath)) {
+        issues.push({
+          id: `missing_doc:${doc.id}`,
+          severity: "warning",
+          title: "Pinned context doc is missing",
+          detail: doc.path,
+          entityType: "context_doc",
+          entityId: doc.id,
+        });
+        continue;
+      }
+      const mtime = statSync(absolutePath).mtime.toISOString();
+      if ((doc.observedMtime && doc.observedMtime !== mtime) || (doc.readCommit && context.git.headCommit && doc.readCommit !== context.git.headCommit)) {
+        issues.push({
+          id: `stale_doc:${doc.id}`,
+          severity: "warning",
+          title: "Pinned context doc may be stale",
+          detail: doc.path,
+          entityType: "context_doc",
+          entityId: doc.id,
+        });
+      }
+    }
+    for (const claim of allClaims.filter((claim) => claim.status === "expired")) {
+      issues.push({
+        id: `expired_claim:${claim.id}`,
+        severity: "info",
+        title: "Claim is expired",
+        detail: `${claim.role} claim on ${claim.scope}`,
+        evidence: [claim.id],
+      });
+    }
+    if (activeClaims.length > 0) {
+      issues.push({
+        id: "active_claims",
+        severity: "info",
+        title: "Active claims exist",
+        detail: `${activeClaims.length} active claim(s) are coordinating work.`,
+        evidence: activeClaims.map((claim) => claim.scope).slice(0, 10),
+      });
+    }
+    for (const tag of new Set(tags.map((tag) => tag.tag))) {
+      if (!catalogTags.has(tag) && !hasReservedTagPrefix(tag)) {
+        issues.push({
+          id: `ambiguous_tag:${tag}`,
+          severity: "warning",
+          title: "Free-form tag is not cataloged",
+          detail: tag,
+        });
+      }
+    }
+    for (const record of records) {
+      const guardError = memoryGuardErrorForText(record.text, `${record.entityType}:${record.entityId}`);
+      if (guardError) {
+        issues.push({
+          id: `legacy_guard:${record.entityType}:${record.entityId}`,
+          severity: "error",
+          title: "Legacy memory violates guard policy",
+          detail: guardError.message,
+          entityType: record.entityType,
+          entityId: record.entityId,
+        });
+      }
+    }
+
+    return buildDoctorReport(now, issues);
+  }
+
   async adherence(options: { days?: number } = {}): Promise<AdherenceReport> {
     const project = await this.requireProject();
     const now = nowIso();
@@ -1032,7 +1246,7 @@ export class ZenithApp {
     const entityType = parseMemoryEntityType(entityTypeRaw);
     this.requireMemoryEntity(project.id, entityType, entityId);
     const input = SetMemoryTagsInputSchema.parse(rawInput);
-    const tags = normalizeMemoryTags(input.tags);
+    const tags = [...new Set(normalizeMemoryTags(input.tags).map((tag) => this.repository.resolveTagAlias(project.id, tag)))];
 
     return this.repository.setMemoryTags({
       projectId: project.id,
@@ -1058,7 +1272,120 @@ export class ZenithApp {
     });
   }
 
-  async searchMemory(options: { query?: string; tag?: string; entityType?: string; limit?: number } = {}): Promise<MemorySearchResult[]> {
+  async createTag(rawInput: unknown): Promise<TagCatalogEntry> {
+    const project = await this.requireProject();
+    const input = CreateTagInputSchema.parse(rawInput);
+    return this.repository.upsertTagCatalog({
+      projectId: project.id,
+      tag: normalizeMemoryTag(input.tag),
+      ...(input.description ? { description: input.description } : {}),
+    });
+  }
+
+  async createTagAlias(rawInput: unknown): Promise<TagAlias> {
+    const project = await this.requireProject();
+    const input = CreateTagAliasInputSchema.parse(rawInput);
+    return this.repository.upsertTagAlias({
+      projectId: project.id,
+      alias: normalizeMemoryTag(input.alias),
+      tag: normalizeMemoryTag(input.tag),
+    });
+  }
+
+  async listTagCatalog(options: { unused?: boolean } = {}): Promise<TagCatalogEntry[]> {
+    const project = await this.requireProject();
+    return this.repository.listTagCatalog(project.id, options);
+  }
+
+  async claim(rawInput: unknown): Promise<MemoryClaim> {
+    const project = await this.requireProject();
+    const git = await this.git.inspect(this.cwd);
+    const input = ClaimInputSchema.parse(rawInput);
+    return this.repository.createClaim({
+      projectId: project.id,
+      entityId: input.entityId,
+      scope: input.scope,
+      role: input.role,
+      ttlMs: parseTtlMs(input.ttl),
+      owner: "codex",
+      worktree: git.worktreeRoot,
+      ...(git.branch ? { branch: git.branch } : {}),
+      hostname: hostname(),
+    });
+  }
+
+  async listClaims(): Promise<MemoryClaim[]> {
+    const project = await this.requireProject();
+    return this.repository.listClaims(project.id, { includeExpired: true });
+  }
+
+  async refreshClaim(rawInput: unknown): Promise<MemoryClaim> {
+    const project = await this.requireProject();
+    const input = RefreshClaimInputSchema.parse(rawInput);
+    return this.repository.refreshClaim({
+      projectId: project.id,
+      claimId: input.claimId,
+      ttlMs: parseTtlMs(input.ttl),
+    });
+  }
+
+  async release(claimIdOrEntityId: string): Promise<MemoryClaim[]> {
+    const project = await this.requireProject();
+    return this.repository.releaseClaim(project.id, claimIdOrEntityId);
+  }
+
+  async inspectRaw(entityTypeRaw: string, entityId: string): Promise<RawMemoryEntity> {
+    const project = await this.requireProject();
+    const entityType = parseMemoryEntityType(entityTypeRaw);
+    return this.repository.inspectRawEntity(project.id, entityType, entityId);
+  }
+
+  async purge(rawInput: { kind: string; entityType?: string; entityId?: string; tag?: string; projectId?: string; reason?: string; confirm?: boolean }): Promise<{ purged: boolean; entityType: string; entityId: string }> {
+    if (!rawInput.confirm) {
+      throw new ZenithError("Purge requires --confirm.", {
+        code: "purge_confirmation_required",
+        details: { kind: rawInput.kind },
+      });
+    }
+    const project = await this.requireProject();
+    if (rawInput.kind === "tag") {
+      const tag = rawInput.tag ? normalizeMemoryTag(rawInput.tag) : "";
+      return this.repository.purge({ kind: "tag", projectId: project.id, tag, ...(rawInput.reason ? { reason: rawInput.reason } : {}) });
+    }
+    if (rawInput.kind === "project") {
+      const projectId = rawInput.projectId && rawInput.projectId !== "current" ? rawInput.projectId : project.id;
+      return this.repository.purge({ kind: "project", projectId, ...(rawInput.reason ? { reason: rawInput.reason } : {}) });
+    }
+    const entityType = parseMemoryEntityType(rawInput.entityType ?? "");
+    if (!rawInput.entityId) {
+      throw new ZenithError("Purge entity requires an entity id.", {
+        code: "invalid_purge_target",
+        details: { kind: rawInput.kind },
+      });
+    }
+    this.requireMemoryEntity(project.id, entityType, rawInput.entityId);
+    return this.repository.purge({
+      kind: "entity",
+      projectId: project.id,
+      entityType,
+      entityId: rawInput.entityId,
+      ...(rawInput.reason ? { reason: rawInput.reason } : {}),
+    });
+  }
+
+  async handoff(options: HandoffOptions): Promise<PromptResult> {
+    const role = options.to;
+    return this.prompt({
+      role,
+      format: "codex",
+      ...((options.maxTokens ?? (options.compact ? 800 : undefined)) !== undefined
+        ? { maxTokens: (options.maxTokens ?? (options.compact ? 800 : undefined))! }
+        : {}),
+      includeMetadata: true,
+    });
+  }
+
+  async searchMemory(options: SearchMemoryOptions = {}): Promise<MemorySearchResult[]> {
     const project = await this.requireProject();
     const entityType = options.entityType ? parseMemoryEntityType(options.entityType) : undefined;
     const tag = options.tag ? normalizeMemoryTag(options.tag) : undefined;
@@ -1067,10 +1394,14 @@ export class ZenithApp {
     const queryText = normalizeSearchText(query);
     const limit = Math.max(1, Math.min(options.limit ?? 50, 500));
     const tagsByEntity = groupMemoryTags(this.repository.listMemoryTags(project.id));
+    const since = options.since ? this.resolveEventSince(project.id, options.since).since : null;
     const records = this.repository.listSearchableMemoryEntities(project.id);
     const results: MemorySearchResult[] = [];
 
     for (const record of records) {
+      if (since && record.updatedAt <= since.createdAt) {
+        continue;
+      }
       if (entityType && record.entityType !== entityType) {
         continue;
       }
@@ -1090,6 +1421,7 @@ export class ZenithApp {
         title: record.title,
         snippet: memorySnippet(record, queryTokens),
         tags,
+        ...(record.lifecycle ? { lifecycle: record.lifecycle } : {}),
         score,
         updatedAt: record.updatedAt,
       });
@@ -1103,6 +1435,62 @@ export class ZenithApp {
         return a.entityId.localeCompare(b.entityId);
       })
       .slice(0, limit);
+  }
+
+  async suggestDocs(options: { task?: string } = {}): Promise<ContextDocSuggestion[]> {
+    DocsTaskSchema.parse(options.task ?? "current");
+    const context = await this.compactContext();
+    if (!context.project) {
+      return [];
+    }
+    return suggestContextDocs(context);
+  }
+
+  async listContextDocs(options: { task?: string } = {}): Promise<ContextDoc[]> {
+    DocsTaskSchema.parse(options.task ?? "current");
+    const project = await this.requireProject();
+    return this.repository.listContextDocs(project.id);
+  }
+
+  async pinContextDoc(path: string, options: { task?: string } = {}): Promise<ContextDoc> {
+    DocsTaskSchema.parse(options.task ?? "current");
+    return this.upsertContextDoc(path, "pinned");
+  }
+
+  async ignoreContextDoc(path: string, options: { task?: string } = {}): Promise<ContextDoc> {
+    DocsTaskSchema.parse(options.task ?? "current");
+    return this.upsertContextDoc(path, "ignored");
+  }
+
+  private async upsertContextDoc(path: string, status: "pinned" | "ignored"): Promise<ContextDoc> {
+    const context = await this.compactContext();
+    if (!context.project) {
+      throw new ZenithError("Project is not registered. Run `zenith init` first.", {
+        code: "project_not_registered",
+        details: { rootPath: context.git.rootPath },
+      });
+    }
+
+    const normalizedPath = normalizeDocPath(contextWorkspaceRoot(context), path);
+    const suggestion =
+      suggestContextDocs(context).find((candidate) => candidate.path === normalizedPath) ??
+      buildContextDocSuggestion(context, normalizedPath, "Manually selected context document.", "medium");
+
+    return this.repository.upsertContextDoc({
+      projectId: context.project.id,
+      scope: suggestion.scope,
+      ...(suggestion.planId ? { planId: suggestion.planId } : {}),
+      ...(suggestion.phaseId ? { phaseId: suggestion.phaseId } : {}),
+      path: suggestion.path,
+      reason: suggestion.reason,
+      summary: suggestion.summary,
+      assumptions: suggestion.assumptions,
+      confidence: suggestion.confidence,
+      status,
+      readAt: suggestion.readAt,
+      ...(suggestion.readCommit ? { readCommit: suggestion.readCommit } : {}),
+      ...(suggestion.observedMtime ? { observedMtime: suggestion.observedMtime } : {}),
+    });
   }
 
   private async computeNextForProject(project: Project, options: { staleAfterDays?: number } = {}): Promise<PlanNextResult> {
@@ -1199,8 +1587,10 @@ export class ZenithApp {
     return this.contextEngine.getContext(options);
   }
 
-  async compactContext(options: ContextOptions = {}): Promise<CompactContext> {
-    return this.contextEngine.compactContext(options);
+  async compactContext(options: ContextOptions & { budget?: number } = {}): Promise<CompactContext> {
+    const context = await this.contextEngine.compactContext(options);
+    if (!options.budget) return context;
+    return { ...context, markdown: truncateToApproxTokens(context.markdown, options.budget) };
   }
 
   async resume(): Promise<ResumeContext> {
@@ -1247,11 +1637,19 @@ export class ZenithApp {
     if (!project) {
       pushUnique(warnings, "Project is not registered. Run `zenith init` before relying on continuity memory.");
       const readiness = buildContinuityReadiness(context, 0);
+      const actionBriefing = buildActionBriefing(context, {
+        latestSession,
+        phase,
+        roadmapItem,
+        contextDocs: context.contextDocs,
+      });
       return ContinueResultSchema.parse({
         context,
         next: context.next,
         phase,
         roadmapItem,
+        contextDocs: context.contextDocs,
+        actionBriefing,
         latestSession,
         openSession,
         newSession,
@@ -1263,6 +1661,8 @@ export class ZenithApp {
           context,
           phase,
           roadmapItem,
+          contextDocs: context.contextDocs,
+          actionBriefing,
           latestSession,
           openSession,
           newSession,
@@ -1348,11 +1748,19 @@ export class ZenithApp {
     latestSession = this.repository.listRecentSessions(project.id, 1)[0] ?? latestSession;
 
     const readiness = buildContinuityReadiness(context, openSessionCount);
+    const actionBriefing = buildActionBriefing(context, {
+      latestSession,
+      phase,
+      roadmapItem,
+      contextDocs: context.contextDocs,
+    });
     return ContinueResultSchema.parse({
       context,
       next: context.next,
       phase,
       roadmapItem,
+      contextDocs: context.contextDocs,
+      actionBriefing,
       latestSession,
       openSession,
       newSession,
@@ -1364,6 +1772,8 @@ export class ZenithApp {
         context,
         phase,
         roadmapItem,
+        contextDocs: context.contextDocs,
+        actionBriefing,
         latestSession,
         openSession,
         newSession,
@@ -1377,6 +1787,7 @@ export class ZenithApp {
 
   async prompt(options: PromptOptions = {}): Promise<PromptResult> {
     const format = PromptFormatSchema.parse(options.format ?? "markdown");
+    const role = options.role === undefined ? undefined : PromptRoleSchema.parse(options.role);
     if (options.maxTokens !== undefined && (!Number.isInteger(options.maxTokens) || options.maxTokens <= 0)) {
       throw new ZenithError("--max-tokens must be a positive integer.", {
         code: "invalid_option",
@@ -1386,6 +1797,7 @@ export class ZenithApp {
 
     return renderPromptResult(await this.continueWork(), {
       format,
+      ...(role ? { role } : {}),
       ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       ...(options.includeMetadata ? { includeMetadata: true } : {}),
     });
@@ -1435,6 +1847,7 @@ export class ZenithApp {
       ...(input.consequences ? { consequences: input.consequences } : {}),
       alternatives: input.alternatives,
       relatedPlanIds: input.relatedPlanIds,
+      evidence: input.evidence.map(normalizeEvidence),
     });
   }
 
@@ -1499,6 +1912,7 @@ export class ZenithApp {
       relatedFiles: input.relatedFiles,
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       ...(input.relatedPhaseId ? { relatedPhaseId: input.relatedPhaseId } : {}),
+      evidence: input.evidence.map(normalizeEvidence),
     });
   }
 
@@ -1554,14 +1968,16 @@ export class ZenithApp {
       ...(input.relatedFiles !== undefined ? { relatedFiles: input.relatedFiles } : {}),
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       ...(input.relatedPhaseId ? { relatedPhaseId: input.relatedPhaseId } : {}),
+      ...(input.evidence !== undefined ? { evidence: input.evidence.map(normalizeEvidence) } : {}),
     });
   }
 
-  async closeFinding(findingId: string): Promise<Finding> {
+  async closeFinding(findingId: string, evidence: Evidence[] = []): Promise<Finding> {
     const project = await this.requireProject();
     this.requireProjectFinding(findingId, project.id);
+    requireEvidenceForAction(evidence, "finding close");
 
-    return this.repository.closeFinding(findingId);
+    return this.repository.closeFinding(findingId, evidence.map(normalizeEvidence));
   }
 
   async startSession(rawInput: unknown): Promise<Session> {
@@ -1578,6 +1994,7 @@ export class ZenithApp {
       changedFiles: input.changedFiles ?? git.changedFiles,
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       nextSteps: input.nextSteps,
+      evidence: input.evidence.map(normalizeEvidence),
     });
   }
 
@@ -1602,6 +2019,7 @@ export class ZenithApp {
       ...(input.nextSteps !== undefined ? { nextSteps: input.nextSteps } : {}),
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       ...(input.branch ? { branch: input.branch } : {}),
+      ...(input.evidence !== undefined ? { evidence: input.evidence.map(normalizeEvidence) } : {}),
     });
   }
 
@@ -1619,6 +2037,7 @@ export class ZenithApp {
       changedFiles: input.changedFiles ?? git.changedFiles,
       ...(input.nextSteps !== undefined ? { nextSteps: input.nextSteps } : {}),
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
+      evidence: input.evidence.map(normalizeEvidence),
     });
   }
 
@@ -1637,12 +2056,35 @@ export class ZenithApp {
       changedFiles: input.changedFiles ?? git.changedFiles,
       relatedPlanId: input.relatedPlanId,
       nextSteps: input.nextSteps,
+      evidence: input.evidence.map(normalizeEvidence),
     });
   }
 
   async checkpoint(rawInput: unknown): Promise<Session> {
     const input = CheckpointInputSchema.parse(rawInput);
     return this.summarizeSession(input);
+  }
+
+  async checkpointFromGit(options: { save?: boolean; summary?: string; nextSteps?: string[] } = {}): Promise<CheckpointFromGitResult> {
+    const context = await this.compactContext();
+    const git = await this.git.inspect(this.cwd);
+    const draft = buildGitCheckpointDraft(context, git, options);
+
+    if (!options.save) {
+      return CheckpointFromGitResultSchema.parse({ kind: "draft", draft });
+    }
+
+    requireEvidenceForAction(draft.evidence, "session checkpoint --from-git --save");
+    const session = await this.summarizeSession({
+      summary: draft.summary,
+      changedFiles: draft.changedFiles,
+      nextSteps: draft.nextSteps,
+      ...(draft.relatedPlanId ? { relatedPlanId: draft.relatedPlanId } : {}),
+      ...(draft.branch ? { branch: draft.branch } : {}),
+      evidence: draft.evidence,
+    });
+
+    return CheckpointFromGitResultSchema.parse({ kind: "session", session, draft });
   }
 
   async note(rawInput: unknown): Promise<Session> {
@@ -1653,6 +2095,7 @@ export class ZenithApp {
       nextSteps: input.nextSteps,
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       ...(input.branch ? { branch: input.branch } : {}),
+      evidence: input.evidence.map(normalizeEvidence),
     });
   }
 
@@ -1661,11 +2104,50 @@ export class ZenithApp {
     return this.recordDecision(input);
   }
 
+  async ready(rawInput: unknown): Promise<ReadyResult> {
+    const input = ReadyInputSchema.parse(rawInput);
+    const project = await this.requireProject();
+    const { plan, phase } = await this.resolvePhaseForMutation(
+      {
+        ...(input.planId ? { planId: input.planId } : {}),
+        ...(input.phaseId ? { phaseId: input.phaseId } : {}),
+      },
+      {
+        commandName: "ready",
+        explicitCommand: (candidatePlan, candidatePhase) => `zenith plan ready --plan ${candidatePlan.id} --phase ${candidatePhase.id}`,
+      },
+    );
+    requireEvidenceForAction(input.evidence, "ready");
+    const evidence = input.evidence;
+
+    await this.repository.updatePhase(plan.id, { phaseId: phase.id }, {
+      status: "needs_review",
+      evidence: evidence.map(normalizeEvidence),
+    });
+    const stage = await this.repository.setAgentStage({
+      projectId: project.id,
+      planId: plan.id,
+      phaseId: phase.id,
+      stage: "review",
+      role: input.role ?? "reviewer",
+      note: "Phase marked needs_review by zenith plan ready.",
+    });
+    const next = await this.computeNextForProject(project);
+    const phaseDetail = await this.showPhase(phase.id);
+
+    return ReadyResultSchema.parse({
+      phase: phaseDetail,
+      stage,
+      next,
+    });
+  }
+
   async done(rawInput: unknown): Promise<DoneResult> {
     const input = DoneInputSchema.parse(rawInput);
 
     if (input.findingId) {
-      return DoneResultSchema.parse({ kind: "finding", finding: await this.closeFinding(input.findingId) });
+      requireEvidenceForAction(input.evidence, "done finding");
+      return DoneResultSchema.parse({ kind: "finding", finding: await this.closeFinding(input.findingId, input.evidence) });
     }
 
     const { plan, phase } = await this.resolvePhaseForMutation(
@@ -1675,10 +2157,11 @@ export class ZenithApp {
       },
       {
         commandName: "done",
-        explicitCommand: (candidatePlan, candidatePhase) => `zenith done --plan ${candidatePlan.id} --phase ${candidatePhase.id}`,
+        explicitCommand: (candidatePlan, candidatePhase) => `zenith plan done --plan ${candidatePlan.id} --phase ${candidatePhase.id}`,
       },
     );
 
+    requireEvidenceForAction(input.evidence, "done");
     const result = await this.advancePlan({
       planId: plan.id,
       completedPhaseId: phase.id,
@@ -1700,10 +2183,11 @@ export class ZenithApp {
         {
           commandName: "blocked",
           explicitCommand: (candidatePlan, candidatePhase) =>
-            `zenith blocked --mark-phase ${candidatePhase.id} --plan ${candidatePlan.id}`,
+            `zenith plan block --phase ${candidatePhase.id} --plan ${candidatePlan.id}`,
         },
       );
-      const evidence = input.evidence.length > 0 ? input.evidence : [{ kind: "note" as const, value: "Marked blocked by zenith blocked." }];
+      requireEvidenceForAction(input.evidence, "blocked --mark-phase");
+      const evidence = input.evidence;
       const result = await this.advancePlan({
         planId: plan.id,
         completedPhaseId: phase.id,
@@ -1722,6 +2206,7 @@ export class ZenithApp {
       relatedFiles: input.relatedFiles,
       ...(input.relatedPlanId ? { relatedPlanId: input.relatedPlanId } : {}),
       ...(input.relatedPhaseId ? { relatedPhaseId: input.relatedPhaseId } : {}),
+      evidence: input.evidence.map(normalizeEvidence),
     });
 
     return BlockedResultSchema.parse({ kind: "finding", finding });
@@ -1840,7 +2325,7 @@ export class ZenithApp {
       const plan = this.repository.getPlanById(candidate.planId);
       if (!plan) return [];
       const phase = findCurrentPhase(plan);
-      const suggestions = candidate.roadmapId ? [`zenith focus set ${candidate.roadmapId}`] : [];
+      const suggestions = candidate.roadmapId ? [`zenith agent focus set ${candidate.roadmapId}`] : [];
       if (phase) {
         suggestions.push(explicitCommand(plan, phase));
       }
@@ -1878,6 +2363,8 @@ export class ZenithApp {
     } else if (entityType === "session") {
       const session = this.repository.getSessionById(entityId);
       exists = Boolean(session && session.projectId === projectId);
+    } else if (entityType === "context_doc") {
+      exists = this.repository.listContextDocs(projectId).some((doc) => doc.id === entityId);
     }
 
     if (!exists) {
@@ -1996,14 +2483,28 @@ export class ZenithApp {
 
 function normalizeEvidence(evidence: {
   id?: string | undefined;
-  kind: "note" | "commit" | "file" | "pr" | "command" | "link";
+  kind: "note" | "commit" | "file" | "pr" | "issue" | "command" | "test" | "link" | "adr" | "branch";
   value: string;
+  path?: string | undefined;
+  line?: number | undefined;
+  endLine?: number | undefined;
+  label?: string | undefined;
+  checkedAt?: string | undefined;
+  stale?: boolean | undefined;
+  supersededBy?: string | undefined;
   createdAt?: string | undefined;
 }) {
   return {
     id: evidence.id ?? createId("ev"),
     kind: evidence.kind,
     value: evidence.value,
+    ...(evidence.path ? { path: evidence.path } : {}),
+    ...(evidence.line ? { line: evidence.line } : {}),
+    ...(evidence.endLine ? { endLine: evidence.endLine } : {}),
+    ...(evidence.label ? { label: evidence.label } : {}),
+    ...(evidence.checkedAt ? { checkedAt: evidence.checkedAt } : {}),
+    ...(evidence.stale !== undefined ? { stale: evidence.stale } : {}),
+    ...(evidence.supersededBy ? { supersededBy: evidence.supersededBy } : {}),
     createdAt: evidence.createdAt ?? nowIso(),
   };
 }
@@ -2112,6 +2613,260 @@ function buildContinuityReadiness(context: CompactContext, openSessionCount: num
   };
 }
 
+function buildActionBriefing(
+  context: CompactContext,
+  input: {
+    latestSession: Session | null;
+    phase: PhaseDetail | null;
+    roadmapItem: RoadmapItem | null;
+    contextDocs: ContextDoc[];
+  },
+): ActionBriefing {
+  const goal =
+    context.activePlan?.title ??
+    input.roadmapItem?.title ??
+    context.currentBrief?.summary ??
+    (context.project ? "Select executable Zenith work" : "Register this project in Zenith");
+  const remainingWork =
+    context.activePlan
+      ? [
+          ...(context.currentPhase ? [`Current phase: ${context.currentPhase.title} (${context.currentPhase.status})`] : []),
+          ...(input.phase?.phase.acceptanceCriteria.slice(0, 6).map((item) => `Acceptance: ${item}`) ?? []),
+        ]
+      : context.recentSessions.flatMap((session) => session.nextSteps).slice(0, 6);
+  const blockers = [
+    ...context.openFindings
+      .filter((finding) => finding.severity === "critical" || finding.severity === "high")
+      .map((finding) => `${finding.severity} finding: ${finding.title}`),
+    ...(context.next.kind === "blocked_dependency" ? [`Blocked: ${context.next.reason}`] : []),
+    ...(context.next.kind === "ambiguous_focus" ? ["Roadmap focus is ambiguous for this worktree."] : []),
+  ];
+  const freshness = [
+    ...(context.next.staleness
+      ? [
+          `Next step updated ${context.next.staleness.ageDays} day(s) ago (${context.next.staleness.stale ? "stale" : "fresh"}).`,
+        ]
+      : ["Next step freshness: not measured."]),
+    context.git.headCommit ? `Linked to HEAD ${shortCommit(context.git.headCommit)}${context.git.headSubject ? ` (${context.git.headSubject})` : ""}.` : "No HEAD commit detected.",
+    context.git.dirty ? `Working tree dirty with ${context.git.changedFiles.length} changed file(s).` : "Working tree clean.",
+    ...contextDocFreshness(input.contextDocs, context),
+  ];
+  const suggestedCommands = suggestedCommandsForNext(context);
+
+  return ActionBriefingSchema.parse({
+    goal,
+    lastSession: input.latestSession ? truncateText(input.latestSession.summary ?? input.latestSession.id, 160) : null,
+    remainingWork,
+    nextAction: context.next.recommendation ?? "No next action available.",
+    blockers,
+    freshness,
+    suggestedCommands,
+  });
+}
+
+function contextDocFreshness(docs: ContextDoc[], context: CompactContext): string[] {
+  const root = contextWorkspaceRoot(context);
+  return docs
+    .filter((doc) => doc.status === "pinned")
+    .slice(0, 5)
+    .map((doc) => {
+      const absolutePath = resolve(root, doc.path);
+      if (!existsSync(absolutePath)) {
+        return `Context doc missing: ${doc.path}`;
+      }
+      const stat = statSync(absolutePath);
+      const mtime = stat.mtime.toISOString();
+      if (doc.observedMtime && doc.observedMtime !== mtime) {
+        return `Context doc may be stale: ${doc.path}`;
+      }
+      if (doc.readCommit && context.git.headCommit && doc.readCommit !== context.git.headCommit) {
+        return `Context doc not confirmed since ${shortCommit(context.git.headCommit)}: ${doc.path}`;
+      }
+      return `Context doc fresh: ${doc.path}`;
+    });
+}
+
+function suggestedCommandsForNext(context: CompactContext): string[] {
+  if (!context.project) {
+    return ["zenith init"];
+  }
+  if (context.next.kind === "implement_phase" && context.next.phaseId) {
+    return [
+      `zenith plan phase show ${context.next.phaseId} --json`,
+      "zenith handoff --to implementer --compact",
+      "zenith plan ready --evidence \"Verification passed\"",
+    ];
+  }
+  if (context.next.kind === "review_phase" && context.next.phaseId) {
+    return [
+      `zenith plan phase show ${context.next.phaseId} --json`,
+      "zenith handoff --to reviewer --compact",
+      `zenith plan done --phase ${context.next.phaseId} --evidence \"Review passed\"`,
+    ];
+  }
+  if (context.next.kind === "create_plan") {
+    return ["zenith plan next --json", "zenith roadmap create-plan <roadmap-id> --json --input -"];
+  }
+  if (context.next.kind === "ambiguous_focus") {
+    return ["zenith agent focus show --json", "zenith agent focus set <roadmap-id>"];
+  }
+  if (context.next.kind === "blocked_dependency" || context.next.kind === "blocking_finding") {
+    return ["zenith finding list --status open --json", "zenith finding record --json --input -"];
+  }
+  return ["zenith plan next --json", "zenith session checkpoint --from-git"];
+}
+
+function buildGitCheckpointDraft(
+  context: CompactContext,
+  git: GitSummary,
+  options: { summary?: string; nextSteps?: string[] },
+) {
+  const changedFiles = uniqueStrings([...git.changedFiles, ...git.changedSinceBase]);
+  const summary =
+    options.summary ??
+    [
+      `Git checkpoint on ${git.branch ?? "detached HEAD"}`,
+      git.headCommit ? `at ${shortCommit(git.headCommit)}` : null,
+      git.headSubject ? `(${git.headSubject})` : null,
+      changedFiles.length > 0 ? `with ${changedFiles.length} changed file(s)` : "with no changed files",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  const evidence: Evidence[] = [
+    ...(git.headCommit ? [{ kind: "commit" as const, value: git.headCommit }] : []),
+    { kind: "command" as const, value: "zenith session checkpoint --from-git" },
+    ...(git.baseBranch ? [{ kind: "note" as const, value: `Base branch: ${git.baseBranch}` }] : []),
+    ...changedFiles.slice(0, 8).map((file) => ({ kind: "file" as const, value: file })),
+  ];
+  const relatedPlanId = context.next.planId ?? context.activePlan?.id;
+
+  return {
+    summary,
+    changedFiles,
+    nextSteps: options.nextSteps && options.nextSteps.length > 0 ? options.nextSteps : nextStepList(context.next),
+    ...(relatedPlanId ? { relatedPlanId } : {}),
+    ...(git.branch ? { branch: git.branch } : {}),
+    evidence,
+    git,
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function suggestContextDocs(context: CompactContext): ContextDocSuggestion[] {
+  const root = contextWorkspaceRoot(context);
+  const candidates: Array<{ path: string; reason: string; confidence: "low" | "medium" | "high" }> = [
+    { path: "AGENTS.md", reason: "Repository-level agent instructions define required workflow.", confidence: "high" },
+    { path: "README.md", reason: "Project overview and supported user-facing commands.", confidence: "high" },
+    { path: "docs/INDEX.md", reason: "Documentation index may point to subsystem docs.", confidence: "medium" },
+  ];
+
+  if (context.activePlan || context.currentPhase) {
+    candidates.push({ path: "docs/reference.md", reason: "Current executable work changes CLI/API behavior.", confidence: "high" });
+  }
+
+  for (const file of uniqueStrings([...context.git.changedFiles, ...context.git.changedSinceBase])) {
+    if (file.endsWith(".md")) {
+      candidates.push({ path: file, reason: "Documentation file is touched by current git state.", confidence: "high" });
+    }
+    if (file.startsWith("src/storage/")) {
+      candidates.push({ path: "docs/storage-policy.md", reason: "Storage changes should follow local persistence policy.", confidence: "high" });
+    }
+    if (file.startsWith("src/cli/") || file.startsWith("src/app/")) {
+      candidates.push({ path: "docs/reference.md", reason: "CLI or application behavior is changing.", confidence: "high" });
+    }
+    if (file.startsWith("src/agents/") || file.includes(".codex/skills")) {
+      candidates.push({ path: "AGENTS.md", reason: "Agent instruction templates are changing.", confidence: "medium" });
+    }
+  }
+
+  const ignored = new Set(context.contextDocs.filter((doc) => doc.status === "ignored").map((doc) => doc.path));
+  const seen = new Set<string>();
+  const suggestions: ContextDocSuggestion[] = [];
+  for (const candidate of candidates) {
+    const normalizedPath = normalizeDocPath(root, candidate.path);
+    if (seen.has(normalizedPath) || ignored.has(normalizedPath)) {
+      continue;
+    }
+    seen.add(normalizedPath);
+    if (!existsSync(resolve(root, normalizedPath))) {
+      continue;
+    }
+    suggestions.push(buildContextDocSuggestion(context, normalizedPath, candidate.reason, candidate.confidence));
+  }
+
+  return suggestions;
+}
+
+function buildContextDocSuggestion(
+  context: CompactContext,
+  docPath: string,
+  reason: string,
+  confidence: "low" | "medium" | "high",
+): ContextDocSuggestion {
+  const scope = currentDocScope(context);
+  const absolutePath = resolve(contextWorkspaceRoot(context), docPath);
+  const stat = existsSync(absolutePath) ? statSync(absolutePath) : null;
+  const observedMtime = stat ? stat.mtime.toISOString() : undefined;
+  const existing = context.contextDocs.find((doc) => doc.path === docPath && doc.status === "pinned");
+  const stale = Boolean(
+    (existing?.readCommit && context.git.headCommit && existing.readCommit !== context.git.headCommit) ||
+      (existing?.observedMtime && observedMtime && existing.observedMtime !== observedMtime),
+  );
+
+  return ContextDocSuggestionSchema.parse({
+    ...scope,
+    path: docPath,
+    reason,
+    summary: summarizeDocFile(absolutePath),
+    assumptions: [`Assumed relevant to ${scope.scope} context.`],
+    confidence,
+    readAt: nowIso(),
+    ...(context.git.headCommit ? { readCommit: context.git.headCommit } : {}),
+    ...(observedMtime ? { observedMtime } : {}),
+    stale,
+  });
+}
+
+function currentDocScope(context: CompactContext): { scope: "project" | "plan" | "phase"; planId?: string; phaseId?: string } {
+  if (context.currentPhase && context.activePlan) {
+    return { scope: "phase", planId: context.activePlan.id, phaseId: context.currentPhase.id };
+  }
+  if (context.activePlan) {
+    return { scope: "plan", planId: context.activePlan.id };
+  }
+  return { scope: "project" };
+}
+
+function normalizeDocPath(root: string, docPath: string): string {
+  const trimmed = docPath.trim();
+  const normalized = trimmed.startsWith(root) ? relative(root, trimmed) : trimmed;
+  return normalized.replace(/^\.\//, "");
+}
+
+function contextWorkspaceRoot(context: CompactContext): string {
+  return context.git.worktreeRoot ?? context.git.rootPath;
+}
+
+function summarizeDocFile(absolutePath: string): string {
+  if (!existsSync(absolutePath)) {
+    return `Document not found: ${basename(absolutePath)}`;
+  }
+
+  const ext = extname(absolutePath).toLowerCase();
+  const raw = readFileSync(absolutePath, "utf8").slice(0, 4000);
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const heading = lines.find((line) => line.startsWith("#"));
+  const firstText = lines.find((line) => !line.startsWith("<!--") && !line.startsWith("#"));
+  const summary = heading ?? firstText ?? `${ext || "text"} document`;
+  return truncateText(summary.replace(/^#+\s*/, ""), 180);
+}
+
 function buildContextRoiReport(
   records: SearchableMemoryEntity[],
   eventSummary: EventWindowSummary,
@@ -2151,6 +2906,17 @@ function estimateTokens(text: string): number {
   const normalized = text.trim();
   if (normalized.length === 0) return 0;
   return Math.ceil(normalized.length / 4);
+}
+
+function shortCommit(commit: string): string {
+  return commit.slice(0, 12);
+}
+
+function formatCommit(commit: string | undefined, subject: string | undefined): string {
+  if (!commit) {
+    return "none";
+  }
+  return subject ? `${shortCommit(commit)} (${subject})` : shortCommit(commit);
 }
 
 function continuitySignals(
@@ -2215,6 +2981,8 @@ function renderContinueMarkdown(input: {
   context: CompactContext;
   phase: PhaseDetail | null;
   roadmapItem: RoadmapItem | null;
+  contextDocs: ContextDoc[];
+  actionBriefing: ActionBriefing;
   latestSession: Session | null;
   openSession: Session | null;
   newSession: Session | null;
@@ -2226,11 +2994,51 @@ function renderContinueMarkdown(input: {
   const lines = [
     "# Zenith Continue",
     "",
-    "## Readiness",
-    `- Status: ${input.readiness.status}`,
-    `- Score: ${input.readiness.score}/100`,
-    `- Strengths: ${formatList(input.readiness.strengths, 5)}`,
-    `- Gaps: ${formatList(input.readiness.gaps, 5)}`,
+    "## Where We Are",
+    `- Goal: ${input.actionBriefing.goal}`,
+    `- Active plan: ${input.context.activePlan ? input.context.activePlan.title : "none"}`,
+    `- Current phase: ${input.context.currentPhase ? `${input.context.currentPhase.title} (${input.context.currentPhase.status})` : "none"}`,
+    `- Readiness: ${input.readiness.status} (${input.readiness.score}/100)`,
+    "",
+    "## What Changed Last",
+    `- Latest session: ${input.actionBriefing.lastSession ?? "none"}`,
+    `- Changed files: ${formatList(input.context.git.changedFiles, 8)}`,
+    `- Last commit: ${formatCommit(input.context.git.headCommit, input.context.git.headSubject)}`,
+    "",
+    "## What Remains",
+    ...(input.actionBriefing.remainingWork.length > 0 ? input.actionBriefing.remainingWork.slice(0, 8).map((item) => `- ${item}`) : ["- none"]),
+    "",
+    "## Next Action",
+    `- ${input.actionBriefing.nextAction}`,
+    `- Reason: ${input.context.next.reason}`,
+    `- Kind: ${input.context.next.kind ?? "session_next_step"}`,
+    ...(input.actionBriefing.suggestedCommands.length > 0
+      ? ["- Suggested commands:", ...input.actionBriefing.suggestedCommands.slice(0, 5).map((command) => `  - ${command}`)]
+      : []),
+    "",
+    "## Risk Radar",
+    ...(input.actionBriefing.blockers.length > 0 ? input.actionBriefing.blockers.slice(0, 8).map((item) => `- ${item}`) : ["- none"]),
+    ...(input.warnings.length > 0 ? input.warnings.slice(0, 8).map((warning) => `- warning: ${warning}`) : []),
+    "",
+    "## Freshness",
+    ...(input.actionBriefing.freshness.length > 0 ? input.actionBriefing.freshness.slice(0, 8).map((item) => `- ${item}`) : ["- no freshness signals"]),
+    "",
+    "## Worktree",
+    `- Repo root: ${input.context.git.rootPath}`,
+    `- Worktree: ${input.context.git.worktreeRoot ?? input.context.git.rootPath}`,
+    `- Branch: ${input.context.git.branch ?? "none"}`,
+    `- Base branch: ${input.context.git.baseBranch ?? "none"}`,
+    `- Dirty: ${input.context.git.dirty ? "yes" : "no"}`,
+    `- Changed since base: ${formatList(input.context.git.changedSinceBase, 8)}`,
+    "",
+    "## Details",
+    `- Phase detail: ${input.phase ? `${input.phase.phase.title} (${input.phase.phase.status})` : "none"}`,
+    `- Roadmap item: ${input.roadmapItem ? `${input.roadmapItem.title} (${input.roadmapItem.status})` : "none"}`,
+    `- Latest: ${input.latestSession ? truncateText(input.latestSession.summary ?? input.latestSession.id, 160) : "none"}`,
+    `- Open: ${input.openSession ? input.openSession.id : "none"}`,
+    `- New: ${input.newSession ? input.newSession.id : "none"}`,
+    `- Closed: ${input.closedSession ? input.closedSession.id : "none"}`,
+    `- Context docs: ${formatList(input.contextDocs.filter((doc) => doc.status === "pinned").map((doc) => doc.path), 6)}`,
     "",
     "## ROI",
     `- Source events: ${input.roi.sourceEvents}`,
@@ -2238,39 +3046,7 @@ function renderContinueMarkdown(input: {
     `- Compact tokens: ${input.roi.compactTokens}`,
     `- Compression ratio: ${input.roi.compressionRatio}x`,
     `- Signals: ${formatList(input.roi.continuitySignals, 8)}`,
-    "",
-    "## Next",
-    `- Recommendation: ${input.context.next.recommendation ?? "none"}`,
-    `- Reason: ${input.context.next.reason}`,
-    `- Kind: ${input.context.next.kind ?? "session_next_step"}`,
-    "",
-    "## Worktree",
-    `- Branch: ${input.context.git.branch ?? "none"}`,
-    `- Dirty: ${input.context.git.dirty ? "yes" : "no"}`,
-    `- Changed files: ${formatList(input.context.git.changedFiles, 8)}`,
-    "",
-    "## Plan",
-    `- Active plan: ${input.context.activePlan ? input.context.activePlan.title : "none"}`,
-    `- Current phase: ${input.context.currentPhase ? input.context.currentPhase.title : "none"}`,
-    `- Phase detail: ${input.phase ? `${input.phase.phase.title} (${input.phase.phase.status})` : "none"}`,
-    `- Roadmap item: ${input.roadmapItem ? `${input.roadmapItem.title} (${input.roadmapItem.status})` : "none"}`,
-    "",
-    "## Sessions",
-    `- Latest: ${input.latestSession ? truncateText(input.latestSession.summary ?? input.latestSession.id, 160) : "none"}`,
-    `- Open: ${input.openSession ? input.openSession.id : "none"}`,
-    `- New: ${input.newSession ? input.newSession.id : "none"}`,
-    `- Closed: ${input.closedSession ? input.closedSession.id : "none"}`,
-    "",
-    "## Warnings",
   ];
-
-  if (input.warnings.length === 0) {
-    lines.push("- none");
-  } else {
-    for (const warning of input.warnings.slice(0, 8)) {
-      lines.push(`- ${warning}`);
-    }
-  }
 
   return lines.join("\n");
 }
@@ -2284,9 +3060,9 @@ type PromptSectionDraft = {
 
 function renderPromptResult(
   continuation: ContinueResult,
-  options: { format: PromptFormat; maxTokens?: number; includeMetadata?: boolean },
+  options: { format: PromptFormat; role?: PromptRole; maxTokens?: number; includeMetadata?: boolean },
 ): PromptResult {
-  const sections = buildPromptSections(continuation, options.format, Boolean(options.includeMetadata));
+  const sections = buildPromptSections(continuation, options.format, options.role, Boolean(options.includeMetadata));
   const included = selectPromptSections(sections, options.maxTokens);
   const includedIds = new Set(included.map((section) => section.id));
   const content = included.map((section) => section.body).join("\n\n");
@@ -2294,6 +3070,7 @@ function renderPromptResult(
 
   return PromptResultSchema.parse({
     format: options.format,
+    ...(options.role ? { role: options.role } : {}),
     content,
     estimatedTokens,
     ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
@@ -2319,17 +3096,23 @@ function renderPromptResult(
   });
 }
 
-function buildPromptSections(continuation: ContinueResult, format: PromptFormat, includeMetadata: boolean): PromptSectionDraft[] {
+function buildPromptSections(
+  continuation: ContinueResult,
+  format: PromptFormat,
+  role: PromptRole | undefined,
+  includeMetadata: boolean,
+): PromptSectionDraft[] {
   const context = continuation.context;
   const intro = promptIntro(format);
   const sections: PromptSectionDraft[] = [
     {
       id: "next",
       title: "Next Step",
-      priority: 100,
+      priority: rolePriority(role, "next", 100),
       body: [
         `# Zenith Prompt (${format})`,
         intro,
+        ...(role ? [`Role: ${role}`, ""] : [""]),
         "",
         "## Next Step",
         `- Recommendation: ${context.next.recommendation ?? "none"}`,
@@ -2340,7 +3123,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     {
       id: "phase",
       title: "Phase",
-      priority: 90,
+      priority: rolePriority(role, "phase", 90),
       body: [
         "## Phase",
         `- Active plan: ${context.activePlan ? context.activePlan.title : "none"}`,
@@ -2354,7 +3137,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     {
       id: "readiness",
       title: "Readiness",
-      priority: 80,
+      priority: rolePriority(role, "readiness", 80),
       body: [
         "## Readiness",
         `- Status: ${continuation.readiness.status}`,
@@ -2366,7 +3149,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     {
       id: "warnings",
       title: "Warnings",
-      priority: 75,
+      priority: rolePriority(role, "warnings", 75),
       body: [
         "## Warnings",
         ...(continuation.warnings.length > 0 ? continuation.warnings.slice(0, 8).map((warning) => `- ${warning}`) : ["- none"]),
@@ -2375,7 +3158,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     {
       id: "worktree",
       title: "Worktree",
-      priority: 65,
+      priority: rolePriority(role, "worktree", 65),
       body: [
         "## Worktree",
         `- Branch: ${context.git.branch ?? "none"}`,
@@ -2386,7 +3169,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     {
       id: "roi",
       title: "ROI",
-      priority: 40,
+      priority: rolePriority(role, "roi", 40),
       body: [
         "## ROI",
         `- Source events: ${continuation.roi.sourceEvents}`,
@@ -2399,7 +3182,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     {
       id: "recent-memory",
       title: "Recent Memory",
-      priority: 35,
+      priority: rolePriority(role, "recent-memory", 35),
       body: [
         "## Recent Memory",
         `- Latest session: ${continuation.latestSession ? truncateText(continuation.latestSession.summary ?? continuation.latestSession.id, 160) : "none"}`,
@@ -2408,9 +3191,20 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
       ].join("\n"),
     },
     {
+      id: "context-docs",
+      title: "Context Docs",
+      priority: rolePriority(role, "context-docs", 30),
+      body: [
+        "## Context Docs",
+        ...(continuation.contextDocs.length > 0
+          ? continuation.contextDocs.slice(0, 8).map((doc) => `- ${doc.status}: ${doc.path} (${doc.confidence}) - ${doc.reason}`)
+          : ["- none"]),
+      ].join("\n"),
+    },
+    {
       id: "compact-context",
       title: "Compact Context",
-      priority: 20,
+      priority: rolePriority(role, "compact-context", 20),
       body: ["## Compact Context", context.markdown].join("\n"),
     },
   ];
@@ -2419,7 +3213,7 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
     sections.push({
       id: "metadata",
       title: "Metadata",
-      priority: 10,
+      priority: rolePriority(role, "metadata", 10),
       body: [
         "## Metadata",
         `- Project ID: ${context.project?.id ?? "none"}`,
@@ -2432,6 +3226,46 @@ function buildPromptSections(continuation: ContinueResult, format: PromptFormat,
   }
 
   return sections;
+}
+
+function rolePriority(role: PromptRole | undefined, sectionId: string, base: number): number {
+  if (!role) {
+    return base;
+  }
+
+  const boosts: Record<PromptRole, Record<string, number>> = {
+    planner: {
+      next: 25,
+      readiness: 20,
+      "recent-memory": 20,
+      "context-docs": 15,
+      "compact-context": 10,
+    },
+    implementer: {
+      phase: 35,
+      next: 25,
+      "context-docs": 20,
+      worktree: 15,
+      warnings: 10,
+    },
+    reviewer: {
+      next: 35,
+      phase: 30,
+      "recent-memory": 25,
+      worktree: 20,
+      warnings: 20,
+    },
+    handoff: {
+      next: 30,
+      phase: 25,
+      readiness: 25,
+      "recent-memory": 20,
+      "context-docs": 20,
+      worktree: 15,
+    },
+  };
+
+  return base + (boosts[role][sectionId] ?? 0);
 }
 
 function promptIntro(format: PromptFormat): string {
@@ -2474,6 +3308,63 @@ function pushUnique(values: string[], value: string): void {
   }
 }
 
+function parseTtlMs(value: string): number {
+  const match = value.trim().match(/^(\d+)(ms|s|m|h|d)?$/);
+  if (!match) {
+    throw new ZenithError("TTL must be a positive duration such as 30m, 2h, or 1d.", {
+      code: "invalid_ttl",
+      details: { ttl: value },
+    });
+  }
+  const amount = Number(match[1]);
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new ZenithError("TTL must be positive.", {
+      code: "invalid_ttl",
+      details: { ttl: value },
+    });
+  }
+  const unit = match[2] ?? "ms";
+  const multipliers: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return amount * multipliers[unit]!;
+}
+
+function buildDoctorReport(generatedAt: string, issues: DoctorIssue[]): DoctorReport {
+  const summary = {
+    errors: issues.filter((issue) => issue.severity === "error").length,
+    warnings: issues.filter((issue) => issue.severity === "warning").length,
+    info: issues.filter((issue) => issue.severity === "info").length,
+  };
+  const markdown = [
+    "# Zenith Doctor",
+    "",
+    `- Status: ${summary.errors === 0 ? "ok" : "attention"}`,
+    `- Errors: ${summary.errors}`,
+    `- Warnings: ${summary.warnings}`,
+    `- Info: ${summary.info}`,
+    "",
+    "## Issues",
+    ...(issues.length === 0
+      ? ["- none"]
+      : issues.map((issue) => `- ${issue.severity}: ${issue.title} (${issue.id}) - ${issue.detail}`)),
+  ].join("\n");
+  return DoctorReportSchema.parse({
+    generatedAt,
+    ok: summary.errors === 0,
+    summary,
+    issues,
+    markdown,
+  });
+}
+
+function hasReservedTagPrefix(tag: string): boolean {
+  return /^(area|epic|risk|service):[a-z0-9][a-z0-9-]*$/.test(tag);
+}
+
+function truncateToApproxTokens(value: string, maxTokens: number): string {
+  const maxChars = Math.max(1, maxTokens * 4);
+  return value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars - 14))}\n[truncated]`;
+}
+
 function formatList(values: string[], max: number): string {
   if (values.length === 0) return "none";
   const visible = values.slice(0, max);
@@ -2497,13 +3388,26 @@ function normalizeMemoryTags(tags: string[]): string[] {
 }
 
 function normalizeMemoryTag(raw: string): string {
-  const tag = raw
-    .trim()
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const lower = raw.trim().toLowerCase();
+  const reserved = lower.match(/^(area|epic|risk|service):(.+)$/);
+  if (reserved) {
+    const suffix = slugifyTag(reserved[2]!);
+    const tag = `${reserved[1]}:${suffix}`;
+    if (!/^(area|epic|risk|service):[a-z0-9][a-z0-9-]*$/.test(tag)) {
+      throw new ZenithError("Reserved memory tag prefixes require a slug value.", {
+        code: "invalid_memory_tag",
+        details: { tag: raw },
+      });
+    }
+    return tag;
+  }
+  if (lower.includes(":")) {
+    throw new ZenithError("Only reserved tag prefixes may use ':'.", {
+      code: "invalid_memory_tag",
+      details: { tag: raw },
+    });
+  }
+  const tag = slugifyTag(raw);
 
   if (!/^[a-z0-9][a-z0-9-]*$/.test(tag)) {
     throw new ZenithError("Memory tag must contain at least one ASCII letter or number.", {
@@ -2513,6 +3417,16 @@ function normalizeMemoryTag(raw: string): string {
   }
 
   return tag;
+}
+
+function slugifyTag(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function groupMemoryTags(tags: MemoryTag[]): Map<string, string[]> {

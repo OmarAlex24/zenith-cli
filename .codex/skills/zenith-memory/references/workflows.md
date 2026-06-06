@@ -9,11 +9,11 @@ Run:
 
 ```bash
 zenith continue
-zenith prompt --format codex --max-tokens 800
+zenith handoff --to implementer --compact
 zenith demo show continuity
 ```
 
-`zenith continue`, `zenith prompt`, and `zenith demo` are read-only by default. Use `continue --start-session`, `--close-open-session`, or `--auto-capture` only when explicit session mutation is intended.
+`zenith continue`, `zenith agent prompt`, and `zenith demo` are read-only by default. Use `continue --start-session`, `--close-open-session`, or `--auto-capture` only when explicit session mutation is intended.
 
 Lower-level equivalent commands:
 
@@ -25,7 +25,7 @@ zenith plan next --json
 If `plan next` returns a `phaseId`, inspect it:
 
 ```bash
-zenith phase show phase_id --json
+zenith plan phase show phase_id --json
 ```
 
 Use that phase as the implementation target. If the user's prompt names a different target than `plan next`, stop and ask for confirmation.
@@ -48,14 +48,14 @@ If the project is not registered, ask whether to run `zenith init`.
 Use these read-only commands when choosing or auditing the next work:
 
 ```bash
-zenith standup                 # daily digest; accepts --days <n>
-zenith roi                     # context compression and continuity signals
-zenith roi --since <cursor>    # event id or ISO timestamp
-zenith diff                    # changes since latest ended session
-zenith diff --since <cursor>   # event id or ISO timestamp
-zenith drift                   # roadmap-vs-active-plan alignment
-zenith adherence               # velocity/adherence; accepts --days <n>
-zenith activity                # 53-week activity heatmap from grouped event counts
+zenith report standup                 # daily digest; accepts --days <n>
+zenith report roi                     # context compression and continuity signals
+zenith report roi --since <cursor>    # event id or ISO timestamp
+zenith report diff                    # changes since latest ended session
+zenith report diff --since <cursor>   # event id or ISO timestamp
+zenith report drift                   # roadmap-vs-active-plan alignment
+zenith report adherence               # velocity/adherence; accepts --days <n>
+zenith report activity                # 53-week activity heatmap from grouped event counts
 zenith plan next --json --stale-after-days 7
 ```
 
@@ -76,7 +76,7 @@ zenith tag set plan plan_id --json --input -
 
 ## Create A Plan
 
-Use plans only for executable phased work. For direction, use `zenith roadmap create`. For investigation, use `zenith spike create` or `zenith spike record`.
+Use plans only for executable phased work. For direction, use `zenith roadmap create`. For investigation, use `zenith memory spike create` or `zenith memory spike record`.
 
 Use stdin JSON:
 
@@ -270,7 +270,7 @@ Use this when multiple local agent sessions coordinate plan/implement/review wor
 Set a stage:
 
 ```bash
-zenith stage set --json --input -
+zenith agent stage set --json --input -
 ```
 
 Payload:
@@ -288,17 +288,17 @@ Payload:
 Wait for a role handoff:
 
 ```bash
-zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 ```
 
-Stages are `plan`, `implement`, `review`, and `done`. Stage state is additive and does not affect `plan next`. Use `zenith diff --json` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
+Stages are `plan`, `implement`, `review`, and `done`. Stage state is additive and does not affect `plan next`. Use `zenith report diff --json` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
 
 ## Role-Based Choreography Skills
 
 The agent pack installs role-specific skills for the same stage/watch protocol:
 
 - `zenith-planner`: reads `context compact`, `plan next`, and `phase show`; creates roadmap-backed plans when `next.kind=create_plan`; sets `stage=implement` for the scoped phase.
-- `zenith-implementer`: waits for `stage=implement`; inspects `zenith diff --json` and phase context; implements and verifies the phase; sets `stage=review`.
+- `zenith-implementer`: waits for `stage=implement`; inspects `zenith report diff --json` and phase context; implements and verifies the phase; runs `zenith plan ready` to mark `needs_review` and set `stage=review`.
 - `zenith-reviewer`: waits for `stage=review`; reviews the scoped implementation; records findings with `relatedPlanId`/`relatedPhaseId`; runs `zenith plan advance --json --input -` only after clean review; sets `stage=done`.
 
 All role skills require explicit watch timeouts and poll intervals, support tmux/screen handoffs, and preserve the rule that Zenith never spawns provider agent CLIs.
@@ -369,7 +369,8 @@ Read `next.kind` and dispatch:
 
 | kind | action |
 |---|---|
-| `implement_phase` | `zenith phase show <phaseId> --json` → implement → verify (`bun x tsc --noEmit && bun test && bun run build`) → `zenith plan advance --json --input -` |
+| `implement_phase` | `zenith plan phase show <phaseId> --json` → implement → verify (`bun x tsc --noEmit && bun test && bun run build`) → `zenith plan ready --plan <planId> --phase <phaseId> --evidence "Verification passed"` |
+| `review_phase` | Review the scoped diff; after clean review run `zenith plan advance --json --input -` or `zenith plan done --plan <planId> --phase <phaseId> --evidence "Review passed"` |
 | `blocking_finding` | STOP — hand back to user |
 | `ambiguous_focus` | STOP — hand back to user |
 | `blocked_dependency` | STOP — hand back to user |
@@ -399,14 +400,15 @@ If `planCompleted` is `true` in the `AdvanceResult`, the plan has auto-completed
 Before pausing, record a concise checkpoint and then keep the latest event id as a cursor:
 
 ```bash
-zenith checkpoint "Verified current phase" --next "Next action"
-zenith timeline --json --limit 1   # take data[0].id as cursor
+zenith session checkpoint --from-git
+zenith session checkpoint "Verified current phase" --next "Next action"
+zenith report timeline --json --limit 1   # take data[0].id as cursor
 ```
 
 When resuming, use the cursor to diff progress since the pause:
 
 ```bash
-zenith timeline --json --since <cursor>   # events since pause
-zenith resume --json                       # structured context
+zenith report timeline --json --since <cursor>   # events since pause
+zenith continue --compact --json                       # structured context
 zenith plan next --json                    # current next step
 ```

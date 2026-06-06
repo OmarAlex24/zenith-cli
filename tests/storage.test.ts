@@ -230,6 +230,122 @@ describe("sqlite repository", () => {
     repo.close();
   });
 
+  test("phase storage accepts needs_review as a durable status", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const plan = repo.createPlan({
+      projectId: project.id,
+      title: "Review Plan",
+      status: "active",
+      phases: [
+        { title: "Reviewable", status: "needs_review", acceptanceCriteria: [], evidence: [] },
+        { title: "Implement", status: "todo", acceptanceCriteria: [], evidence: [] },
+      ],
+    });
+    const updated = repo.updatePhase(plan.id, { phaseId: plan.phases[1]!.id }, { status: "needs_review" });
+
+    expect(plan.phases[0]?.status).toBe("needs_review");
+    expect(updated.phases[1]?.status).toBe("needs_review");
+    repo.close();
+  });
+
+  test("persists normalized evidence on decisions, findings, and sessions", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const decision = repo.recordDecision({
+      projectId: project.id,
+      title: "Use evidence",
+      context: "Continuity needs traceability.",
+      decision: "Store lightweight evidence.",
+      alternatives: [],
+      relatedPlanIds: [],
+      evidence: [{ kind: "command", value: "bun test" }],
+    });
+    const finding = repo.recordFinding({
+      projectId: project.id,
+      type: "risk",
+      severity: "medium",
+      title: "Fragile assumption",
+      description: "The assumption needs source evidence.",
+      relatedFiles: [],
+      evidence: [{ kind: "file", value: "src/app/decode-app.ts" }],
+    });
+    const updatedFinding = repo.updateFinding(finding.id, {
+      evidence: [{ kind: "commit", value: "abc123" }],
+    });
+    const session = repo.recordSessionSummary({
+      projectId: project.id,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: "2026-01-01T00:10:00.000Z",
+      changedFiles: [],
+      nextSteps: ["Review evidence"],
+      evidence: [{ kind: "note", value: "Checkpoint recorded" }],
+    });
+
+    expect(decision.evidence[0]).toMatchObject({ kind: "command", value: "bun test" });
+    expect(decision.evidence[0]?.id).toStartWith("ev_");
+    expect(decision.evidence[0]?.createdAt).toBeTruthy();
+    expect(updatedFinding.evidence.map((item) => item.kind)).toEqual(["file", "commit"]);
+    expect(session.evidence[0]).toMatchObject({ kind: "note", value: "Checkpoint recorded" });
+    expect(repo.listMemoryEvidence(project.id, { entityType: "decision", entityId: decision.id })[0]).toMatchObject({
+      kind: "command",
+      value: "bun test",
+    });
+    expect(repo.listMemoryEvidence(project.id, { entityType: "finding", entityId: finding.id }).map((item) => item.kind)).toEqual([
+      "file",
+      "commit",
+    ]);
+    expect(repo.getLifecycle(project.id, "finding", finding.id)).toBe("active");
+    repo.close();
+  });
+
+  test("context docs upsert, filter, and participate in memory search", () => {
+    const root = makeTempDir();
+    tempDirs.push(root);
+    const db = openZenithDatabase({ dbPath: join(root, "zenith.db") });
+    const repo = new ZenithRepository(db);
+    const project = repo.registerProject({ name: "meridian", rootPath: "/work/meridian" });
+
+    const pinned = repo.upsertContextDoc({
+      projectId: project.id,
+      scope: "project",
+      path: "AGENTS.md",
+      reason: "Repository workflow instructions.",
+      summary: "Agent workflow",
+      assumptions: ["Applies to all tasks."],
+      confidence: "high",
+      status: "pinned",
+      readAt: "2026-01-01T00:00:00.000Z",
+      readCommit: "abc123",
+      observedMtime: "2026-01-01T00:00:00.000Z",
+    });
+    const ignored = repo.upsertContextDoc({
+      projectId: project.id,
+      scope: "project",
+      path: "AGENTS.md",
+      reason: "Repository workflow instructions.",
+      summary: "Agent workflow",
+      assumptions: ["Applies to all tasks."],
+      confidence: "high",
+      status: "ignored",
+      readAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    expect(ignored.id).toBe(pinned.id);
+    expect(repo.listContextDocs(project.id, { status: "ignored" })[0]?.path).toBe("AGENTS.md");
+    expect(repo.listContextDocs(project.id, { status: "pinned" })).toHaveLength(0);
+    expect(repo.listSearchableMemoryEntities(project.id).some((entity) => entity.entityType === "context_doc")).toBe(true);
+    repo.close();
+  });
+
   test("starts, captures, and ends sessions", () => {
     const root = makeTempDir();
     tempDirs.push(root);
@@ -858,7 +974,11 @@ describe("sqlite repository", () => {
     const phaseId = plan.phases[0]!.id;
 
     // Mark phase done and advance — triggers auto-completion
-    await services.app.advancePlan({ planId, completedPhaseId: phaseId });
+    await services.app.advancePlan({
+      planId,
+      completedPhaseId: phaseId,
+      evidence: [{ kind: "note", value: "Phase completed with verification" }],
+    });
 
     // Count events after first completion
     const project = services.repository.findProjectByRootPath(workspace);

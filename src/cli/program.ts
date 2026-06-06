@@ -33,6 +33,15 @@ type CommandOptions = {
   query?: string;
   tag?: string;
   entityType?: string;
+  entityId?: string;
+  budget?: string;
+  compact?: boolean;
+  to?: string;
+  scope?: string;
+  ttl?: string;
+  confirm?: boolean;
+  reason?: string;
+  unused?: boolean;
   startSession?: boolean;
   closeOpenSession?: boolean;
   autoCapture?: boolean;
@@ -46,11 +55,16 @@ type CommandOptions = {
   alternative?: string[];
   file?: string[];
   evidence?: string[];
+  fromGit?: boolean;
+  save?: boolean;
+  summary?: string;
   format?: string;
+  role?: string;
   maxTokens?: string;
   metadata?: boolean;
   variant?: string;
   scenario?: string;
+  task?: string;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -100,6 +114,8 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .command("compact")
     .option("--json", "Emit stable JSON")
     .option("--phase <phase-id>", "Include extra context for a specific phase id")
+    .option("--budget <tokens>", "Approximate token budget for compact markdown")
+    .option("--since <cursor>", "Accepted for parity with other compact commands")
     .action(async (commandOptions: CommandOptions) => {
       await handle(
         commandOptions,
@@ -109,7 +125,9 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  const brief = program.command("brief").description("Project brief memory");
+  const memory = program.command("memory").description("Project memory records and administration");
+
+  const brief = memory.command("brief").description("Project brief memory");
 
   brief
     .command("set")
@@ -221,7 +239,9 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       humanPlan);
     });
 
-  const focus = program.command("focus").description("Bind the current worktree/branch to a roadmap");
+  const agent = program.command("agent").description("Agent workflows, handoffs, and local coordination");
+
+  const focus = agent.command("focus").description("Bind the current worktree/branch to a roadmap");
 
   focus
     .command("show")
@@ -248,7 +268,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.clearFocus(), humanFocusStatus);
     });
 
-  const stage = program.command("stage").description("Agent choreography stage state");
+  const stage = agent.command("stage").description("Agent choreography stage state");
 
   stage
     .command("set")
@@ -259,7 +279,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.setStage(await readJsonInput(commandOptions.input)), humanStage);
     });
 
-  const spike = program.command("spike").description("Bounded investigations");
+  const spike = memory.command("spike").description("Bounded investigations");
 
   spike
     .command("create")
@@ -420,7 +440,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  const phase = program.command("phase").description("Phase lookup");
+  const phase = plan.command("phase").description("Phase lookup");
 
   phase
     .command("show")
@@ -449,22 +469,60 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
 
   decision
     .command("record")
+    .argument("[title]")
     .option("--json", "Emit stable JSON")
     .option("--input <source>", "Read JSON payload from stdin with --input -")
-    .action(async (commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.recordDecision(await readJsonInput(commandOptions.input)), (item) =>
-        `${item.id} ${item.title}`,
-      );
+    .option("--context <text>", "Decision context")
+    .option("--decision <text>", "Decision made")
+    .option("--consequences <text>", "Consequences")
+    .option("--alternative <text>", "Alternative considered", collectValues, [])
+    .option("--plan <plan-id>", "Related plan id")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
+    .action(async (title: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.recordDecision(
+          await readJsonInputOr(commandOptions.input, {
+            title: title ?? "",
+            context: commandOptions.context ?? "",
+            decision: commandOptions.decision ?? "",
+            ...(commandOptions.consequences ? { consequences: commandOptions.consequences } : {}),
+            alternatives: commandOptions.alternative ?? [],
+            relatedPlanIds: commandOptions.plan ? [commandOptions.plan] : [],
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
+          }),
+        ),
+      humanDecision);
     });
 
   const finding = program.command("finding").description("Findings and risks");
 
   finding
     .command("record")
+    .argument("[title]")
     .option("--json", "Emit stable JSON")
     .option("--input <source>", "Read JSON payload from stdin with --input -")
-    .action(async (commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.recordFinding(await readJsonInput(commandOptions.input)), humanFinding);
+    .option("--description <text>", "Finding description")
+    .option("--severity <severity>", "Finding severity: low, medium, high, or critical")
+    .option("--type <type>", "Finding type")
+    .option("--file <path>", "Related file", collectValues, [])
+    .option("--plan <plan-id>", "Related plan id")
+    .option("--phase <phase-id>", "Related phase id")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
+    .action(async (title: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.recordFinding(
+          await readJsonInputOr(commandOptions.input, {
+            ...(title ? { title } : {}),
+            ...(commandOptions.description ? { description: commandOptions.description } : {}),
+            type: commandOptions.type ?? "risk",
+            severity: commandOptions.severity ?? "high",
+            relatedFiles: commandOptions.file ?? [],
+            ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
+            ...(commandOptions.phase ? { relatedPhaseId: commandOptions.phase } : {}),
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
+          }),
+        ),
+      humanFinding);
     });
 
   finding
@@ -498,8 +556,11 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .command("close")
     .argument("<finding-id>")
     .option("--json", "Emit stable JSON")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
     .action(async (findingId: string, commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.closeFinding(findingId), humanFinding);
+      await handle(commandOptions, options, async (app) =>
+        app.closeFinding(findingId, evidenceFromNotes(commandOptions.evidence ?? [])),
+      humanFinding);
     });
 
   const session = program.command("session").description("Session lifecycle");
@@ -559,27 +620,44 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  program
+  session
     .command("checkpoint")
     .description("Record a closed session checkpoint")
     .argument("[summary]")
     .option("--json", "Emit stable JSON")
     .option("--input <source>", "Read JSON payload from stdin with --input -")
+    .option("--from-git", "Draft or save a checkpoint from current git state")
+    .option("--save", "With --from-git, save the generated checkpoint")
+    .option("--summary <text>", "With --from-git, override the generated summary")
     .option("--next <step>", "Add a next step", collectValues, [])
     .option("--plan <plan-id>", "Related plan id")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
     .action(async (summary: string | undefined, commandOptions: CommandOptions) => {
+      if (commandOptions.fromGit) {
+        const gitSummary = commandOptions.summary ?? summary;
+        await handle(commandOptions, options, async (app) =>
+          app.checkpointFromGit({
+            ...(commandOptions.save ? { save: true } : {}),
+            ...(gitSummary ? { summary: gitSummary } : {}),
+            ...(commandOptions.next ? { nextSteps: commandOptions.next } : {}),
+          }),
+        humanCheckpointFromGit);
+        return;
+      }
+
       await handle(commandOptions, options, async (app) =>
         app.checkpoint(
           await readJsonInputOr(commandOptions.input, {
             summary: summary ?? "",
             nextSteps: commandOptions.next ?? [],
             ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
           }),
         ),
       humanSession);
     });
 
-  program
+  session
     .command("note")
     .description("Record a lightweight session note")
     .argument("[text]")
@@ -587,6 +665,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .option("--input <source>", "Read JSON payload from stdin with --input -")
     .option("--next <step>", "Add a next step", collectValues, [])
     .option("--plan <plan-id>", "Related plan id")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
     .action(async (text: string | undefined, commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) =>
         app.note(
@@ -594,45 +673,41 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
             text: text ?? "",
             nextSteps: commandOptions.next ?? [],
             ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
           }),
         ),
       humanSession);
     });
 
-  program
-    .command("decide")
-    .description("Record a technical decision")
-    .argument("[title]")
+  plan
+    .command("ready")
+    .description("Mark the current or explicit phase ready for review")
     .option("--json", "Emit stable JSON")
     .option("--input <source>", "Read JSON payload from stdin with --input -")
-    .option("--context <text>", "Decision context")
-    .option("--decision <text>", "Decision made")
-    .option("--consequences <text>", "Consequences")
-    .option("--alternative <text>", "Alternative considered", collectValues, [])
-    .option("--plan <plan-id>", "Related plan id")
-    .action(async (title: string | undefined, commandOptions: CommandOptions) => {
+    .option("--plan <plan-id>", "Plan id for phase")
+    .option("--phase <phase-id>", "Phase id to mark ready")
+    .option("--role <role>", "Reviewer role label")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
+    .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) =>
-        app.decide(
+        app.ready(
           await readJsonInputOr(commandOptions.input, {
-            title: title ?? "",
-            context: commandOptions.context ?? "",
-            decision: commandOptions.decision ?? "",
-            ...(commandOptions.consequences ? { consequences: commandOptions.consequences } : {}),
-            alternatives: commandOptions.alternative ?? [],
-            relatedPlanIds: commandOptions.plan ? [commandOptions.plan] : [],
+            ...(commandOptions.plan ? { planId: commandOptions.plan } : {}),
+            ...(commandOptions.phase ? { phaseId: commandOptions.phase } : {}),
+            ...(commandOptions.role ? { role: commandOptions.role } : {}),
+            evidence: evidenceFromNotes(commandOptions.evidence ?? []),
           }),
         ),
-      humanDecision);
+      humanReady);
     });
 
-  program
+  plan
     .command("done")
-    .description("Complete the current or explicit phase, or close a finding")
+    .description("Complete the current or explicit phase")
     .option("--json", "Emit stable JSON")
     .option("--input <source>", "Read JSON payload from stdin with --input -")
     .option("--plan <plan-id>", "Plan id for phase completion")
     .option("--phase <phase-id>", "Phase id to complete")
-    .option("--finding <finding-id>", "Finding id to close")
     .option("--evidence <text>", "Append note evidence", collectValues, [])
     .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) =>
@@ -640,39 +715,26 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
           await readJsonInputOr(commandOptions.input, {
             ...(commandOptions.plan ? { planId: commandOptions.plan } : {}),
             ...(commandOptions.phase ? { phaseId: commandOptions.phase } : {}),
-            ...(commandOptions.finding ? { findingId: commandOptions.finding } : {}),
             evidence: evidenceFromNotes(commandOptions.evidence ?? []),
           }),
         ),
       humanDone);
     });
 
-  program
-    .command("blocked")
-    .description("Record a blocking finding or explicitly mark a phase blocked")
-    .argument("[title]")
+  plan
+    .command("block")
+    .description("Mark the current or explicit phase blocked")
     .option("--json", "Emit stable JSON")
     .option("--input <source>", "Read JSON payload from stdin with --input -")
-    .option("--description <text>", "Finding description")
-    .option("--severity <severity>", "Finding severity: low, medium, high, or critical")
-    .option("--type <type>", "Finding type")
-    .option("--file <path>", "Related file", collectValues, [])
-    .option("--plan <plan-id>", "Related plan id")
-    .option("--phase <phase-id>", "Related phase id for a finding")
-    .option("--mark-phase <phase-id>", "Mark an explicit phase blocked instead of recording a finding")
-    .option("--evidence <text>", "Append note evidence when marking a phase", collectValues, [])
-    .action(async (title: string | undefined, commandOptions: CommandOptions) => {
+    .option("--plan <plan-id>", "Plan id for phase")
+    .option("--phase <phase-id>", "Phase id to mark blocked")
+    .option("--evidence <text>", "Append note evidence", collectValues, [])
+    .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) =>
         app.blocked(
           await readJsonInputOr(commandOptions.input, {
-            ...(title ? { title } : {}),
-            ...(commandOptions.description ? { description: commandOptions.description } : {}),
-            ...(commandOptions.type ? { type: commandOptions.type } : {}),
-            ...(commandOptions.severity ? { severity: commandOptions.severity } : {}),
-            relatedFiles: commandOptions.file ?? [],
             ...(commandOptions.plan ? { relatedPlanId: commandOptions.plan } : {}),
-            ...(commandOptions.phase ? { relatedPhaseId: commandOptions.phase } : {}),
-            ...(commandOptions.markPhase ? { markPhaseId: commandOptions.markPhase } : {}),
+            ...(commandOptions.phase ? { markPhaseId: commandOptions.phase } : {}),
             evidence: evidenceFromNotes(commandOptions.evidence ?? []),
           }),
         ),
@@ -680,21 +742,19 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   program
-    .command("resume")
-    .description("Show compact context for resuming work")
-    .option("--json", "Emit stable JSON")
-    .action(async (commandOptions: CommandOptions) => {
-      await handle(commandOptions, options, async (app) => app.resume(), humanMarkdown);
-    });
-
-  program
     .command("continue")
     .description("Show the full continuity briefing for resuming work")
     .option("--json", "Emit stable JSON")
+    .option("--compact", "Show compact resume context")
     .option("--start-session", "Start a new session only when no session is open")
     .option("--close-open-session", "Close the open session before optionally starting a new one")
     .option("--auto-capture", "Capture current git changes into the open session")
     .action(async (commandOptions: CommandOptions) => {
+      if (commandOptions.compact) {
+        await handle(commandOptions, options, async (app) => app.resume(), humanMarkdown);
+        return;
+      }
+
       await handle(
         commandOptions,
         options,
@@ -708,7 +768,9 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  program
+  const report = program.command("report").description("Read-only project reports and telemetry");
+
+  report
     .command("roi")
     .description("Report deterministic context compression and continuity signals")
     .option("--json", "Emit stable JSON")
@@ -725,11 +787,12 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  program
+  agent
     .command("prompt")
     .description("Render read-only agent prompt context")
     .option("--json", "Emit stable JSON")
     .option("--format <format>", "Prompt format: markdown, agent, codex, or claude")
+    .option("--role <role>", "Prompt role: planner, implementer, reviewer, or handoff")
     .option("--max-tokens <n>", "Approximate token budget for deterministic truncation")
     .option("--metadata", "Include ids and internal routing metadata")
     .action(async (commandOptions: CommandOptions) => {
@@ -739,6 +802,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
         async (app) =>
           app.prompt({
             ...(commandOptions.format ? { format: parsePromptFormat(commandOptions.format) } : {}),
+            ...(commandOptions.role ? { role: parsePromptRole(commandOptions.role) } : {}),
             ...parseMaxTokensOption(commandOptions.maxTokens),
             ...(commandOptions.metadata ? { includeMetadata: true } : {}),
           }),
@@ -747,9 +811,50 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   program
+    .command("handoff")
+    .description("Render explicit role handoff context")
+    .requiredOption("--to <role>", "planner, implementer, or reviewer")
+    .option("--json", "Emit stable JSON")
+    .option("--compact", "Default to a compact 800-token handoff")
+    .option("--max-tokens <n>", "Approximate token budget for deterministic truncation")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.handoff({
+            to: parseHandoffRole(commandOptions.to ?? ""),
+            ...(commandOptions.compact ? { compact: true } : {}),
+            ...parseMaxTokensOption(commandOptions.maxTokens),
+          }),
+        humanPrompt,
+      );
+    });
+
+  program
+    .command("doctor")
+    .description("Run read-only consistency and privacy checks")
+    .option("--json", "Emit stable JSON")
+    .option("--compact", "Emit compact human output")
+    .option("--since <cursor>", "Event id or ISO timestamp")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) =>
+          app.doctor({
+            ...(commandOptions.compact ? { compact: true } : {}),
+            ...(commandOptions.since ? { since: commandOptions.since } : {}),
+          }),
+        (report) => (commandOptions.compact ? humanDoctorCompact(report) : humanMarkdown(report)),
+      );
+    });
+
+  report
     .command("timeline")
     .description("Show recent project activity (read-only event log)")
     .option("--json", "Emit stable JSON")
+    .option("--compact", "Emit compact human output")
     .option("--limit <n>", "Max number of events (default 50)")
     .option("--since <cursor>", "Return only events after this event id or ISO timestamp (checkpoint/resume diff)")
     .action(async (commandOptions: CommandOptions) => {
@@ -761,7 +866,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  program
+  report
     .command("standup")
     .description("Show a daily project telemetry digest")
     .option("--json", "Emit stable JSON")
@@ -770,10 +875,11 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.standup({ ...parseDaysOption(commandOptions.days) }), humanStandup);
     });
 
-  program
+  report
     .command("diff")
     .description("Show project memory changes since a cursor or the latest ended session")
     .option("--json", "Emit stable JSON")
+    .option("--compact", "Emit compact human output")
     .option("--since <cursor>", "Event id or ISO timestamp")
     .option("--limit <n>", "Max number of events (default 50)")
     .action(async (commandOptions: CommandOptions) => {
@@ -789,7 +895,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  program
+  report
     .command("drift")
     .description("Report roadmap-vs-active-plan alignment")
     .option("--json", "Emit stable JSON")
@@ -802,7 +908,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       humanDrift);
     });
 
-  program
+  report
     .command("adherence")
     .description("Show event-derived velocity and adherence metrics")
     .option("--json", "Emit stable JSON")
@@ -811,7 +917,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handle(commandOptions, options, async (app) => app.adherence({ ...parseDaysOption(commandOptions.days) }), humanAdherence);
     });
 
-  program
+  report
     .command("activity")
     .description("Show project activity heatmap data")
     .option("--json", "Emit stable JSON")
@@ -903,7 +1009,199 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       await handleStandalone(commandOptions, async () => requireDemoGuide(demoId), humanDemoGuide);
     });
 
+  const docs = program.command("docs").description("Context document anchors");
+
+  docs
+    .command("suggest")
+    .description("Suggest relevant docs for the current task")
+    .option("--json", "Emit stable JSON")
+    .option("--task <task>", "Task selector, currently only current")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.suggestDocs({
+          ...(commandOptions.task ? { task: commandOptions.task } : {}),
+        }),
+      humanDocSuggestions);
+    });
+
+  docs
+    .command("list")
+    .description("List context docs anchored to this project")
+    .option("--json", "Emit stable JSON")
+    .option("--task <task>", "Task selector, currently only current")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.listContextDocs({
+          ...(commandOptions.task ? { task: commandOptions.task } : {}),
+        }),
+      humanContextDocs);
+    });
+
+  docs
+    .command("pin")
+    .description("Pin a context doc for the current task")
+    .argument("<path>")
+    .option("--json", "Emit stable JSON")
+    .option("--task <task>", "Task selector, currently only current")
+    .action(async (docPath: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.pinContextDoc(docPath, {
+          ...(commandOptions.task ? { task: commandOptions.task } : {}),
+        }),
+      humanContextDoc);
+    });
+
+  docs
+    .command("ignore")
+    .description("Ignore a context doc for the current task")
+    .argument("<path>")
+    .option("--json", "Emit stable JSON")
+    .option("--task <task>", "Task selector, currently only current")
+    .action(async (docPath: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.ignoreContextDoc(docPath, {
+          ...(commandOptions.task ? { task: commandOptions.task } : {}),
+        }),
+      humanContextDoc);
+    });
+
+  const claim = agent.command("claim").description("Claim local memory work scopes");
+
+  claim
+    .command("create")
+    .argument("<entity-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--scope <path>", "Claim scope path")
+    .option("--ttl <duration>", "Claim TTL such as 30m, 2h, or 1d")
+    .option("--role <role>", "Claim owner role")
+    .action(async (entityId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.claim({
+          entityId,
+          scope: commandOptions.scope ?? ".",
+          ttl: commandOptions.ttl ?? "2h",
+          role: commandOptions.role ?? "codex",
+        }),
+      humanClaim);
+    });
+
+  claim
+    .command("list")
+    .option("--json", "Emit stable JSON")
+    .action(async (commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.listClaims(), humanClaimList);
+    });
+
+  claim
+    .command("refresh")
+    .argument("<claim-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--ttl <duration>", "Claim TTL such as 30m, 2h, or 1d")
+    .action(async (claimId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.refreshClaim({ claimId, ttl: commandOptions.ttl ?? "2h" }),
+      humanClaim);
+    });
+
+  claim
+    .command("release")
+    .description("Release an active claim by claim id or entity id")
+    .argument("<claim-id-or-entity-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (claimIdOrEntityId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.release(claimIdOrEntityId), humanClaimList);
+    });
+
+  const inspect = memory.command("inspect").description("Inspect stored memory");
+
+  inspect
+    .command("raw")
+    .argument("<entity-type>")
+    .argument("<entity-id>")
+    .option("--json", "Emit stable JSON")
+    .action(async (entityType: string, entityId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.inspectRaw(entityType, entityId), humanRawMemory);
+    });
+
+  const purge = memory.command("purge").description("Purge memory records after explicit confirmation");
+
+  purge
+    .command("entity")
+    .argument("<entity-type>")
+    .argument("<entity-id>")
+    .option("--json", "Emit stable JSON")
+    .option("--confirm", "Confirm purge")
+    .option("--reason <text>", "Short purge reason")
+    .action(async (entityType: string, entityId: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.purge({
+          kind: "entity",
+          entityType,
+          entityId,
+          confirm: Boolean(commandOptions.confirm),
+          ...(commandOptions.reason ? { reason: commandOptions.reason } : {}),
+        }),
+      humanPurge);
+    });
+
+  purge
+    .command("tag")
+    .argument("<tag>")
+    .option("--json", "Emit stable JSON")
+    .option("--confirm", "Confirm purge")
+    .option("--reason <text>", "Short purge reason")
+    .action(async (tagValue: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.purge({
+          kind: "tag",
+          tag: tagValue,
+          confirm: Boolean(commandOptions.confirm),
+          ...(commandOptions.reason ? { reason: commandOptions.reason } : {}),
+        }),
+      humanPurge);
+    });
+
+  purge
+    .command("project")
+    .argument("[project-id]")
+    .option("--json", "Emit stable JSON")
+    .option("--confirm", "Confirm purge")
+    .option("--reason <text>", "Short purge reason")
+    .action(async (projectId: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.purge({
+          kind: "project",
+          projectId: projectId ?? "current",
+          confirm: Boolean(commandOptions.confirm),
+          ...(commandOptions.reason ? { reason: commandOptions.reason } : {}),
+        }),
+      humanPurge);
+    });
+
   const tag = program.command("tag").description("Tag project memory entities");
+
+  tag
+    .command("create")
+    .argument("<tag>")
+    .option("--json", "Emit stable JSON")
+    .option("--description <text>", "Short tag description")
+    .action(async (tagValue: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) =>
+        app.createTag({
+          tag: tagValue,
+          ...(commandOptions.description ? { description: commandOptions.description } : {}),
+        }),
+      humanTagCatalogEntry);
+    });
+
+  tag
+    .command("alias")
+    .argument("<alias>")
+    .argument("<tag>")
+    .option("--json", "Emit stable JSON")
+    .action(async (alias: string, tagValue: string, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.createTagAlias({ alias, tag: tagValue }), humanTagAlias);
+    });
 
   tag
     .command("set")
@@ -925,14 +1223,19 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .option("--tag <tag>", "Filter by normalized tag")
     .option("--entity-type <type>", "Filter by memory entity type")
     .option("--entity-id <id>", "Filter by memory entity id")
+    .option("--unused", "List unused catalog tags")
     .action(async (commandOptions: CommandOptions & { entityId?: string }) => {
+      if (commandOptions.unused) {
+        await handle(commandOptions, options, async (app) => app.listTagCatalog({ unused: true }), humanTagCatalogList);
+        return;
+      }
       await handle(commandOptions, options, async (app) =>
-        app.listMemoryTags({
-          ...(commandOptions.tag ? { tag: commandOptions.tag } : {}),
-          ...(commandOptions.entityType ? { entityType: commandOptions.entityType } : {}),
-          ...(commandOptions.entityId ? { entityId: commandOptions.entityId } : {}),
-        }),
-      humanMemoryTagList);
+          app.listMemoryTags({
+            ...(commandOptions.tag ? { tag: commandOptions.tag } : {}),
+            ...(commandOptions.entityType ? { entityType: commandOptions.entityType } : {}),
+            ...(commandOptions.entityId ? { entityId: commandOptions.entityId } : {}),
+          }),
+        humanMemoryTagList);
     });
 
   program
@@ -940,8 +1243,10 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     .description("Search project memory deterministically")
     .requiredOption("--query <text>", "Search query")
     .option("--json", "Emit stable JSON")
+    .option("--compact", "Emit compact human output")
     .option("--tag <tag>", "Filter by normalized tag")
     .option("--entity-type <type>", "Filter by memory entity type")
+    .option("--since <cursor>", "Event id or ISO timestamp")
     .option("--limit <n>", "Max number of results (default 50)")
     .action(async (commandOptions: CommandOptions) => {
       await handle(commandOptions, options, async (app) =>
@@ -949,12 +1254,13 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
           ...(commandOptions.query ? { query: commandOptions.query } : {}),
           ...(commandOptions.tag ? { tag: commandOptions.tag } : {}),
           ...(commandOptions.entityType ? { entityType: commandOptions.entityType } : {}),
+          ...(commandOptions.since ? { since: commandOptions.since } : {}),
           ...parseLimitOption(commandOptions.limit),
         }),
       humanMemorySearchResults);
     });
 
-  program
+  agent
     .command("watch")
     .description("Block until a local project memory predicate matches")
     .requiredOption("--until <predicate>", "Predicate such as stage=review,plan=<plan-id>,phase=<phase-id>")
@@ -975,9 +1281,7 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
       );
     });
 
-  const agents = program.command("agents").description("Agent pack installer");
-
-  agents
+  agent
     .command("install")
     .argument("<agent>", "codex or claude")
     .option("--json", "Emit stable JSON")
@@ -1196,7 +1500,7 @@ function humanFocusStatus(status: {
     `Active plan: ${status.activePlan ? status.activePlan.title : "none"}`,
   ];
   if (status.ambiguous) {
-    lines.push("Ambiguous: multiple roadmaps have an active plan. Use `zenith focus set <roadmap-id>`.");
+    lines.push("Ambiguous: multiple roadmaps have an active plan. Use `zenith agent focus set <roadmap-id>`.");
     for (const candidate of status.candidates) {
       lines.push(`  - ${candidate.roadmapTitle} (${candidate.roadmapId}): ${candidate.planTitle}`);
     }
@@ -1250,6 +1554,57 @@ function humanRoi(report: {
 
 function humanPrompt(prompt: { content: string }): string {
   return prompt.content;
+}
+
+function humanDoctorCompact(report: {
+  summary: { errors: number; warnings: number; info: number };
+  issues: Array<{ severity: string; title: string; id: string }>;
+}): string {
+  const head = `errors=${report.summary.errors} warnings=${report.summary.warnings} info=${report.summary.info}`;
+  if (report.issues.length === 0) return head;
+  return [head, ...report.issues.slice(0, 20).map((issue) => `${issue.severity}: ${issue.title} (${issue.id})`)].join("\n");
+}
+
+function humanClaim(claim: { id: string; entityId: string; scope: string; role: string; status: string; expiresAt: string }): string {
+  return [
+    `Claim: ${claim.id}`,
+    `Entity: ${claim.entityId}`,
+    `Scope: ${claim.scope}`,
+    `Role: ${claim.role}`,
+    `Status: ${claim.status}`,
+    `Expires: ${claim.expiresAt}`,
+  ].join("\n");
+}
+
+function humanClaimList(claims: Array<{ id: string; entityId: string; scope: string; role: string; status: string; expiresAt: string }>): string {
+  if (claims.length === 0) return "No claims.";
+  return claims.map((claim) => `${claim.id} ${claim.status} ${claim.role} ${claim.scope} -> ${claim.entityId} until ${claim.expiresAt}`).join("\n");
+}
+
+function humanRawMemory(raw: { entityType: string; entityId: string; lifecycle?: string | undefined; tags: string[]; evidence: unknown[] }): string {
+  return [
+    `${raw.entityType}:${raw.entityId}`,
+    `Lifecycle: ${raw.lifecycle ?? "unknown"}`,
+    `Tags: ${raw.tags.join(",") || "none"}`,
+    `Evidence: ${raw.evidence.length}`,
+  ].join("\n");
+}
+
+function humanPurge(result: { purged: boolean; entityType: string; entityId: string }): string {
+  return `${result.purged ? "Purged" : "Not purged"}: ${result.entityType}:${result.entityId}`;
+}
+
+function humanTagCatalogEntry(tag: { tag: string; description?: string | undefined; usageCount?: number | undefined }): string {
+  return `${tag.tag}${tag.description ? ` - ${tag.description}` : ""}${tag.usageCount === undefined ? "" : ` (${tag.usageCount})`}`;
+}
+
+function humanTagCatalogList(tags: Array<{ tag: string; description?: string | undefined; usageCount?: number | undefined }>): string {
+  if (tags.length === 0) return "No catalog tags.";
+  return tags.map(humanTagCatalogEntry).join("\n");
+}
+
+function humanTagAlias(alias: { alias: string; tag: string }): string {
+  return `${alias.alias} -> ${alias.tag}`;
 }
 
 function humanBenchmarkScenarioList(
@@ -1406,6 +1761,52 @@ function humanBlocked(result:
   ].join("\n");
 }
 
+function humanReady(result: {
+  phase: { planTitle: string; phase: { id: string; title: string; status: string } };
+  stage: { stage: string; role?: string | undefined };
+  next: { recommendation: string | null };
+}): string {
+  return [
+    `Phase ready: ${result.phase.phase.title}`,
+    `Phase ID: ${result.phase.phase.id}`,
+    `Status: ${result.phase.phase.status}`,
+    `Stage: ${result.stage.stage}`,
+    `Role: ${result.stage.role ?? "none"}`,
+    `Next: ${result.next.recommendation ?? "none"}`,
+  ].join("\n");
+}
+
+function humanCheckpointFromGit(result:
+  | { kind: "draft"; draft: { summary: string; changedFiles: string[]; nextSteps: string[]; branch?: string | undefined } }
+  | { kind: "session"; session: { id: string }; draft: { summary: string; changedFiles: string[]; nextSteps: string[]; branch?: string | undefined } },
+): string {
+  const lines = [
+    result.kind === "session" ? `Saved checkpoint: ${result.session.id}` : "Checkpoint draft:",
+    `Summary: ${result.draft.summary}`,
+    `Branch: ${result.draft.branch ?? "none"}`,
+    `Changed files: ${result.draft.changedFiles.length > 0 ? result.draft.changedFiles.join(", ") : "none"}`,
+    `Next: ${result.draft.nextSteps[0] ?? "none"}`,
+  ];
+  if (result.kind === "draft") {
+    lines.push("Save with: zenith session checkpoint --from-git --save");
+  }
+  return lines.join("\n");
+}
+
+function humanDocSuggestions(docs: Array<{ path: string; reason: string; confidence: string; stale: boolean }>): string {
+  if (docs.length === 0) return "No docs suggested.";
+  return docs.map((doc) => `${doc.confidence}${doc.stale ? " stale" : ""} ${doc.path} - ${doc.reason}`).join("\n");
+}
+
+function humanContextDoc(doc: { id: string; path: string; status: string; confidence: string; reason: string }): string {
+  return [`Context doc: ${doc.path}`, `ID: ${doc.id}`, `Status: ${doc.status}`, `Confidence: ${doc.confidence}`, `Reason: ${doc.reason}`].join("\n");
+}
+
+function humanContextDocs(docs: Array<{ id: string; path: string; status: string; confidence: string; reason: string }>): string {
+  if (docs.length === 0) return "No context docs anchored.";
+  return docs.map((doc) => `${doc.id} ${doc.status} ${doc.confidence} ${doc.path} - ${doc.reason}`).join("\n");
+}
+
 function humanStage(stage: {
   id: string;
   stage: string;
@@ -1464,8 +1865,11 @@ function evidenceFromNotes(values: string[]): Array<{ kind: "note"; value: strin
   return values.map((value) => ({ kind: "note", value }));
 }
 
-function toContextOptions(commandOptions: CommandOptions): { phaseId?: string } {
-  return commandOptions.phase ? { phaseId: commandOptions.phase } : {};
+function toContextOptions(commandOptions: CommandOptions): { phaseId?: string; budget?: number } {
+  return {
+    ...(commandOptions.phase ? { phaseId: commandOptions.phase } : {}),
+    ...parseBudgetOption(commandOptions.budget),
+  };
 }
 
 function parseLimitOption(value?: string): { limit?: number } {
@@ -1489,6 +1893,11 @@ function parseMaxTokensOption(value?: string): { maxTokens?: number } {
   return maxTokens === undefined ? {} : { maxTokens };
 }
 
+function parseBudgetOption(value?: string): { budget?: number } {
+  const budget = parsePositiveIntegerOption(value, "budget");
+  return budget === undefined ? {} : { budget };
+}
+
 function parsePromptFormat(value: string): "markdown" | "agent" | "codex" | "claude" {
   if (value === "markdown" || value === "agent" || value === "codex" || value === "claude") {
     return value;
@@ -1497,6 +1906,27 @@ function parsePromptFormat(value: string): "markdown" | "agent" | "codex" | "cla
   throw new ZenithError("--format must be markdown, agent, codex, or claude.", {
     code: "invalid_option",
     details: { optionName: "format", value },
+  });
+}
+
+function parsePromptRole(value: string): "planner" | "implementer" | "reviewer" | "handoff" {
+  if (value === "planner" || value === "implementer" || value === "reviewer" || value === "handoff") {
+    return value;
+  }
+
+  throw new ZenithError("--role must be planner, implementer, reviewer, or handoff.", {
+    code: "invalid_option",
+    details: { optionName: "role", value },
+  });
+}
+
+function parseHandoffRole(value: string): "planner" | "implementer" | "reviewer" {
+  if (value === "planner" || value === "implementer" || value === "reviewer") {
+    return value;
+  }
+  throw new ZenithError("--to must be planner, implementer, or reviewer.", {
+    code: "invalid_option",
+    details: { optionName: "to", value },
   });
 }
 

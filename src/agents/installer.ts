@@ -128,10 +128,11 @@ Use the zenith-memory skill at ${memorySkillPath} when:
 - recording technical decisions
 - recording and closing findings
 - starting, capturing, ending, or summarizing a coding session
-- viewing recent project activity (\`zenith timeline\`)
-- viewing continuity ROI (\`zenith roi\`)
+- viewing recent project activity (\`zenith report timeline\`)
+- viewing continuity ROI (\`zenith report roi\`)
 - viewing onboarding demos (\`zenith demo list\`, \`zenith demo show continuity\`)
-- viewing self-tracking telemetry (\`zenith standup/diff/drift/adherence/activity\`)
+- viewing self-tracking telemetry (\`zenith report standup/diff/drift/adherence/activity\`)
+- suggesting, pinning, ignoring, or listing context docs (\`zenith docs suggest/pin/ignore/list\`)
 - sequencing plan phases with dependencies (\`dependsOn\` via \`plan update-phase\`; \`plan next\` reports \`Blocked by dependency\` when gated)
 
 Use the zenith-pr-review skill at ${reviewSkillPath} when:
@@ -152,7 +153,7 @@ Use the zenith-planner skill at ${plannerSkillPath} when:
 
 Use the zenith-implementer skill at ${implementerSkillPath} when:
 - waiting for \`stage=implement\` and implementing the scoped phase
-- inspecting \`zenith diff --json\` and \`zenith phase show <phase-id> --json\` after wake
+- inspecting \`zenith report diff --json\` and \`zenith plan phase show <phase-id> --json\` after wake
 - verifying work and setting \`stage=review\` for the reviewer
 
 Use the zenith-reviewer skill at ${reviewerSkillPath} when:
@@ -162,14 +163,15 @@ Use the zenith-reviewer skill at ${reviewerSkillPath} when:
 
 Before planning:
 - Run \`zenith continue\`.
-- Run \`zenith prompt --format codex --max-tokens 800\` when a compact handoff prompt is useful.
+- Run \`zenith handoff --to implementer --compact\` when a compact handoff prompt is useful.
+- Run \`zenith docs suggest --task current\` when repository documentation may affect the task; pin or ignore only with intent.
 - Run \`zenith context compact --json\` and \`zenith plan next --json\` only when you need exact fields for dispatch.
-- If structured output returns a \`phaseId\`, run \`zenith phase show <phase-id> --json\`.
+- If structured output returns a \`phaseId\`, run \`zenith plan phase show <phase-id> --json\`.
 - If \`plan next\` recommends a roadmap item and no active plan exists, use \`zenith roadmap create-plan <roadmap-id> --json --input -\`.
 - If \`plan next\` recommends deferred roadmap work, reactivate the item before creating an executable plan.
 
 Prefer compact markdown commands for normal handoff. Use \`zenith ... --json\` and \`--input -\` for machine-readable commands.
-Use \`plan\` only for executable phased work. Use \`brief\`, \`roadmap\`, or \`spike\` for non-executable memory.
+Use \`plan\` only for executable phased work. Use \`memory brief\`, \`roadmap\`, or \`memory spike\` for non-executable memory.
 Use \`bun run zenith ...\` from this source checkout if the \`zenith\` binary is not on PATH.
 Do not store secrets, full diffs, or long transcripts in Zenith.
 `;
@@ -194,7 +196,7 @@ This skill reviews; it does not implement fixes unless the user explicitly asks 
    - \`zenith plan next --json\`
    - \`zenith finding list --status all --json\`
    - \`zenith decision list --json\`
-   - Optional when useful: \`zenith diff --json\`, \`zenith timeline --json --since <cursor>\`, \`zenith standup --json\`
+   - Optional when useful: \`zenith report diff --json\`, \`zenith report timeline --json --since <cursor>\`, \`zenith report standup --json\`
 2. Put the reviewed code on disk safely. Local staged/branch diffs can use the current checkout. Remote PRs should use a temporary worktree at the PR head when possible so surrounding file reads match the diff.
 3. Gather shared review context once: base/head SHAs, diff, PR description or commit messages, touched modules, project conventions, and relevant surrounding code.
 4. Run focused review passes. Scale to the change size: small patches usually need correctness plus docs/consistency; larger features/refactors should use all relevant passes.
@@ -279,7 +281,7 @@ description: Use as the shared Zenith wake-on-event choreography protocol refere
 Use this skill as the protocol reference for decentralized local-agent handoffs. For normal phase work, use the role-specific skills instead:
 
 - \`zenith-planner\`: chooses or creates executable work and sets \`stage=implement\`.
-- \`zenith-implementer\`: waits for \`stage=implement\`, implements/verifies, and sets \`stage=review\`.
+- \`zenith-implementer\`: waits for \`stage=implement\`, implements/verifies, and runs \`zenith plan ready\` to mark \`needs_review\` and set \`stage=review\`.
 - \`zenith-reviewer\`: waits for \`stage=review\`, records findings or advances clean phases, and sets \`stage=done\`.
 
 Use \`zenith-multi-agent\` when designing or debugging the shared choreography contract, coordinating roles outside planner/implementer/reviewer, or checking stage/watch scope rules. Zenith is the deterministic memory and wake predicate surface; each agent session stays responsible for its own terminal, model, and harness.
@@ -289,6 +291,7 @@ Use \`zenith-multi-agent\` when designing or debugging the shared choreography c
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Do not use MCP/Channels as the handoff mechanism for this workflow.
 - Keep each agent in a live terminal session such as tmux or screen when its harness needs a background watcher to wake it.
+- Dispatch \`review_phase\` to a reviewer; dispatch \`implement_phase\` to an implementer.
 - Stop instead of looping when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, or \`create_plan_empty\`.
 - Use timeouts on watches so a stalled workflow returns control.
 
@@ -297,8 +300,8 @@ Use \`zenith-multi-agent\` when designing or debugging the shared choreography c
 Stages are additive choreography state and do not change \`plan next\` determinism.
 
 \`\`\`bash
-zenith stage set --json --input -
-zenith watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent stage set --json --input -
+zenith agent watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 \`\`\`
 
 Stage payload:
@@ -319,11 +322,11 @@ Use \`plan\`, \`implement\`, \`review\`, and \`done\` as the shared stage vocabu
 
 Use this only for custom roles or when a role-specific skill does not fit.
 
-1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and, when scoped to a phase, \`zenith phase show <phase-id> --json\`.
-2. If this role should wait, start a background watch with the local harness primitive: \`zenith watch --until stage=<your-role>,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>\`.
-3. When the watch exits successfully, run \`zenith diff --json\` to inspect handoff activity since the latest ended session.
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and, when scoped to a phase, \`zenith plan phase show <phase-id> --json\`.
+2. If this role should wait, start a background watch with the local harness primitive: \`zenith agent watch --until stage=<your-role>,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>\`.
+3. When the watch exits successfully, run \`zenith report diff --json\` to inspect handoff activity since the latest ended session.
 4. Perform only this role's work.
-5. Transition to the next stage with \`zenith stage set --json --input -\`.
+5. Transition to the next stage with \`zenith agent stage set --json --input -\`.
 6. Relaunch the next watch or stop when the phase/plan is done.
 
 ## Standard Handoff
@@ -331,7 +334,7 @@ Use this only for custom roles or when a role-specific skill does not fit.
 For this common path, invoke the role-specific skills:
 
 - \`zenith-planner\` sets \`stage=implement\` with a concrete plan/phase handoff.
-- \`zenith-implementer\` waits for \`stage=implement\`, edits code, verifies, then sets \`stage=review\`.
+- \`zenith-implementer\` waits for \`stage=implement\`, edits code, verifies, then runs \`zenith plan ready\` to mark \`needs_review\` and set \`stage=review\`.
 - \`zenith-reviewer\` waits for \`stage=review\`, records findings or runs \`zenith plan advance --json --input -\`, then sets \`stage=done\` or returns to \`stage=implement\` with a concrete note.
 
 Generated for ${agent}.
@@ -361,7 +364,7 @@ Use this skill when acting as the planner in a decentralized local agent workflo
 1. Run \`zenith context compact --json\` and read the active plan, roadmap, findings, and latest session next steps.
 2. Run \`zenith plan next --json\`.
 3. If \`next.kind\` is \`create_plan\`, create the roadmap-backed executable plan with \`zenith roadmap create-plan <roadmap-id> --json --input -\`, then run \`zenith plan next --json\` again.
-4. If \`next.kind\` is \`implement_phase\`, run \`zenith phase show <phase-id> --json\` and use that phase as the dispatch target.
+4. If \`next.kind\` is \`implement_phase\`, run \`zenith plan phase show <phase-id> --json\` and use that phase as the dispatch target.
 5. If the next step is blocked, ambiguous, deferred, or finding-driven, stop and report the exact \`next.kind\`, recommendation, and evidence instead of assigning implementation work.
 
 ## Handoff To Implementer
@@ -369,7 +372,7 @@ Use this skill when acting as the planner in a decentralized local agent workflo
 Set \`stage=implement\` for the phase-scoped implementation stage:
 
 \`\`\`bash
-zenith stage set --json --input -
+zenith agent stage set --json --input -
 \`\`\`
 
 \`\`\`json
@@ -385,11 +388,11 @@ zenith stage set --json --input -
 If supervising the workflow, wait for review or done with a timeout:
 
 \`\`\`bash
-zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
-zenith watch --until stage=done,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=done,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 \`\`\`
 
-After a successful watch, run \`zenith diff --json\` to inspect handoff activity before deciding whether more coordination is needed.
+After a successful watch, run \`zenith report diff --json\` to inspect handoff activity before deciding whether more coordination is needed.
 
 Generated for ${agent}.
 `;
@@ -409,8 +412,8 @@ Use this skill when acting as the implementer in a decentralized local agent wor
 
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Keep this role in tmux or screen when waiting in the background.
-- Always use explicit \`zenith watch\` timeouts and poll intervals.
-- Stop instead of implementing when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, \`create_plan_empty\`, or a different plan/phase than the handoff.
+- Always use explicit \`zenith agent watch\` timeouts and poll intervals.
+- Stop instead of implementing when \`zenith plan next --json\` returns \`review_phase\`, \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, \`create_plan_empty\`, or a different plan/phase than the handoff.
 - Preserve unrelated dirty worktree changes; work with them when they affect the phase and do not revert them.
 
 ## Wake And Implement
@@ -418,13 +421,13 @@ Use this skill when acting as the implementer in a decentralized local agent wor
 Wait for the scoped implementation stage:
 
 \`\`\`bash
-zenith watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 \`\`\`
 
 After waking:
 
-1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith phase show <phase-id> --json\`.
-2. Run \`zenith diff --json\` to inspect handoff activity since the latest ended session.
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith plan phase show <phase-id> --json\`.
+2. Run \`zenith report diff --json\` to inspect handoff activity since the latest ended session.
 3. Implement only the scoped phase.
 4. Verify with the checks expected by the phase, typically \`bun x tsc --noEmit\`, \`bun test\`, and \`bun run build\`.
 
@@ -448,20 +451,10 @@ Then return control to planning:
 }
 \`\`\`
 
-If implementation and verification are complete, set \`stage=review\`:
+If implementation and verification are complete, use \`plan ready\` to mark durable phase state and set \`stage=review\`:
 
 \`\`\`bash
-zenith stage set --json --input -
-\`\`\`
-
-\`\`\`json
-{
-  "planId": "plan_id",
-  "phaseId": "phase_id",
-  "stage": "review",
-  "role": "reviewer",
-  "note": "Implementation verified and ready for review."
-}
+zenith plan ready --plan plan_id --phase phase_id --evidence "Verification passed"
 \`\`\`
 
 Generated for ${agent}.
@@ -482,7 +475,7 @@ Use this skill when acting as the reviewer in a decentralized local agent workfl
 
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Keep this role in tmux or screen when waiting in the background.
-- Always use explicit \`zenith watch\` timeouts and poll intervals.
+- Always use explicit \`zenith agent watch\` timeouts and poll intervals.
 - Stop instead of reviewing when \`zenith plan next --json\` returns \`blocking_finding\`, \`ambiguous_focus\`, \`blocked_dependency\`, \`review_finding\`, \`review_deferred\`, \`create_plan_empty\`, or a different plan/phase than the handoff.
 - Do not advance the phase until review is clean and verification evidence is available.
 
@@ -491,13 +484,14 @@ Use this skill when acting as the reviewer in a decentralized local agent workfl
 Wait for the scoped review stage:
 
 \`\`\`bash
-zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 \`\`\`
 
 After waking:
 
-1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith phase show <phase-id> --json\`.
-2. Run \`zenith diff --json\` to inspect what changed since the latest ended session.
+1. Run \`zenith context compact --json\`, \`zenith plan next --json\`, and \`zenith plan phase show <phase-id> --json\`.
+   \`plan next\` should normally return \`kind=review_phase\` for the scoped phase.
+2. Run \`zenith report diff --json\` to inspect what changed since the latest ended session.
 3. Review the scoped diff and rerun or inspect verification as needed.
 4. If issues are found, record actionable findings with \`relatedPlanId\` and \`relatedPhaseId\`.
 
@@ -539,10 +533,12 @@ zenith plan advance --json --input -
 }
 \`\`\`
 
+For the inferred current phase, \`zenith plan done --plan plan_id --phase phase_id --evidence "Review passed" --json\` is the shorthand.
+
 Then publish \`stage=done\`:
 
 \`\`\`bash
-zenith stage set --json --input -
+zenith agent stage set --json --input -
 \`\`\`
 
 \`\`\`json
@@ -816,31 +812,35 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - \`decision\`: technical or strategic choice.
 - \`finding\`: bug, risk, debt, or gap.
 - \`session\`: work continuity log.
+- \`context_doc\`: pinned or ignored documentation anchor for project, plan, or phase context.
 - \`tag\`: normalized labels attached to memory entities for deterministic discovery.
 
 ## Core Rules
 
 - Treat \`zenith continue\` as the default first command for resuming work.
-- Use \`zenith prompt --format codex --max-tokens 800\`, \`--format claude\`, \`--format agent\`, or \`--format markdown\` when a compact copyable prompt is needed.
+- Use \`zenith handoff --to planner|implementer|reviewer --compact\` when an explicit role handoff is needed. Use \`zenith agent prompt --format markdown|agent|codex|claude\` for raw prompt rendering.
 - Treat \`zenith plan next --json\` as the lower-level source for exact implementation fields.
 - If the user's request conflicts with \`plan next\`, report the conflict and ask for confirmation before implementing.
-- Always inspect the target phase with \`zenith phase show <phase-id> --json\` when a phase id is available.
+- Always inspect the target phase with \`zenith plan phase show <phase-id> --json\` when a phase id is available.
 - When \`plan next\` recommends a roadmap item and no active plan exists, use \`zenith roadmap create-plan <roadmap-id> --json --input -\` to preserve source links.
 - Deferred roadmap items are parked backlog; reactivate them with \`roadmap update-item\` before creating executable plans.
-- Use \`plan\` only for executable phased work; use \`brief\`, \`roadmap\`, or \`spike\` for non-executable memory.
+- Use \`plan\` only for executable phased work; use \`memory brief\`, \`roadmap\`, or \`memory spike\` for non-executable memory.
 - Prefer \`zenith ...\`; use \`bun run zenith ...\` in this source repo if the binary is unavailable.
 - Never update Zenith memory with SQL, ad hoc file edits, or repo-local state.
 - Never store secrets, full diffs, or long transcripts in Zenith.
-- Use \`zenith timeline\` (with optional \`--limit <n>\` and \`--since <eventId|iso>\`) for a read-only view of recent project activity.
-- Use \`zenith roi\` to report deterministic context compression and continuity signals.
+- Use \`zenith report timeline\` (with optional \`--limit <n>\` and \`--since <eventId|iso>\`) for a read-only view of recent project activity.
+- Use \`zenith report roi\` to report deterministic context compression and continuity signals.
 - Use \`zenith demo list\` and \`zenith demo show continuity\` when a read-only onboarding or proof workflow is needed.
-- Use \`zenith checkpoint\`, \`zenith note\`, \`zenith decide\`, \`zenith done\`, and \`zenith blocked\` only when explicit memory mutation is intended.
+- Use \`zenith session checkpoint\`, \`zenith session note\`, \`zenith decision record\`, \`zenith plan ready\`, \`zenith plan done\`, and \`zenith finding record\` only when explicit memory mutation is intended.
+- Use \`zenith session checkpoint --from-git\` for a read-only checkpoint draft and \`zenith session checkpoint --from-git --save\` when the draft should become a session.
+- Use \`zenith docs suggest --task current\` read-only, then \`zenith docs pin|ignore <path> --task current\` only when doc anchors should be persisted.
 - Use \`zenith benchmark ...\` to list scenarios, export benchmark tasks, record strict local run metadata, and compare variants.
-- Use \`zenith standup\`, \`zenith diff\`, \`zenith drift\`, \`zenith adherence\`, and \`zenith activity\` for read-only self-tracking telemetry when auditing progress or resuming work.
+- Use \`zenith report standup\`, \`zenith report diff\`, \`zenith report drift\`, \`zenith report adherence\`, and \`zenith report activity\` for read-only self-tracking telemetry when auditing progress or resuming work.
 - Use \`zenith search --json --query <text>\` and \`zenith tag list --json\` to discover existing memory before creating duplicate records.
 - Phase prerequisites are expressed with \`dependsOn\` (array of phase ids) via \`plan update-phase\`; when all remaining phases are gated, \`plan next\` reports \`Blocked by dependency\`.
-- Use \`plan next\` \`kind\` field to dispatch in agent loops: \`implement_phase\` → implement; \`blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty\` → STOP.
-- Use \`zenith plan advance --json --input -\` to mark a phase done, append evidence, and recompute the next step in one command (each step transactional).
+- Use \`plan next\` \`kind\` field to dispatch in agent loops: \`implement_phase\` → implement; \`review_phase\` → review; \`blocking_finding | ambiguous_focus | blocked_dependency | review_finding | review_deferred | create_plan_empty\` → STOP.
+- Use \`zenith plan ready --evidence "..."\` after implementation is verified but before review; it marks the phase \`needs_review\` and sets \`stage=review\`.
+- Use \`zenith plan advance --json --input -\` or \`zenith plan done\` only after clean review to mark a phase done, append evidence, and recompute the next step.
 - Use \`zenith plan complete <plan-id> --json\` to close a completed plan and advance its source roadmap item.
 - Use \`zenith plan path <plan-id> --json\` to view topological phase order with dependency and readiness information.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
@@ -850,47 +850,53 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 1. Read current project context and continuity readiness:
    \`zenith continue\`
 2. Render compact handoff context when needed:
-   \`zenith prompt --format codex --max-tokens 800\`
+   \`zenith handoff --to implementer --compact\`
 3. Read lower-level project context when exact fields are needed:
    \`zenith context compact --json\`
 4. Ask Zenith what should happen next:
    \`zenith plan next --json\`
    Use \`zenith plan next --json --stale-after-days <n>\` when stale-work metadata matters.
 5. If a phase id is returned, inspect it:
-   \`zenith phase show <phase-id> --json\`
-6. For non-executable memory, use the right category:
-   \`zenith brief set --json --input -\`
+   \`zenith plan phase show <phase-id> --json\`
+6. Suggest or anchor relevant docs when task context is unclear:
+   \`zenith docs suggest --task current\`
+   \`zenith docs pin <path> --task current\`
+   \`zenith docs ignore <path> --task current\`
+7. For non-executable memory, use the right category:
+   \`zenith memory brief set --json --input -\`
    \`zenith roadmap create --json --input -\`
-   \`zenith spike create --json --input -\`
-   \`zenith spike record --json --input -\`
-7. Convert historical roadmap-like plans explicitly when needed:
+   \`zenith memory spike create --json --input -\`
+   \`zenith memory spike record --json --input -\`
+8. Convert historical roadmap-like plans explicitly when needed:
    \`zenith roadmap import-plan <plan-id> --json --input -\`
-8. Implement the requested or recommended phase.
-9. Verify the work:
+9. Implement the requested or recommended phase.
+10. Verify the work:
    \`bun x tsc --noEmit\`
    \`bun test\`
    \`bun run build\`
-10. Update completed phases with evidence:
-   \`zenith plan update-phase <plan-id> --json --input -\`
-11. Save new executable multi-phase plans with:
+11. Mark implementation ready for review with evidence:
+   \`zenith plan ready --plan <plan-id> --phase <phase-id> --evidence "Verification passed"\`
+12. Save new executable multi-phase plans with:
    \`zenith plan create --json --input -\`
-12. Update plan metadata with:
+13. Update plan metadata with:
    \`zenith plan update <plan-id> --json --input -\`
-13. Record architectural decisions:
-   \`zenith decide "Decision title" --context "..." --decision "..."\`
-14. Record findings or session lifecycle when needed:
-   \`zenith checkpoint "Summary" --next "Next step"\`
-   \`zenith note "Short note"\`
-   \`zenith blocked "Blocked by ..." --description "..." --plan <plan-id> --phase <phase-id>\`
-   \`zenith done\`
+14. Record architectural decisions:
+   \`zenith decision record "Decision title" --context "..." --decision "..."\`
+15. Record findings or session lifecycle when needed:
+   \`zenith session checkpoint --from-git\`
+   \`zenith session checkpoint --from-git --save --summary "Summary" --next "Next step"\`
+   \`zenith session checkpoint "Summary" --next "Next step"\`
+   \`zenith session note "Short note"\`
+   \`zenith finding record "Blocked by ..." --description "..." --plan <plan-id> --phase <phase-id>\`
+   \`zenith plan done\`
    \`zenith finding record --json --input -\`
-   \`zenith finding close <finding-id> --json\`
+   \`zenith finding close <finding-id> --evidence "Reviewed" --json\`
    \`zenith session start --json --input -\`
    \`zenith session capture <session-id> --json --input -\`
    \`zenith session end <session-id> --json --input -\`
-15. For quick compatibility summaries, use:
+16. For quick compatibility summaries, use:
    \`zenith session summarize --json --input -\`
-16. Before closing the turn, check git status and propose committing the completed change set if the worktree is dirty.
+17. Before closing the turn, check git status and propose committing the completed change set if the worktree is dirty.
 
 ## References
 
@@ -916,9 +922,9 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 
 ## Brief
 
-- \`zenith brief set --json --input -\`
-- \`zenith brief show --json\`
-- \`zenith brief list --json\`
+- \`zenith memory brief set --json --input -\`
+- \`zenith memory brief show --json\`
+- \`zenith memory brief list --json\`
 
 ## Roadmaps
 
@@ -931,7 +937,7 @@ If the \`zenith\` binary is not on PATH while working inside this source checkou
 - \`zenith roadmap import-plan <plan-id> --json --input -\`
 - \`zenith roadmap create-plan <roadmap-id> --json --input -\`
 
-Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \`plan next\`; \`deferred\` is parked backlog and must be reactivated before creating an executable plan; \`discarded\` is an auditable out-of-scope decision and is not recommended as future work. Roadmap items use \`todo / in_progress / done / deferred / discarded\`; plan phases use \`todo / in_progress / done / blocked\`.
+Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \`plan next\`; \`deferred\` is parked backlog and must be reactivated before creating an executable plan; \`discarded\` is an auditable out-of-scope decision and is not recommended as future work. Roadmap items use \`todo / in_progress / done / deferred / discarded\`; plan phases use \`todo / in_progress / needs_review / done / blocked\`.
 
 ## Plans
 
@@ -957,11 +963,12 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 | kind | meaning |
 |---|---|
 | \`implement_phase\` | Implement the identified phase (in-progress or ready todo) |
+| \`review_phase\` | Review the identified phase marked \`needs_review\` |
 | \`create_plan\` | Create a plan from the roadmap item |
 | \`review_deferred\` | Reactivate or discard a deferred roadmap item |
 | \`blocking_finding\` | Fix or triage the critical/high finding |
 | \`review_finding\` | Review an open finding (no active plan) |
-| \`ambiguous_focus\` | Set \`zenith focus set <roadmap-id>\` to resolve multiple active plans |
+| \`ambiguous_focus\` | Set \`zenith agent focus set <roadmap-id>\` to resolve multiple active plans |
 | \`blocked_dependency\` | Unblock a dependency (blocked phase or all todos gated) |
 | \`review_completed\` | All phases done; complete or archive the active plan |
 | \`create_plan_empty\` | No plan, roadmap, finding, or session — create a plan |
@@ -988,14 +995,14 @@ If all phases are done after the advance, \`planCompleted\` is \`true\` and (if 
 
 ## Agent Choreography
 
-- \`zenith stage set --json --input -\` — set additive project/plan/phase stage state for local multi-agent handoffs
-- \`zenith watch --until stage=review,plan=<plan-id>,phase=<phase-id> --json [--timeout <ms>] [--poll-interval <ms>]\` — block until a local memory predicate matches
+- \`zenith agent stage set --json --input -\` — set additive project/plan/phase stage state for local multi-agent handoffs
+- \`zenith agent watch --until stage=review,plan=<plan-id>,phase=<phase-id> --json [--timeout <ms>] [--poll-interval <ms>]\` — block until a local memory predicate matches
 
 \`stage set\` accepts \`stage\` values \`plan / implement / review / done\`, optional \`planId\`, optional \`phaseId\`, optional \`role\`, and optional \`note\`. If \`phaseId\` is provided without \`planId\`, Zenith derives and returns the parent plan. Stage state is additive choreography metadata; it does not affect \`plan next\`.
 
 \`watch --until\` accepts comma-separated \`key=value\` clauses with \`stage\` required and optional \`plan\`/\`phase\` (or \`planId\`/\`phaseId\`) scope keys. Use explicit \`--timeout\` and \`--poll-interval\` for long-running agent wake loops.
 
-Installed role skills use this same protocol: \`zenith-planner\` creates/selects executable work and sets \`stage=implement\`; \`zenith-implementer\` waits for implementation, verifies changes, and sets \`stage=review\`; \`zenith-reviewer\` records actionable findings or runs \`zenith plan advance --json --input -\` after clean review, then sets \`stage=done\`.
+Installed role skills use this same protocol: \`zenith-planner\` creates/selects executable work and sets \`stage=implement\`; \`zenith-implementer\` waits for implementation, verifies changes, and runs \`zenith plan ready\` to mark \`needs_review\` and set \`stage=review\`; \`zenith-reviewer\` records actionable findings or runs \`zenith plan advance --json --input -\` after clean review, then sets \`stage=done\`.
 
 ## Context
 
@@ -1005,27 +1012,37 @@ Installed role skills use this same protocol: \`zenith-planner\` creates/selects
 - \`zenith continue --auto-capture --json\` — capture current git changes into the open session
 - \`zenith context get --json\`
 - \`zenith context compact --json\`
-- \`zenith resume --json\`
-- \`zenith roi --json [--since <eventId|iso>]\` — deterministic context compression and continuity signal report
-- \`zenith prompt --format markdown|agent|codex|claude --json [--max-tokens <n>] [--metadata]\` — read-only prompt context for handoff or copy/paste
+- \`zenith continue --compact --json\`
+- \`zenith report roi --json [--since <eventId|iso>]\` — deterministic context compression and continuity signal report
+- \`zenith agent prompt --format markdown|agent|codex|claude --json [--role planner|implementer|reviewer|handoff] [--max-tokens <n>] [--metadata]\` — read-only prompt context for handoff or copy/paste
 - \`zenith demo list --json\` — list read-only onboarding/demo guides
 - \`zenith demo show <demo-id> --json\` — return typed guide data plus copyable markdown; built-ins include \`continuity\`, \`daily-loop\`, and \`benchmark-proof\`
-- \`zenith phase show <phase-id> --json\`
-- \`zenith timeline --json\` — read-only activity log; accepts \`--limit <n>\` and \`--since <eventId|iso>\`
+- \`zenith plan phase show <phase-id> --json\`
+- \`zenith report timeline --json\` — read-only activity log; accepts \`--limit <n>\` and \`--since <eventId|iso>\`
 
 Use \`--since <eventId|iso>\` to return only events after a checkpoint cursor (ISO timestamp or event id). Useful for resumed sessions to diff progress without re-reading the entire timeline.
 
 ## Low-Friction Writes
 
-- \`zenith checkpoint "Summary" --next "Next step" --json\` — record a closed session checkpoint
-- \`zenith note "Short note" --json\` — record a lightweight session note
-- \`zenith decide "Title" --context "Context" --decision "Decision" --json\` — record a decision
-- \`zenith done --json\` — mark the inferred current phase done; use \`--plan <plan-id> --phase <phase-id>\` when focus is ambiguous
-- \`zenith done --finding <finding-id> --json\` — close a finding
-- \`zenith blocked "Title" --description "Why blocked" --plan <plan-id> --phase <phase-id> --json\` — record a blocking finding
-- \`zenith blocked --mark-phase <phase-id> --plan <plan-id> --json\` — explicitly mark a phase blocked
+- \`zenith session checkpoint "Summary" --next "Next step" --json\` — record a closed session checkpoint
+- \`zenith session checkpoint --from-git --json\` — generate a read-only git checkpoint draft
+- \`zenith session checkpoint --from-git --save --summary "Summary" --next "Next step" --json\` — save the git checkpoint draft as a session
+- \`zenith session note "Short note" --json\` — record a lightweight session note
+- \`zenith decision record "Title" --context "Context" --decision "Decision" --json\` — record a decision
+- \`zenith plan ready --plan <plan-id> --phase <phase-id> --evidence "Verification passed" --json\` — mark a phase \`needs_review\` and set \`stage=review\`
+- \`zenith plan done --json\` — mark the inferred current phase done; use \`--plan <plan-id> --phase <phase-id>\` when focus is ambiguous
+- \`zenith finding close <finding-id> --evidence "Reviewed" --json\` — close a finding
+- \`zenith finding record "Title" --description "Why blocked" --plan <plan-id> --phase <phase-id> --json\` — record a blocking finding
+- \`zenith plan block --phase <phase-id> --plan <plan-id> --json\` — explicitly mark a phase blocked
 
-These commands are intentional writes. Read-only commands such as \`continue\`, \`roi\`, \`resume\`, \`prompt\`, \`demo\`, TUI, and telemetry must remain side-effect free.
+These commands are intentional writes except \`session checkpoint --from-git\` without \`--save\`. Read-only commands such as \`continue\`, \`continue --compact\`, \`handoff\`, \`agent prompt\`, \`docs suggest\`, \`demo\`, TUI, and report commands must remain side-effect free.
+
+## Docs Anchors
+
+- \`zenith docs suggest --task current --json\` — read-only suggestions from repo rules, touched paths, and common docs
+- \`zenith docs pin <path> --task current --json\` — store a lightweight context doc anchor
+- \`zenith docs ignore <path> --task current --json\` — suppress a doc for current task suggestions
+- \`zenith docs list --task current --json\` — list pinned and ignored context docs
 
 ## Benchmarks
 
@@ -1039,11 +1056,11 @@ Benchmark records must not store transcripts, prompts, outputs, secrets, tokens,
 
 ## Self-Tracking Telemetry
 
-- \`zenith standup --json [--days <n>]\` — daily digest of next step, events, completions, roadmap progress, and findings; default 1 day
-- \`zenith diff --json [--since <eventId|iso>] [--limit <n>]\` — events since a cursor, or since the latest ended session by default
-- \`zenith drift --json [--stale-after-days <n>]\` — roadmap-vs-active-plan alignment report; default stale threshold 7 days
-- \`zenith adherence --json [--days <n>]\` — event-derived velocity and completion metrics; default 14 days
-- \`zenith activity --json\` — uncapped 53-week activity heatmap from grouped event counts; used by the TUI Pulse view
+- \`zenith report standup --json [--days <n>]\` — daily digest of next step, events, completions, roadmap progress, and findings; default 1 day
+- \`zenith report diff --json [--since <eventId|iso>] [--limit <n>]\` — events since a cursor, or since the latest ended session by default
+- \`zenith report drift --json [--stale-after-days <n>]\` — roadmap-vs-active-plan alignment report; default stale threshold 7 days
+- \`zenith report adherence --json [--days <n>]\` — event-derived velocity and completion metrics; default 14 days
+- \`zenith report activity --json\` — uncapped 53-week activity heatmap from grouped event counts; used by the TUI Pulse view
 
 ## Memory Discovery
 
@@ -1051,7 +1068,7 @@ Benchmark records must not store transcripts, prompts, outputs, secrets, tokens,
 - \`zenith tag set <entity-type> <entity-id> --json --input -\` — replace normalized tags for a memory entity; payload: \`{ "tags": ["release", "docs"] }\`
 - \`zenith tag list --json [--tag <tag>] [--entity-type <type>] [--entity-id <id>]\` — list normalized tag records
 
-Supported discovery entity types: \`brief\`, \`roadmap\`, \`roadmap_item\`, \`plan\`, \`phase\`, \`spike\`, \`decision\`, \`finding\`, \`session\`.
+Supported discovery entity types: \`brief\`, \`roadmap\`, \`roadmap_item\`, \`plan\`, \`phase\`, \`spike\`, \`decision\`, \`finding\`, \`session\`, \`context_doc\`.
 
 ## Decisions
 
@@ -1067,17 +1084,17 @@ Supported discovery entity types: \`brief\`, \`roadmap\`, \`roadmap_item\`, \`pl
 - \`zenith finding list --status all --json\`
 - \`zenith finding show <finding-id> --json\`
 - \`zenith finding update <finding-id> --json --input -\`
-- \`zenith finding close <finding-id> --json\`
+- \`zenith finding close <finding-id> --evidence "Reviewed" --json\`
 
 \`finding record\` and \`finding update\` JSON input accept optional \`relatedPlanId\` and \`relatedPhaseId\` to link a finding to an active plan or phase.
 
 ## Spikes
 
-- \`zenith spike create --json --input -\`
-- \`zenith spike record --json --input -\`
-- \`zenith spike list --json\`
-- \`zenith spike show <spike-id> --json\`
-- \`zenith spike conclude <spike-id> --json --input -\`
+- \`zenith memory spike create --json --input -\`
+- \`zenith memory spike record --json --input -\`
+- \`zenith memory spike list --json\`
+- \`zenith memory spike show <spike-id> --json\`
+- \`zenith memory spike conclude <spike-id> --json --input -\`
 
 ## Sessions
 
@@ -1116,11 +1133,11 @@ Run:
 
 \`\`\`bash
 zenith continue
-zenith prompt --format codex --max-tokens 800
+zenith handoff --to implementer --compact
 zenith demo show continuity
 \`\`\`
 
-\`zenith continue\`, \`zenith prompt\`, and \`zenith demo\` are read-only by default. Use \`continue --start-session\`, \`--close-open-session\`, or \`--auto-capture\` only when explicit session mutation is intended.
+\`zenith continue\`, \`zenith agent prompt\`, and \`zenith demo\` are read-only by default. Use \`continue --start-session\`, \`--close-open-session\`, or \`--auto-capture\` only when explicit session mutation is intended.
 
 Lower-level equivalent commands:
 
@@ -1132,7 +1149,7 @@ zenith plan next --json
 If \`plan next\` returns a \`phaseId\`, inspect it:
 
 \`\`\`bash
-zenith phase show phase_id --json
+zenith plan phase show phase_id --json
 \`\`\`
 
 Use that phase as the implementation target. If the user's prompt names a different target than \`plan next\`, stop and ask for confirmation.
@@ -1155,14 +1172,14 @@ If the project is not registered, ask whether to run \`zenith init\`.
 Use these read-only commands when choosing or auditing the next work:
 
 \`\`\`bash
-zenith standup                 # daily digest; accepts --days <n>
-zenith roi                     # context compression and continuity signals
-zenith roi --since <cursor>    # event id or ISO timestamp
-zenith diff                    # changes since latest ended session
-zenith diff --since <cursor>   # event id or ISO timestamp
-zenith drift                   # roadmap-vs-active-plan alignment
-zenith adherence               # velocity/adherence; accepts --days <n>
-zenith activity                # 53-week activity heatmap from grouped event counts
+zenith report standup                 # daily digest; accepts --days <n>
+zenith report roi                     # context compression and continuity signals
+zenith report roi --since <cursor>    # event id or ISO timestamp
+zenith report diff                    # changes since latest ended session
+zenith report diff --since <cursor>   # event id or ISO timestamp
+zenith report drift                   # roadmap-vs-active-plan alignment
+zenith report adherence               # velocity/adherence; accepts --days <n>
+zenith report activity                # 53-week activity heatmap from grouped event counts
 zenith plan next --json --stale-after-days 7
 \`\`\`
 
@@ -1183,7 +1200,7 @@ zenith tag set plan plan_id --json --input -
 
 ## Create A Plan
 
-Use plans only for executable phased work. For direction, use \`zenith roadmap create\`. For investigation, use \`zenith spike create\` or \`zenith spike record\`.
+Use plans only for executable phased work. For direction, use \`zenith roadmap create\`. For investigation, use \`zenith memory spike create\` or \`zenith memory spike record\`.
 
 Use stdin JSON:
 
@@ -1377,7 +1394,7 @@ Use this when multiple local agent sessions coordinate plan/implement/review wor
 Set a stage:
 
 \`\`\`bash
-zenith stage set --json --input -
+zenith agent stage set --json --input -
 \`\`\`
 
 Payload:
@@ -1395,17 +1412,17 @@ Payload:
 Wait for a role handoff:
 
 \`\`\`bash
-zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 \`\`\`
 
-Stages are \`plan\`, \`implement\`, \`review\`, and \`done\`. Stage state is additive and does not affect \`plan next\`. Use \`zenith diff --json\` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
+Stages are \`plan\`, \`implement\`, \`review\`, and \`done\`. Stage state is additive and does not affect \`plan next\`. Use \`zenith report diff --json\` after a successful watch to inspect handoff activity. Stop on blocking findings, ambiguous focus, blocked dependencies, deferred-roadmap review, or timeout rather than looping blindly.
 
 ## Role-Based Choreography Skills
 
 The agent pack installs role-specific skills for the same stage/watch protocol:
 
 - \`zenith-planner\`: reads \`context compact\`, \`plan next\`, and \`phase show\`; creates roadmap-backed plans when \`next.kind=create_plan\`; sets \`stage=implement\` for the scoped phase.
-- \`zenith-implementer\`: waits for \`stage=implement\`; inspects \`zenith diff --json\` and phase context; implements and verifies the phase; sets \`stage=review\`.
+- \`zenith-implementer\`: waits for \`stage=implement\`; inspects \`zenith report diff --json\` and phase context; implements and verifies the phase; runs \`zenith plan ready\` to mark \`needs_review\` and set \`stage=review\`.
 - \`zenith-reviewer\`: waits for \`stage=review\`; reviews the scoped implementation; records findings with \`relatedPlanId\`/\`relatedPhaseId\`; runs \`zenith plan advance --json --input -\` only after clean review; sets \`stage=done\`.
 
 All role skills require explicit watch timeouts and poll intervals, support tmux/screen handoffs, and preserve the rule that Zenith never spawns provider agent CLIs.
@@ -1476,7 +1493,8 @@ Read \`next.kind\` and dispatch:
 
 | kind | action |
 |---|---|
-| \`implement_phase\` | \`zenith phase show <phaseId> --json\` → implement → verify (\`bun x tsc --noEmit && bun test && bun run build\`) → \`zenith plan advance --json --input -\` |
+| \`implement_phase\` | \`zenith plan phase show <phaseId> --json\` → implement → verify (\`bun x tsc --noEmit && bun test && bun run build\`) → \`zenith plan ready --plan <planId> --phase <phaseId> --evidence "Verification passed"\` |
+| \`review_phase\` | Review the scoped diff; after clean review run \`zenith plan advance --json --input -\` or \`zenith plan done --plan <planId> --phase <phaseId> --evidence "Review passed"\` |
 | \`blocking_finding\` | STOP — hand back to user |
 | \`ambiguous_focus\` | STOP — hand back to user |
 | \`blocked_dependency\` | STOP — hand back to user |
@@ -1506,15 +1524,16 @@ If \`planCompleted\` is \`true\` in the \`AdvanceResult\`, the plan has auto-com
 Before pausing, record a concise checkpoint and then keep the latest event id as a cursor:
 
 \`\`\`bash
-zenith checkpoint "Verified current phase" --next "Next action"
-zenith timeline --json --limit 1   # take data[0].id as cursor
+zenith session checkpoint --from-git
+zenith session checkpoint "Verified current phase" --next "Next action"
+zenith report timeline --json --limit 1   # take data[0].id as cursor
 \`\`\`
 
 When resuming, use the cursor to diff progress since the pause:
 
 \`\`\`bash
-zenith timeline --json --since <cursor>   # events since pause
-zenith resume --json                       # structured context
+zenith report timeline --json --since <cursor>   # events since pause
+zenith continue --compact --json                       # structured context
 zenith plan next --json                    # current next step
 \`\`\`
 `;

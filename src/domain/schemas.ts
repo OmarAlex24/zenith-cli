@@ -25,6 +25,7 @@ export const MEMORY_ENTITY_TYPES = [
   "decision",
   "finding",
   "session",
+  "context_doc",
 ] as const;
 export const MemoryEntityTypeSchema = z.enum(MEMORY_ENTITY_TYPES);
 
@@ -41,17 +42,26 @@ const aliasPreprocessor = (aliases: Record<string, string>) => (value: unknown) 
 
 export const PhaseStatusSchema = z.preprocess(
   aliasPreprocessor(PHASE_STATUS_ALIASES),
-  z.enum(["todo", "in_progress", "done", "blocked"]),
+  z.enum(["todo", "in_progress", "needs_review", "done", "blocked"]),
 );
 export const RoadmapItemStatusSchema = z.preprocess(
   aliasPreprocessor(ROADMAP_ITEM_STATUS_ALIASES),
   z.enum(["todo", "in_progress", "done", "deferred", "discarded"]),
 );
 
+export const MemoryLifecycleSchema = z.enum(["active", "done", "blocked", "stale", "superseded", "archived"]);
+
 export const EvidenceSchema = z.object({
   id: z.string().min(1).optional(),
-  kind: z.enum(["note", "commit", "file", "pr", "command", "link"]).default("note"),
+  kind: z.enum(["note", "commit", "file", "pr", "issue", "command", "test", "link", "adr", "branch"]).default("note"),
   value: z.string().min(1),
+  path: z.string().min(1).optional(),
+  line: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
+  label: z.string().min(1).optional(),
+  checkedAt: z.string().min(1).optional(),
+  stale: z.boolean().optional(),
+  supersededBy: z.string().min(1).optional(),
   createdAt: z.string().min(1).optional(),
 });
 
@@ -65,6 +75,7 @@ export const PlanPhaseSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   status: PhaseStatusSchema,
+  lifecycle: MemoryLifecycleSchema.optional(),
   acceptanceCriteria: z.array(z.string().min(1)).default([]),
   evidence: z.array(StoredEvidenceSchema).default([]),
   dependsOn: z.array(z.string().min(1)).default([]),
@@ -79,6 +90,7 @@ export const PlanSchema = z.object({
   priority: z.enum(["low", "medium", "high"]).optional(),
   sourceRoadmapId: z.string().min(1).optional(),
   sourceRoadmapItemId: z.string().min(1).optional(),
+  lifecycle: MemoryLifecycleSchema.optional(),
   phases: z.array(PlanPhaseSchema),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -93,6 +105,8 @@ export const DecisionSchema = z.object({
   consequences: z.string().optional(),
   alternatives: z.array(z.string().min(1)).default([]),
   relatedPlanIds: z.array(z.string().min(1)).default([]),
+  evidence: z.array(StoredEvidenceSchema).default([]),
+  lifecycle: MemoryLifecycleSchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -105,6 +119,7 @@ export const ProjectBriefSchema = z.object({
   body: z.string().min(1),
   source: z.string().min(1).optional(),
   status: BriefStatusSchema,
+  lifecycle: MemoryLifecycleSchema.optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });
@@ -116,6 +131,7 @@ export const RoadmapItemSchema = z.object({
   description: z.string().optional(),
   justification: z.string().min(1).optional(),
   status: RoadmapItemStatusSchema,
+  lifecycle: MemoryLifecycleSchema.optional(),
   evidence: z.array(StoredEvidenceSchema).default([]),
   sourcePhaseId: z.string().min(1).optional(),
 });
@@ -127,6 +143,7 @@ export const RoadmapSchema = z.object({
   description: z.string().optional(),
   status: RoadmapStatusSchema,
   sourcePlanId: z.string().min(1).optional(),
+  lifecycle: MemoryLifecycleSchema.optional(),
   items: z.array(RoadmapItemSchema),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -143,6 +160,7 @@ export const SpikeSchema = z.object({
   recommendation: z.string().min(1).optional(),
   evidence: z.array(StoredEvidenceSchema).default([]),
   status: SpikeStatusSchema,
+  lifecycle: MemoryLifecycleSchema.optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
   concludedAt: z.string().min(1).optional(),
@@ -169,6 +187,8 @@ export const FindingSchema = z.object({
   description: z.string().min(1),
   status: z.enum(["open", "closed"]),
   relatedFiles: z.array(z.string().min(1)).default([]),
+  evidence: z.array(StoredEvidenceSchema).default([]),
+  lifecycle: MemoryLifecycleSchema.optional(),
   createdAt: z.string().min(1),
   closedAt: z.string().min(1).optional(),
   relatedPlanId: z.string().min(1).optional(),
@@ -185,6 +205,47 @@ export const SessionSchema = z.object({
   changedFiles: z.array(z.string().min(1)).default([]),
   relatedPlanId: z.string().min(1).optional(),
   nextSteps: z.array(z.string().min(1)).default([]),
+  evidence: z.array(StoredEvidenceSchema).default([]),
+  lifecycle: MemoryLifecycleSchema.optional(),
+});
+
+export const ContextDocScopeSchema = z.enum(["project", "plan", "phase"]);
+export const ContextDocStatusSchema = z.enum(["pinned", "ignored"]);
+export const ContextDocConfidenceSchema = z.enum(["low", "medium", "high"]);
+
+export const ContextDocSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  scope: ContextDocScopeSchema,
+  planId: z.string().min(1).optional(),
+  phaseId: z.string().min(1).optional(),
+  path: z.string().min(1),
+  reason: z.string().min(1),
+  summary: z.string().min(1),
+  assumptions: z.array(z.string().min(1)).default([]),
+  confidence: ContextDocConfidenceSchema,
+  status: ContextDocStatusSchema,
+  readAt: z.string().min(1),
+  readCommit: z.string().min(1).optional(),
+  observedMtime: z.string().min(1).optional(),
+  lifecycle: MemoryLifecycleSchema.optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const ContextDocSuggestionSchema = z.object({
+  scope: ContextDocScopeSchema,
+  planId: z.string().min(1).optional(),
+  phaseId: z.string().min(1).optional(),
+  path: z.string().min(1),
+  reason: z.string().min(1),
+  summary: z.string().min(1),
+  assumptions: z.array(z.string().min(1)).default([]),
+  confidence: ContextDocConfidenceSchema,
+  readAt: z.string().min(1),
+  readCommit: z.string().min(1).optional(),
+  observedMtime: z.string().min(1).optional(),
+  stale: z.boolean().default(false),
 });
 
 export const AgentStageStateSchema = z.object({
@@ -209,12 +270,86 @@ export const MemoryTagSchema = z.object({
   updatedAt: z.string().min(1),
 });
 
+export const TagCatalogEntrySchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  tag: z.string().min(1),
+  description: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  usageCount: z.number().int().nonnegative().optional(),
+});
+
+export const TagAliasSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  alias: z.string().min(1),
+  tag: z.string().min(1),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const MemoryClaimSchema = z.object({
+  id: z.string().min(1),
+  projectId: z.string().min(1),
+  entityId: z.string().min(1),
+  scope: z.string().min(1),
+  role: z.string().min(1),
+  owner: z.string().min(1).optional(),
+  worktree: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  hostname: z.string().min(1).optional(),
+  status: z.enum(["active", "released", "expired"]),
+  createdAt: z.string().min(1),
+  expiresAt: z.string().min(1),
+  releasedAt: z.string().min(1).optional(),
+  updatedAt: z.string().min(1),
+});
+
+export const MemoryEvidenceRecordSchema = StoredEvidenceSchema.extend({
+  projectId: z.string().min(1),
+  entityType: MemoryEntityTypeSchema,
+  entityId: z.string().min(1),
+});
+
+export const RawMemoryEntitySchema = z.object({
+  entityType: MemoryEntityTypeSchema,
+  entityId: z.string().min(1),
+  raw: z.unknown(),
+  evidence: z.array(MemoryEvidenceRecordSchema).default([]),
+  lifecycle: MemoryLifecycleSchema.optional(),
+  tags: z.array(z.string().min(1)).default([]),
+});
+
+export const DoctorIssueSchema = z.object({
+  id: z.string().min(1),
+  severity: z.enum(["info", "warning", "error"]),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  entityType: MemoryEntityTypeSchema.optional(),
+  entityId: z.string().min(1).optional(),
+  evidence: z.array(z.string().min(1)).optional(),
+});
+
+export const DoctorReportSchema = z.object({
+  generatedAt: z.string().min(1),
+  ok: z.boolean(),
+  summary: z.object({
+    errors: z.number().int().nonnegative(),
+    warnings: z.number().int().nonnegative(),
+    info: z.number().int().nonnegative(),
+  }),
+  issues: z.array(DoctorIssueSchema),
+  markdown: z.string().min(1),
+});
+
 export const MemorySearchResultSchema = z.object({
   entityType: MemoryEntityTypeSchema,
   entityId: z.string().min(1),
   title: z.string().min(1),
   snippet: z.string().min(1),
   tags: z.array(z.string().min(1)).default([]),
+  lifecycle: MemoryLifecycleSchema.optional(),
   score: z.number().int().nonnegative(),
   updatedAt: z.string().min(1),
 });
@@ -227,6 +362,9 @@ export const GitContextSchema = z.object({
   branch: z.string().min(1).optional(),
   repositoryUrl: z.string().min(1).optional(),
   headCommit: z.string().min(1).optional(),
+  headSubject: z.string().min(1).optional(),
+  baseBranch: z.string().min(1).optional(),
+  changedSinceBase: z.array(z.string().min(1)).default([]),
   changedFiles: z.array(z.string().min(1)).default([]),
   dirty: z.boolean(),
 });
@@ -238,10 +376,12 @@ export const FindingSummarySchema = FindingSchema.pick({
   title: true,
   relatedFiles: true,
   relatedPlanId: true,
+  relatedPhaseId: true,
 });
 
 export const NextStepKindSchema = z.enum([
   "implement_phase",
+  "review_phase",
   "create_plan",
   "review_deferred",
   "blocking_finding",
@@ -386,6 +526,7 @@ export const ContextSnapshotSchema = z.object({
   recentSessions: z.array(SessionSchema),
   recentDecisions: z.array(DecisionSchema),
   openFindings: z.array(FindingSummarySchema),
+  contextDocs: z.array(ContextDocSchema).default([]),
   next: NextStepSchema,
   markdown: z.string().min(1),
 });
@@ -402,6 +543,7 @@ export const CompactContextSchema = z.object({
   recentSessions: z.array(SessionCompactSchema),
   recentDecisions: z.array(DecisionCompactSchema),
   openFindings: z.array(FindingSummarySchema),
+  contextDocs: z.array(ContextDocSchema).default([]),
   next: NextStepSchema,
   markdown: z.string().min(1),
 });
@@ -417,6 +559,7 @@ export const ResumeContextSchema = z.object({
   latestSession: SessionSchema.nullable(),
   recentDecisions: z.array(DecisionCompactSchema),
   openFindings: z.array(FindingSummarySchema),
+  contextDocs: z.array(ContextDocSchema).default([]),
   next: NextStepSchema,
   readiness: z.lazy(() => ContinuityReadinessSchema).optional(),
   roi: z.lazy(() => ContextRoiReportSchema).optional(),
@@ -443,11 +586,23 @@ export const ContextRoiReportSchema = z.object({
   missingSignals: z.array(z.string().min(1)),
 });
 
+export const ActionBriefingSchema = z.object({
+  goal: z.string().min(1),
+  lastSession: z.string().min(1).nullable(),
+  remainingWork: z.array(z.string().min(1)).default([]),
+  nextAction: z.string().min(1),
+  blockers: z.array(z.string().min(1)).default([]),
+  freshness: z.array(z.string().min(1)).default([]),
+  suggestedCommands: z.array(z.string().min(1)).default([]),
+});
+
 export const ContinueResultSchema = z.object({
   context: CompactContextSchema,
   next: NextStepSchema,
   phase: PhaseDetailSchema.nullable(),
   roadmapItem: RoadmapItemSchema.nullable(),
+  contextDocs: z.array(ContextDocSchema).default([]),
+  actionBriefing: ActionBriefingSchema.optional(),
   latestSession: SessionSchema.nullable(),
   openSession: SessionSchema.nullable(),
   newSession: SessionSchema.nullable(),
@@ -466,6 +621,7 @@ export const CheckpointInputSchema = z.object({
   branch: z.string().min(1).optional(),
   startedAt: z.string().min(1).optional(),
   endedAt: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const NoteInputSchema = z.object({
@@ -474,6 +630,7 @@ export const NoteInputSchema = z.object({
   nextSteps: z.array(z.string().min(1)).default([]),
   relatedPlanId: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const DecideInputSchema = z.object({
@@ -483,6 +640,14 @@ export const DecideInputSchema = z.object({
   consequences: z.string().optional(),
   alternatives: z.array(z.string().min(1)).default([]),
   relatedPlanIds: z.array(z.string().min(1)).default([]),
+  evidence: z.array(EvidenceSchema).default([]),
+});
+
+export const ReadyInputSchema = z.object({
+  planId: z.string().min(1).optional(),
+  phaseId: z.string().min(1).optional(),
+  role: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const DoneInputSchema = z
@@ -492,7 +657,7 @@ export const DoneInputSchema = z
     findingId: z.string().min(1).optional(),
     evidence: z.array(EvidenceSchema).default([]),
   })
-  .refine((value) => !(value.findingId && (value.planId || value.phaseId || value.evidence.length > 0)), {
+  .refine((value) => !(value.findingId && (value.planId || value.phaseId)), {
     message: "Provide either findingId or plan/phase completion options",
   });
 
@@ -523,6 +688,7 @@ export const BlockedResultSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const PromptFormatSchema = z.enum(["markdown", "agent", "codex", "claude"]);
+export const PromptRoleSchema = z.enum(["planner", "implementer", "reviewer", "handoff"]);
 
 export const PromptSectionSchema = z.object({
   id: z.string().min(1),
@@ -534,6 +700,7 @@ export const PromptSectionSchema = z.object({
 
 export const PromptResultSchema = z.object({
   format: PromptFormatSchema,
+  role: PromptRoleSchema.optional(),
   content: z.string().min(1),
   estimatedTokens: z.number().int().nonnegative(),
   maxTokens: z.number().int().positive().optional(),
@@ -549,6 +716,27 @@ export const PromptResultSchema = z.object({
     })
     .optional(),
 });
+
+export const ReadyResultSchema = z.object({
+  phase: PhaseDetailSchema,
+  stage: AgentStageStateSchema,
+  next: NextStepSchema,
+});
+
+export const CheckpointGitDraftSchema = z.object({
+  summary: z.string().min(1),
+  changedFiles: z.array(z.string().min(1)).default([]),
+  nextSteps: z.array(z.string().min(1)).default([]),
+  relatedPlanId: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
+  git: GitContextSchema,
+});
+
+export const CheckpointFromGitResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("draft"), draft: CheckpointGitDraftSchema }),
+  z.object({ kind: z.literal("session"), session: SessionSchema, draft: CheckpointGitDraftSchema }),
+]);
 
 export const DemoStepSchema = z.object({
   title: z.string().min(1),
@@ -645,6 +833,7 @@ export const RecordDecisionInputSchema = z.object({
   consequences: z.string().optional(),
   alternatives: z.array(z.string().min(1)).default([]),
   relatedPlanIds: z.array(z.string().min(1)).default([]),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const SetBriefInputSchema = z.object({
@@ -803,6 +992,7 @@ export const SessionSummaryInputSchema = z.object({
   branch: z.string().min(1).optional(),
   startedAt: z.string().min(1).optional(),
   endedAt: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const RecordFindingInputSchema = z.object({
@@ -813,6 +1003,7 @@ export const RecordFindingInputSchema = z.object({
   relatedFiles: z.array(z.string().min(1)).default([]),
   relatedPlanId: z.string().min(1).optional(),
   relatedPhaseId: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const UpdateFindingInputSchema = z
@@ -824,6 +1015,7 @@ export const UpdateFindingInputSchema = z
     relatedFiles: z.array(z.string().min(1)).optional(),
     relatedPlanId: z.string().min(1).optional(),
     relatedPhaseId: z.string().min(1).optional(),
+    evidence: z.array(EvidenceSchema).optional(),
   })
   .refine(
     (value) =>
@@ -833,7 +1025,8 @@ export const UpdateFindingInputSchema = z
       value.description !== undefined ||
       value.relatedFiles !== undefined ||
       value.relatedPlanId !== undefined ||
-      value.relatedPhaseId !== undefined,
+      value.relatedPhaseId !== undefined ||
+      value.evidence !== undefined,
     {
       message: "Provide at least one finding update",
     },
@@ -856,6 +1049,7 @@ export const StartSessionInputSchema = z.object({
   relatedPlanId: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
   startedAt: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
 });
 
 export const CaptureSessionInputSchema = z
@@ -865,6 +1059,7 @@ export const CaptureSessionInputSchema = z
     nextSteps: z.array(z.string().min(1)).optional(),
     relatedPlanId: z.string().min(1).optional(),
     branch: z.string().min(1).optional(),
+    evidence: z.array(EvidenceSchema).optional(),
   })
   .refine(
     (value) =>
@@ -872,7 +1067,8 @@ export const CaptureSessionInputSchema = z
       value.changedFiles !== undefined ||
       value.nextSteps !== undefined ||
       value.relatedPlanId !== undefined ||
-      value.branch !== undefined,
+      value.branch !== undefined ||
+      value.evidence !== undefined,
     {
       message: "Provide at least one session field to capture",
     },
@@ -885,6 +1081,13 @@ export const EndSessionInputSchema = z.object({
   relatedPlanId: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
   endedAt: z.string().min(1).optional(),
+  evidence: z.array(EvidenceSchema).default([]),
+});
+
+export const DocsTaskSchema = z.enum(["current"]);
+export const UpsertContextDocInputSchema = z.object({
+  task: DocsTaskSchema.default("current"),
+  path: z.string().min(1),
 });
 
 export const SetStageInputSchema = z.object({
@@ -899,12 +1102,35 @@ export const SetMemoryTagsInputSchema = z.object({
   tags: z.array(z.string().min(1)).default([]),
 });
 
+export const CreateTagInputSchema = z.object({
+  tag: z.string().min(1),
+  description: z.string().min(1).optional(),
+});
+
+export const CreateTagAliasInputSchema = z.object({
+  alias: z.string().min(1),
+  tag: z.string().min(1),
+});
+
+export const ClaimInputSchema = z.object({
+  entityId: z.string().min(1),
+  scope: z.string().min(1),
+  ttl: z.string().min(1).default("2h"),
+  role: z.string().min(1),
+});
+
+export const RefreshClaimInputSchema = z.object({
+  claimId: z.string().min(1),
+  ttl: z.string().min(1).default("2h"),
+});
+
 export type Project = z.infer<typeof ProjectSchema>;
 export type Plan = z.infer<typeof PlanSchema>;
 export type PlanPhase = z.infer<typeof PlanPhaseSchema>;
 export type PlanStatus = z.infer<typeof PlanStatusSchema>;
 export type PhaseStatus = z.infer<typeof PhaseStatusSchema>;
 export type Evidence = z.infer<typeof EvidenceSchema>;
+export type MemoryLifecycle = z.infer<typeof MemoryLifecycleSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectBrief = z.infer<typeof ProjectBriefSchema>;
 export type Roadmap = z.infer<typeof RoadmapSchema>;
@@ -917,12 +1143,25 @@ export type AgentStage = z.infer<typeof AgentStageSchema>;
 export type AgentStageState = z.infer<typeof AgentStageStateSchema>;
 export type MemoryEntityType = z.infer<typeof MemoryEntityTypeSchema>;
 export type MemoryTag = z.infer<typeof MemoryTagSchema>;
+export type TagCatalogEntry = z.infer<typeof TagCatalogEntrySchema>;
+export type TagAlias = z.infer<typeof TagAliasSchema>;
+export type MemoryClaim = z.infer<typeof MemoryClaimSchema>;
+export type MemoryEvidenceRecord = z.infer<typeof MemoryEvidenceRecordSchema>;
+export type RawMemoryEntity = z.infer<typeof RawMemoryEntitySchema>;
+export type DoctorIssue = z.infer<typeof DoctorIssueSchema>;
+export type DoctorReport = z.infer<typeof DoctorReportSchema>;
 export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>;
 export type Finding = z.infer<typeof FindingSchema>;
 export type Session = z.infer<typeof SessionSchema>;
+export type ContextDoc = z.infer<typeof ContextDocSchema>;
+export type ContextDocSuggestion = z.infer<typeof ContextDocSuggestionSchema>;
+export type ContextDocScope = z.infer<typeof ContextDocScopeSchema>;
+export type ContextDocStatus = z.infer<typeof ContextDocStatusSchema>;
+export type ContextDocConfidence = z.infer<typeof ContextDocConfidenceSchema>;
 export type GitContext = z.infer<typeof GitContextSchema>;
 export type FindingSummary = z.infer<typeof FindingSummarySchema>;
 export type NextStep = z.infer<typeof NextStepSchema>;
+export type NextStepKind = z.infer<typeof NextStepKindSchema>;
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 export type PlanSummary = z.infer<typeof PlanSummarySchema>;
 export type ProjectBriefSummary = z.infer<typeof ProjectBriefSummarySchema>;
@@ -936,8 +1175,13 @@ export type CompactContext = z.infer<typeof CompactContextSchema>;
 export type ResumeContext = z.infer<typeof ResumeContextSchema>;
 export type ContinuityReadiness = z.infer<typeof ContinuityReadinessSchema>;
 export type ContextRoiReport = z.infer<typeof ContextRoiReportSchema>;
+export type ActionBriefing = z.infer<typeof ActionBriefingSchema>;
 export type ContinueResult = z.infer<typeof ContinueResultSchema>;
 export type CheckpointInput = z.infer<typeof CheckpointInputSchema>;
+export type ReadyInput = z.infer<typeof ReadyInputSchema>;
+export type ReadyResult = z.infer<typeof ReadyResultSchema>;
+export type CheckpointGitDraft = z.infer<typeof CheckpointGitDraftSchema>;
+export type CheckpointFromGitResult = z.infer<typeof CheckpointFromGitResultSchema>;
 export type NoteInput = z.infer<typeof NoteInputSchema>;
 export type DecideInput = z.infer<typeof DecideInputSchema>;
 export type DoneInput = z.infer<typeof DoneInputSchema>;
@@ -945,6 +1189,7 @@ export type BlockedInput = z.infer<typeof BlockedInputSchema>;
 export type DoneResult = z.infer<typeof DoneResultSchema>;
 export type BlockedResult = z.infer<typeof BlockedResultSchema>;
 export type PromptFormat = z.infer<typeof PromptFormatSchema>;
+export type PromptRole = z.infer<typeof PromptRoleSchema>;
 export type PromptSection = z.infer<typeof PromptSectionSchema>;
 export type PromptResult = z.infer<typeof PromptResultSchema>;
 export type DemoStep = z.infer<typeof DemoStepSchema>;
@@ -972,8 +1217,13 @@ export type CaptureSessionInput = z.infer<typeof CaptureSessionInputSchema>;
 export type EndSessionInput = z.infer<typeof EndSessionInputSchema>;
 export type SetStageInput = z.infer<typeof SetStageInputSchema>;
 export type SetMemoryTagsInput = z.infer<typeof SetMemoryTagsInputSchema>;
+export type CreateTagInput = z.infer<typeof CreateTagInputSchema>;
+export type CreateTagAliasInput = z.infer<typeof CreateTagAliasInputSchema>;
+export type ClaimInput = z.infer<typeof ClaimInputSchema>;
+export type RefreshClaimInput = z.infer<typeof RefreshClaimInputSchema>;
+export type DocsTask = z.infer<typeof DocsTaskSchema>;
+export type UpsertContextDocInput = z.infer<typeof UpsertContextDocInputSchema>;
 export type Event = z.infer<typeof EventSchema>;
-export type NextStepKind = z.infer<typeof NextStepKindSchema>;
 export type NextStepStaleness = z.infer<typeof NextStepStalenessSchema>;
 export type AdvancePlanInput = z.infer<typeof AdvancePlanInputSchema>;
 export type AdvanceResult = z.infer<typeof AdvanceResultSchema>;

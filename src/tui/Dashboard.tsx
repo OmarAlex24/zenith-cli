@@ -585,7 +585,7 @@ function HomeView({ data, bodyHeight }: { data: DashboardData; bodyHeight: numbe
             {data.spikes.length === 0 ? (
               <>
                 <text fg={palette.accentDim}>◆  no spikes</text>
-                <text fg={palette.faint}>zenith spike create ...</text>
+                <text fg={palette.faint}>zenith memory spike create ...</text>
               </>
             ) : (
               data.spikes.slice(0, 3).map((spike) => (
@@ -797,7 +797,7 @@ function BriefView({ data }: { data: DashboardData }) {
           ))}
         </scrollbox>
       ) : (
-        <text fg={palette.muted}>No brief recorded. Use `zenith brief set` to define project intent.</text>
+        <text fg={palette.muted}>No brief recorded. Use `zenith memory brief set` to define project intent.</text>
       )}
     </Panel>
   );
@@ -989,7 +989,7 @@ function SpikesView({ data, selectedIndex, bodyHeight, contentHasFocus }: Sectio
       ) : (
         <>
           <text fg={palette.accentDim}>◆  no spikes recorded</text>
-          <text fg={palette.faint}>zenith spike create ...</text>
+          <text fg={palette.faint}>zenith memory spike create ...</text>
         </>
       )}
     </MasterDetail>

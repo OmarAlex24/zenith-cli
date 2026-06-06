@@ -241,7 +241,10 @@ export function activePlanSummary(plan: Plan | null): { id: string; title: strin
     return null;
   }
 
-  const phase = plan.phases.find((candidate) => candidate.status === "in_progress") ?? plan.phases.find((candidate) => candidate.status === "todo");
+  const phase =
+    plan.phases.find((candidate) => candidate.status === "in_progress") ??
+    plan.phases.find((candidate) => candidate.status === "needs_review") ??
+    plan.phases.find((candidate) => candidate.status === "todo");
   return {
     id: plan.id,
     title: plan.title,

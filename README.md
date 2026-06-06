@@ -4,6 +4,8 @@ Local-first project memory and agent coordination CLI for developers using AI co
 
 This MVP stores private project memory locally, exposes stable JSON commands for agents, and provides a read-only OpenTUI dashboard for humans.
 
+Zenith does not replace GitHub Issues, Linear, docs, or ADRs. Its job is narrower: keep local continuity of work for humans and agents with lightweight traceability.
+
 ## Status
 
 Zenith is source-first while the repository is prepared for open-source distribution. The supported development and OpenTUI path is Bun from this checkout. A packaged headless launcher can be built locally for curl/Homebrew-style distribution templates; npm publication remains intentionally out of scope.
@@ -38,7 +40,7 @@ bun run zenith demo list --json
 bun run zenith demo show continuity
 ```
 
-The `continuity` guide explains when Zenith helps, local storage and privacy boundaries, the daily `continue` → work → `checkpoint`/`done` loop, prompt handoff, benchmark proof, and source/packaged install paths. `demo` is read-only; it prints deterministic guide content and does not create sessions, benchmark runs, or files.
+The `continuity` guide explains when Zenith helps, local storage and privacy boundaries, the daily `continue` → work → `session checkpoint`/`plan done` loop, explicit handoff, benchmark proof, and source/packaged install paths. `demo` is read-only; it prints deterministic guide content and does not create sessions, benchmark runs, or files.
 
 Register the current project when needed:
 
@@ -119,8 +121,9 @@ SQLite enforces core integrity such as foreign keys, status guards, active-plan 
 - `decision`: technical or strategic choice.
 - `finding`: bug, risk, debt, or gap.
 - `session`: work continuity log.
+- `context_doc`: pinned or ignored documentation anchor for the current project, plan, or phase.
 
-Use `plan` only for executable work. Store non-executable project memory with `brief`, `roadmap`, or `spike`.
+Use `plan` only for executable work. Store non-executable project memory with `memory brief`, `roadmap`, or `memory spike`.
 
 ## Daily Flow
 
@@ -128,20 +131,35 @@ Use these compact commands for normal continuity work:
 
 ```bash
 zenith continue
-zenith prompt --format codex --max-tokens 800
-zenith checkpoint "What changed" --next "What should happen next"
-zenith done
-zenith blocked "What is blocked" --description "Why"
+zenith handoff --to implementer --compact
+zenith session checkpoint --from-git
+zenith session checkpoint "What changed" --next "What should happen next"
+zenith plan ready --evidence "Verification passed"
+zenith plan done
+zenith finding record "What is blocked" --description "Why"
 ```
 
 When working from this source checkout and the `zenith` binary is not on `PATH`, prefix the same commands with `bun run`, for example `bun run zenith continue`.
 
-`continue`, `prompt`, `roi`, `demo`, benchmark read commands, TUI, and telemetry are read-only unless a command explicitly says it writes. `checkpoint`, `done`, and `blocked` are intentional writes for progress, phase completion, and blockers.
+`continue` is the default briefing. It is organized around where the work stands, what changed last, what remains, the next action, risk radar, freshness, and worktree state. In JSON, the optional `actionBriefing` object carries the same operational summary.
+
+`continue`, `handoff`, `agent prompt`, `session checkpoint --from-git` without `--save`, `docs suggest`, `report roi`, `demo`, benchmark read commands, TUI, and telemetry are read-only unless a command explicitly says it writes. `session checkpoint --from-git --save`, `session checkpoint`, `session note`, `decision record`, `plan ready`, `plan done`, `plan block`, `finding record`, and `docs pin/ignore` are intentional writes.
+
+Use `plan ready` when implementation and verification are complete but review still needs to happen. It marks the phase `needs_review`, appends evidence, and sets `stage=review`. `plan done` still means reviewed and complete; `plan complete` requires every phase to be `done`.
+
+Use docs anchors when task context depends on repo documentation:
+
+```bash
+zenith docs suggest --task current
+zenith docs pin docs/reference.md --task current
+zenith docs ignore docs/old-plan.md --task current
+zenith docs list --task current
+```
 
 Use read-only proof and handoff commands when you need to measure or transfer context:
 
 ```bash
-zenith roi
+zenith report roi
 zenith demo show continuity
 zenith benchmark list
 zenith benchmark task continue-resume --variant prompt
@@ -153,7 +171,7 @@ Agents should start with compact markdown context:
 
 ```bash
 zenith continue
-zenith prompt --format codex --max-tokens 800
+zenith handoff --to implementer --compact
 ```
 
 Use structured JSON only when code needs to inspect fields programmatically or submit a typed payload:
@@ -161,12 +179,14 @@ Use structured JSON only when code needs to inspect fields programmatically or s
 ```bash
 zenith context compact --json
 zenith plan next --json
-zenith phase show <phase-id> --json
+zenith plan phase show <phase-id> --json
 ```
 
 For code reviews, use the installed `zenith-pr-review` skill. For multi-agent handoffs, use `zenith-multi-agent` or the role-specific `zenith-planner`, `zenith-implementer`, and `zenith-reviewer` skills.
 
 ## Command Reference
+
+For a Spanish, pasteable product-level overview of what Zenith can do and when it fits a project, see [docs/capabilities.md](docs/capabilities.md).
 
 The full command catalog, JSON envelope, and machine-readable examples live in [docs/reference.md](docs/reference.md). JSON APIs and schemas remain stable for integrations, scripts, and tests.
 

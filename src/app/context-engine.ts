@@ -5,6 +5,7 @@ import {
   GitContextSchema,
   ResumeContextSchema,
   type CompactContext,
+  type ContextDoc,
   type ContextSnapshot,
   type Decision,
   type DecisionCompact,
@@ -64,6 +65,7 @@ export class ContextEngine {
       recentSessions: snapshot.recentSessions.slice(0, 3).map(toSessionCompact),
       recentDecisions: snapshot.recentDecisions.slice(0, 5).map(toDecisionCompact),
       openFindings: snapshot.openFindings,
+      contextDocs: snapshot.contextDocs.slice(0, 10),
       next: snapshot.next,
       markdown: renderCompactMarkdown(snapshot),
     });
@@ -82,6 +84,7 @@ export class ContextEngine {
       latestSession: snapshot.recentSessions[0] ?? null,
       recentDecisions: snapshot.recentDecisions.slice(0, 5).map(toDecisionCompact),
       openFindings: snapshot.openFindings,
+      contextDocs: snapshot.contextDocs.slice(0, 10),
       next: snapshot.next,
       markdown: renderResumeMarkdown(snapshot),
     });
@@ -123,6 +126,7 @@ export class ContextEngine {
         recentSessions: [],
         recentDecisions: [],
         openFindings: [],
+        contextDocs: [],
         next: {
           recommendation: "Run zenith init",
           reason: "Project is not registered in Zenith yet.",
@@ -137,6 +141,7 @@ export class ContextEngine {
     const recentSessions = this.repository.listRecentSessions(project.id, 5);
     const recentDecisions = this.repository.listDecisions(project.id, 5);
     const openFindings = this.repository.listOpenFindings(project.id).map(toFindingSummary);
+    const contextDocs = this.repository.listContextDocs(project.id);
     const selectedPhase = options.phaseId ? this.resolvePhase(project, options.phaseId) : null;
 
     const worktreeKey = git.worktreeRoot ?? git.rootPath;
@@ -163,6 +168,7 @@ export class ContextEngine {
       recentSessions,
       recentDecisions,
       openFindings,
+      contextDocs,
       next: computeNext(activePlan, recentSessions, openFindings, recentRoadmaps, {}, {
         ambiguous: resolution.ambiguous,
         candidates: resolution.candidates,
@@ -201,6 +207,7 @@ function renderContextMarkdown(context: ContextParts): string {
   appendRecentSessions(lines, context.recentSessions);
   appendRecentDecisions(lines, context.recentDecisions);
   appendOpenFindings(lines, context.openFindings);
+  appendContextDocs(lines, context.contextDocs);
   return lines.join("\n");
 }
 
@@ -211,6 +218,7 @@ function renderCompactMarkdown(snapshot: ContextSnapshot): string {
   appendPhaseDetails(lines, focusPhaseDetail(snapshot));
   appendLatestSession(lines, snapshot.recentSessions);
   appendOpenFindings(lines, snapshot.openFindings);
+  appendContextDocs(lines, snapshot.contextDocs);
   return lines.join("\n");
 }
 
@@ -222,6 +230,7 @@ function renderResumeMarkdown(snapshot: ContextSnapshot): string {
   appendLatestSession(lines, snapshot.recentSessions);
   appendRecentDecisions(lines, snapshot.recentDecisions);
   appendOpenFindings(lines, snapshot.openFindings);
+  appendContextDocs(lines, snapshot.contextDocs);
   return lines.join("\n");
 }
 
@@ -415,6 +424,18 @@ function appendOpenFindings(lines: string[], findings: FindingSummary[]): void {
   }
 }
 
+function appendContextDocs(lines: string[], docs: ContextDoc[]): void {
+  lines.push("", "## Context docs");
+  if (docs.length === 0) {
+    lines.push("- No context docs anchored.");
+    return;
+  }
+
+  for (const doc of docs.slice(0, 6)) {
+    lines.push(`- ${doc.status}: ${doc.path} (${doc.confidence}) - ${truncate(doc.reason, 120)}`);
+  }
+}
+
 function isBlockingSeverity(severity: string): boolean {
   return severity === "critical" || severity === "high";
 }
@@ -510,6 +531,9 @@ function formatGit(git: ContextParts["git"]): string {
   ];
   if (git.headCommit) {
     parts.push(`head ${git.headCommit.slice(0, 12)}`);
+  }
+  if (git.baseBranch) {
+    parts.push(`base ${git.baseBranch}`);
   }
   return parts.join(", ");
 }

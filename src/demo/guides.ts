@@ -21,7 +21,7 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
     ],
     privacy: [
       "Zenith stores project memory locally under the configured Zenith home.",
-      "Read-only commands such as continue, roi, prompt, demo, benchmark list, and the TUI do not mutate memory by default.",
+      "Read-only commands such as continue, report roi, handoff, agent prompt, demo, benchmark list, and the TUI do not mutate memory by default.",
       "Benchmark runs store strict metadata only; transcripts, prompts, outputs, secrets, tokens, and credentials are rejected.",
     ],
     prerequisites: [
@@ -34,13 +34,13 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
         title: "Inspect continuity",
         purpose: "Show the single command an agent should run first.",
         commands: ["bun run zenith continue"],
-        expected: "Read readiness, ROI, next action, current phase, dirty state, sessions, warnings, and markdown.",
+        expected: "Read where we are, what changed last, what remains, next action, risk radar, freshness, worktree state, and ROI.",
         durationMinutes: 1,
       },
       {
         title: "Render a copyable prompt",
         purpose: "Show how to hand context to an agent without pasting private transcripts.",
-        commands: ["bun run zenith prompt --format codex --max-tokens 800"],
+        commands: ["bun run zenith handoff --to implementer --compact"],
         expected: "The output keeps next-step and phase context first and omits internal metadata unless requested.",
         durationMinutes: 1,
       },
@@ -48,8 +48,10 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
         title: "Use the daily loop",
         purpose: "Demonstrate explicit progress capture boundaries.",
         commands: [
-          "bun run zenith checkpoint \"Verified current phase\" --next \"Run full verification\"",
-          "bun run zenith done --evidence \"Verification passed\"",
+          "bun run zenith session checkpoint --from-git",
+          "bun run zenith session checkpoint \"Verified current phase\" --next \"Run full verification\"",
+          "bun run zenith plan ready --evidence \"Verification passed\"",
+          "bun run zenith plan done --evidence \"Review passed\"",
         ],
         expected: "Only explicit mutating commands write sessions, decisions, findings, or phase progress.",
         durationMinutes: 1,
@@ -75,14 +77,14 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
     ],
     nextSteps: [
       "Install the launcher with scripts/install.sh or use the Homebrew/curl packaging templates when publishing a release.",
-      "Keep using continue at the start of each agent run and checkpoint or done only when progress should be recorded.",
+      "Keep using continue at the start of each agent run; use checkpoint, ready, or done only when progress should be recorded.",
       "Run benchmark tasks manually when comparing no-Zenith, handoff, continue, and prompt workflows.",
     ],
   },
   {
     id: "daily-loop",
     title: "Daily Agent Loop",
-    description: "A shorter loop for starting work, capturing a checkpoint, and closing a clean phase.",
+    description: "A shorter loop for starting work, capturing a checkpoint, and handing verified work to review.",
     durationMinutes: 3,
     tags: ["continue", "checkpoint", "done"],
     whenItHelps: [
@@ -91,7 +93,7 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
     ],
     privacy: [
       "continue is read-only unless explicit session flags are passed.",
-      "checkpoint and done are intentional writes and should summarize, not store transcripts.",
+      "checkpoint, ready, and done are intentional writes and should summarize, not store transcripts.",
     ],
     prerequisites: ["Project is registered with zenith init.", "An active plan or roadmap item exists."],
     steps: [
@@ -105,19 +107,19 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
       {
         title: "Capture useful progress",
         purpose: "Record a concise handoff point.",
-        commands: ["zenith checkpoint \"Implemented focused change\" --next \"Run verification\""],
+        commands: ["zenith session checkpoint --from-git", "zenith session checkpoint \"Implemented focused change\" --next \"Run verification\""],
         expected: "A session entry records summary and next step without storing a transcript.",
         durationMinutes: 1,
       },
       {
-        title: "Close verified work",
-        purpose: "Advance a clean current phase.",
-        commands: ["zenith done --evidence \"bun test passed\""],
-        expected: "The phase advances only through an explicit mutating command.",
+        title: "Hand verified work to review",
+        purpose: "Mark implementation ready without claiming review is complete.",
+        commands: ["zenith plan ready --evidence \"bun test passed\""],
+        expected: "The phase becomes needs_review and stage=review is published through an explicit mutating command.",
         durationMinutes: 1,
       },
     ],
-    nextSteps: ["Use zenith prompt --format codex --max-tokens 800 when handing context to a different agent."],
+    nextSteps: ["Use zenith handoff --to reviewer --compact when handing context to a reviewer."],
   },
   {
     id: "benchmark-proof",
@@ -164,7 +166,7 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
         durationMinutes: 1,
       },
     ],
-    nextSteps: ["Use zenith roi beside benchmark compare output when explaining context compression."],
+    nextSteps: ["Use zenith report roi beside benchmark compare output when explaining context compression."],
   },
 ];
 

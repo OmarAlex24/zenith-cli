@@ -20,13 +20,14 @@ describe("git adapter", () => {
 
     expect(summary.isGitRepo).toBe(false);
     expect(summary.rootPath).toBe(dir);
+    expect(summary.changedSinceBase).toEqual([]);
     expect(summary.changedFiles).toEqual([]);
   });
 
   test("detects root, branch, and changed files in a git repo", async () => {
     const dir = makeTempDir();
     tempDirs.push(dir);
-    await runCommand(["git", "init"], dir);
+    await runCommand(["git", "init", "-b", "main"], dir);
     await runCommand(["git", "config", "user.email", "zenith@example.com"], dir);
     await runCommand(["git", "config", "user.name", "Zenith Test"], dir);
     writeFileSync(join(dir, "README.md"), "hello\n", "utf8");
@@ -40,6 +41,33 @@ describe("git adapter", () => {
     expect(summary.rootPath).toBe(realpathSync(dir));
     expect(summary.changedFiles).toContain("changed.txt");
     expect(summary.headCommit).toBeTruthy();
+    expect(summary.headSubject).toBe("init");
+    expect(summary.baseBranch).toBe("main");
+    expect(summary.changedSinceBase).toEqual([]);
+  });
+
+  test("reports files changed since the detected base branch", async () => {
+    const dir = makeTempDir();
+    tempDirs.push(dir);
+    await runCommand(["git", "init", "-b", "main"], dir);
+    await runCommand(["git", "config", "user.email", "zenith@example.com"], dir);
+    await runCommand(["git", "config", "user.name", "Zenith Test"], dir);
+    writeFileSync(join(dir, "README.md"), "hello\n", "utf8");
+    await runCommand(["git", "add", "README.md"], dir);
+    await runCommand(["git", "commit", "-m", "init"], dir);
+    await runCommand(["git", "switch", "-c", "feature/context"], dir);
+    writeFileSync(join(dir, "feature.txt"), "feature\n", "utf8");
+    await runCommand(["git", "add", "feature.txt"], dir);
+    await runCommand(["git", "commit", "-m", "feature change"], dir);
+    writeFileSync(join(dir, "dirty.txt"), "dirty\n", "utf8");
+
+    const summary = await new GitAdapter().inspect(dir);
+
+    expect(summary.branch).toBe("feature/context");
+    expect(summary.headSubject).toBe("feature change");
+    expect(summary.baseBranch).toBe("main");
+    expect(summary.changedSinceBase).toContain("feature.txt");
+    expect(summary.changedFiles).toContain("dirty.txt");
   });
 
   test("preserves porcelain paths for modified, untracked, and renamed files", async () => {

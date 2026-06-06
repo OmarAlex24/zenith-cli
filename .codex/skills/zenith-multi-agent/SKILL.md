@@ -8,7 +8,7 @@ description: Use as the shared Zenith wake-on-event choreography protocol refere
 Use this skill as the protocol reference for decentralized local-agent handoffs. For normal phase work, use the role-specific skills instead:
 
 - `zenith-planner`: chooses or creates executable work and sets `stage=implement`.
-- `zenith-implementer`: waits for `stage=implement`, implements/verifies, and sets `stage=review`.
+- `zenith-implementer`: waits for `stage=implement`, implements/verifies, and runs `zenith plan ready` to mark `needs_review` and set `stage=review`.
 - `zenith-reviewer`: waits for `stage=review`, records findings or advances clean phases, and sets `stage=done`.
 
 Use `zenith-multi-agent` when designing or debugging the shared choreography contract, coordinating roles outside planner/implementer/reviewer, or checking stage/watch scope rules. Zenith is the deterministic memory and wake predicate surface; each agent session stays responsible for its own terminal, model, and harness.
@@ -18,6 +18,7 @@ Use `zenith-multi-agent` when designing or debugging the shared choreography con
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Do not use MCP/Channels as the handoff mechanism for this workflow.
 - Keep each agent in a live terminal session such as tmux or screen when its harness needs a background watcher to wake it.
+- Dispatch `review_phase` to a reviewer; dispatch `implement_phase` to an implementer.
 - Stop instead of looping when `zenith plan next --json` returns `blocking_finding`, `ambiguous_focus`, `blocked_dependency`, `review_finding`, `review_deferred`, or `create_plan_empty`.
 - Use timeouts on watches so a stalled workflow returns control.
 
@@ -26,8 +27,8 @@ Use `zenith-multi-agent` when designing or debugging the shared choreography con
 Stages are additive choreography state and do not change `plan next` determinism.
 
 ```bash
-zenith stage set --json --input -
-zenith watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent stage set --json --input -
+zenith agent watch --until stage=implement,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 ```
 
 Stage payload:
@@ -48,11 +49,11 @@ Use `plan`, `implement`, `review`, and `done` as the shared stage vocabulary. In
 
 Use this only for custom roles or when a role-specific skill does not fit.
 
-1. Run `zenith context compact --json`, `zenith plan next --json`, and, when scoped to a phase, `zenith phase show <phase-id> --json`.
-2. If this role should wait, start a background watch with the local harness primitive: `zenith watch --until stage=<your-role>,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>`.
-3. When the watch exits successfully, run `zenith diff --json` to inspect handoff activity since the latest ended session.
+1. Run `zenith context compact --json`, `zenith plan next --json`, and, when scoped to a phase, `zenith plan phase show <phase-id> --json`.
+2. If this role should wait, start a background watch with the local harness primitive: `zenith agent watch --until stage=<your-role>,plan=<plan-id>,phase=<phase-id> --json --timeout <ms> --poll-interval <ms>`.
+3. When the watch exits successfully, run `zenith report diff --json` to inspect handoff activity since the latest ended session.
 4. Perform only this role's work.
-5. Transition to the next stage with `zenith stage set --json --input -`.
+5. Transition to the next stage with `zenith agent stage set --json --input -`.
 6. Relaunch the next watch or stop when the phase/plan is done.
 
 ## Standard Handoff
@@ -60,7 +61,7 @@ Use this only for custom roles or when a role-specific skill does not fit.
 For this common path, invoke the role-specific skills:
 
 - `zenith-planner` sets `stage=implement` with a concrete plan/phase handoff.
-- `zenith-implementer` waits for `stage=implement`, edits code, verifies, then sets `stage=review`.
+- `zenith-implementer` waits for `stage=implement`, edits code, verifies, then runs `zenith plan ready` to mark `needs_review` and set `stage=review`.
 - `zenith-reviewer` waits for `stage=review`, records findings or runs `zenith plan advance --json --input -`, then sets `stage=done` or returns to `stage=implement` with a concrete note.
 
 Generated for codex.

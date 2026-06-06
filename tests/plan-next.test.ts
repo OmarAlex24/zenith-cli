@@ -44,6 +44,7 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
     startedAt: "2024-01-01T00:00:00.000Z",
     changedFiles: [],
     nextSteps: [],
+    evidence: [],
     ...overrides,
   };
 }
@@ -119,6 +120,20 @@ describe("computeNext — characterization tests", () => {
     expect(result.reason).toBe("Active plan has an in-progress phase.");
     expect(result.planId).toBe("plan_ip_1");
     expect(result.phaseId).toBe("phase_ip_1");
+    expect(result.evidence).toEqual(["Auth Plan"]);
+  });
+
+  test("2b. active plan with needs_review phase", () => {
+    const phase = makePhase({ id: "phase_review_1", title: "Validate Auth Module", status: "needs_review" });
+    const plan = makePlan({ id: "plan_review_1", title: "Auth Plan", phases: [phase] });
+
+    const result = computeNext(plan, [], []);
+
+    expect(result.kind).toBe("review_phase" satisfies NextStepKind);
+    expect(result.recommendation).toBe("Review phase: Validate Auth Module");
+    expect(result.reason).toBe("Active plan has a phase ready for review.");
+    expect(result.planId).toBe("plan_review_1");
+    expect(result.phaseId).toBe("phase_review_1");
     expect(result.evidence).toEqual(["Auth Plan"]);
   });
 
@@ -296,6 +311,13 @@ describe("computeNext — characterization tests", () => {
     const plan = makePlan({ id: "plan1", title: "Plan", phases: [phase] });
     const result = computeNext(plan, [], []);
     expect(result.kind).toBe("implement_phase" satisfies NextStepKind);
+  });
+
+  test("kind=review_phase for needs_review phase", () => {
+    const phase = makePhase({ id: "ph_review", title: "Review it", status: "needs_review" });
+    const plan = makePlan({ id: "plan_review", title: "Plan", phases: [phase] });
+    const result = computeNext(plan, [], []);
+    expect(result.kind).toBe("review_phase" satisfies NextStepKind);
   });
 
   test("kind=blocked_dependency for blocked phase", () => {

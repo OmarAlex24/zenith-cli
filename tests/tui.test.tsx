@@ -450,7 +450,7 @@ describe("OpenTUI dashboard", () => {
     });
     await setup2.flush();
     const spikesFrame = setup2.captureCharFrame();
-    expect(spikesFrame).toContain("zenith spike create");
+    expect(spikesFrame).toContain("zenith memory spike create");
 
     act(() => {
       setup.renderer.destroy();
@@ -597,6 +597,16 @@ function makeContinuity(status: ProjectStatus, context: CompactContext): Continu
         }
       : null,
     roadmapItem: null,
+    contextDocs: [],
+    actionBriefing: {
+      goal: "Zenith MVP",
+      lastSession: status.recentSessions[0]?.summary ?? null,
+      remainingWork: ["Current phase: Foundation (todo)"],
+      nextAction: status.next.recommendation ?? "none",
+      blockers: [],
+      freshness: ["Working tree clean."],
+      suggestedCommands: ["zenith plan next --json"],
+    },
     latestSession: status.recentSessions[0] ?? null,
     openSession: null,
     newSession: null,
@@ -741,6 +751,7 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
       worktreeRoot: "/work/meridian",
       repoRoot: "/work/meridian",
       branch: "main",
+      changedSinceBase: [],
       changedFiles: [],
       dirty: false,
     },
@@ -761,6 +772,7 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
         changedFiles: ["src/app/context-engine.ts"],
         relatedPlanId: "plan_1",
         nextSteps: ["Continue hardening"],
+        evidence: [],
       },
     ],
     recentDecisions: [
@@ -773,6 +785,7 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
         consequences: "Generated agent instructions use Zenith.",
         alternatives: ["Keep old name"],
         relatedPlanIds: ["plan_1"],
+        evidence: [],
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ],
@@ -783,6 +796,7 @@ function makeStatus(options: { findings: Finding[]; projectName?: string }): Pro
       title: finding.title,
       relatedFiles: finding.relatedFiles,
     })),
+    contextDocs: [],
     focus: null,
     focusAmbiguous: false,
     next: {
@@ -819,6 +833,7 @@ function makeFinding(): Finding {
     description: "Sessions must be closed so future agents can resume from accurate next steps.",
     status: "open",
     relatedFiles: ["src/cli/program.ts"],
+    evidence: [],
     createdAt: "2026-01-01T00:00:00.000Z",
   };
 }
@@ -897,6 +912,7 @@ function makeContext(status: ProjectStatus): CompactContext {
     openFindings: [
       { id: "finding_1", type: "bug", severity: "high", title: "Missing session close", relatedFiles: ["src/cli/program.ts"] },
     ],
+    contextDocs: [],
     next: status.next,
     markdown:
       "# Zenith Compact Context\n\n## Project\n- Name: Meridian\n\n## Plan\n- Active plan: Zenith MVP\n\n## Phase details\n- Description: Documented acceptance details.",

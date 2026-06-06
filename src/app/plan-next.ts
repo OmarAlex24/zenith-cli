@@ -41,7 +41,7 @@ export function computeNext(
   if (!activePlan && focus?.ambiguous) {
     const titles = focus.candidates.map((candidate) => candidate.roadmapTitle).join(", ");
     return {
-      recommendation: "Set roadmap focus for this worktree: zenith focus set <roadmap-id>",
+      recommendation: "Set roadmap focus for this worktree: zenith agent focus set <roadmap-id>",
       reason: `Multiple roadmaps have an active plan (${titles}); bind this worktree to one roadmap to continue.`,
       evidence: focus.candidates.map((candidate) => candidate.roadmapId).filter((id) => id.length > 0),
       kind: "ambiguous_focus" satisfies NextStepKind,
@@ -57,6 +57,18 @@ export function computeNext(
       phaseId: inProgress.id,
       evidence: [activePlan.title],
       kind: "implement_phase" satisfies NextStepKind,
+    }, activePlan.updatedAt, options);
+  }
+
+  const needsReview = activePlan?.phases.find((phase) => phase.status === "needs_review");
+  if (activePlan && needsReview) {
+    return withStaleness({
+      recommendation: `Review phase: ${needsReview.title}`,
+      reason: "Active plan has a phase ready for review.",
+      planId: activePlan.id,
+      phaseId: needsReview.id,
+      evidence: [activePlan.title],
+      kind: "review_phase" satisfies NextStepKind,
     }, activePlan.updatedAt, options);
   }
 
@@ -153,7 +165,7 @@ export function computeNext(
 
   return withStaleness({
     recommendation: activePlan ? "Review completed active plan" : "Create an active plan",
-    reason: activePlan ? "No pending, blocked, or in-progress phases remain." : "No active plan exists.",
+    reason: activePlan ? "No pending, review, blocked, or in-progress phases remain." : "No active plan exists.",
     evidence: activePlan ? [activePlan.id] : [],
     kind: (activePlan ? "review_completed" : "create_plan_empty") satisfies NextStepKind,
   }, activePlan?.updatedAt, options);
@@ -236,6 +248,7 @@ function findDeferredRoadmapTarget(roadmaps: Roadmap[]): { roadmap: Roadmap; ite
 export function findCurrentPhase(plan: Plan | null): PlanPhase | null {
   return (
     plan?.phases.find((phase) => phase.status === "in_progress") ??
+    plan?.phases.find((phase) => phase.status === "needs_review") ??
     plan?.phases.find((phase) => phase.status === "blocked") ??
     plan?.phases.find((phase) => phase.status === "todo") ??
     null

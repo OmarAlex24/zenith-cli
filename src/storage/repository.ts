@@ -1,24 +1,40 @@
 import type { Database } from "bun:sqlite";
+import { ZenithError } from "../cli/json-output";
+import { guardMemoryWrite, sanitizeEventPayload } from "../app/memory-guard";
 import { createId, nowIso } from "../domain/ids";
 import {
   AgentStageStateSchema,
+  ContextDocSchema,
   DecisionSchema,
   EventSchema,
   FindingSchema,
+  MemoryClaimSchema,
+  MemoryEvidenceRecordSchema,
+  MemoryLifecycleSchema,
   MemoryTagSchema,
   PlanSchema,
   ProjectBriefSchema,
+  RawMemoryEntitySchema,
   ProjectSchema,
   RoadmapSchema,
   SessionSchema,
   SpikeSchema,
+  TagAliasSchema,
+  TagCatalogEntrySchema,
   type AgentStage,
   type AgentStageState,
+  type ContextDoc,
+  type ContextDocConfidence,
+  type ContextDocScope,
+  type ContextDocStatus,
   type Decision,
   type Event,
   type Evidence,
   type Finding,
+  type MemoryClaim,
+  type MemoryEvidenceRecord,
   type MemoryEntityType,
+  type MemoryLifecycle,
   type MemoryTag,
   type Plan,
   type PlanPhase,
@@ -32,6 +48,9 @@ import {
   type Session,
   type Spike,
   type SpikeStatus,
+  type RawMemoryEntity,
+  type TagAlias,
+  type TagCatalogEntry,
 } from "../domain/schemas";
 
 type ProjectRow = {
@@ -80,6 +99,7 @@ type DecisionRow = {
   consequences: string | null;
   alternatives_json: string;
   related_plan_ids_json: string;
+  evidence_json: string;
   created_at: string;
 };
 
@@ -92,6 +112,7 @@ type FindingRow = {
   description: string;
   status: Finding["status"];
   related_files_json: string;
+  evidence_json: string;
   created_at: string;
   closed_at: string | null;
   related_plan_id: string | null;
@@ -108,6 +129,7 @@ type SessionRow = {
   changed_files_json: string;
   related_plan_id: string | null;
   next_steps_json: string;
+  evidence_json: string;
   created_at: string;
 };
 
@@ -208,6 +230,90 @@ type MemoryTagRow = {
   updated_at: string;
 };
 
+type ContextDocRow = {
+  id: string;
+  project_id: string;
+  scope: ContextDocScope;
+  plan_id: string | null;
+  phase_id: string | null;
+  path: string;
+  reason: string;
+  summary: string;
+  assumptions_json: string;
+  confidence: ContextDocConfidence;
+  status: ContextDocStatus;
+  read_at: string;
+  read_commit: string | null;
+  observed_mtime: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemoryEvidenceRow = {
+  id: string;
+  project_id: string;
+  entity_type: MemoryEntityType;
+  entity_id: string;
+  kind: Evidence["kind"];
+  value: string;
+  path: string | null;
+  line: number | null;
+  end_line: number | null;
+  label: string | null;
+  checked_at: string | null;
+  stale: number;
+  superseded_by: string | null;
+  created_at: string;
+};
+
+type MemoryLifecycleRow = {
+  id: string;
+  project_id: string;
+  entity_type: MemoryEntityType;
+  entity_id: string;
+  lifecycle: MemoryLifecycle;
+  reason: string | null;
+  superseded_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemoryClaimRow = {
+  id: string;
+  project_id: string;
+  entity_id: string;
+  scope: string;
+  role: string;
+  owner: string | null;
+  worktree: string | null;
+  branch: string | null;
+  hostname: string | null;
+  status: MemoryClaim["status"];
+  created_at: string;
+  expires_at: string;
+  released_at: string | null;
+  updated_at: string;
+};
+
+type TagCatalogRow = {
+  id: string;
+  project_id: string;
+  tag: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  usage_count?: number;
+};
+
+type TagAliasRow = {
+  id: string;
+  project_id: string;
+  alias: string;
+  tag: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RegisterProjectInput = {
   name: string;
   rootPath: string;
@@ -262,7 +368,43 @@ export type SearchableMemoryEntity = {
   title: string;
   text: string;
   updatedAt: string;
+  lifecycle?: MemoryLifecycle | undefined;
 };
+
+export type CreateClaimInput = {
+  projectId: string;
+  entityId: string;
+  scope: string;
+  role: string;
+  ttlMs: number;
+  owner?: string;
+  worktree?: string;
+  branch?: string;
+  hostname?: string;
+};
+
+export type RefreshClaimInput = {
+  projectId: string;
+  claimId: string;
+  ttlMs: number;
+};
+
+export type CreateTagCatalogInput = {
+  projectId: string;
+  tag: string;
+  description?: string;
+};
+
+export type CreateTagAliasInput = {
+  projectId: string;
+  alias: string;
+  tag: string;
+};
+
+export type PurgeTarget =
+  | { kind: "entity"; projectId: string; entityType: MemoryEntityType; entityId: string; reason?: string }
+  | { kind: "tag"; projectId: string; tag: string; reason?: string }
+  | { kind: "project"; projectId: string; reason?: string };
 
 export type InsertPlanInput = {
   projectId: string;
@@ -348,7 +490,9 @@ export type ConcludeSpikePatch = {
   evidence?: Evidence[];
 };
 
-export type InsertFindingInput = Omit<Finding, "id" | "createdAt" | "closedAt" | "status">;
+export type InsertFindingInput = Omit<Finding, "id" | "createdAt" | "closedAt" | "status" | "evidence"> & {
+  evidence?: Evidence[];
+};
 
 export type FindingListStatus = Finding["status"] | "all";
 
@@ -360,6 +504,7 @@ export type UpdateFindingPatch = {
   relatedFiles?: string[];
   relatedPlanId?: string;
   relatedPhaseId?: string;
+  evidence?: Evidence[];
 };
 
 export type UpdateSessionPatch = {
@@ -369,6 +514,25 @@ export type UpdateSessionPatch = {
   changedFiles?: string[];
   relatedPlanId?: string;
   nextSteps?: string[];
+  evidence?: Evidence[];
+};
+
+export type InsertSessionInput = Omit<Session, "id" | "evidence"> & { evidence?: Evidence[] };
+
+export type UpsertContextDocInput = {
+  projectId: string;
+  scope: ContextDocScope;
+  planId?: string;
+  phaseId?: string;
+  path: string;
+  reason: string;
+  summary: string;
+  assumptions: string[];
+  confidence: ContextDocConfidence;
+  status: ContextDocStatus;
+  readAt: string;
+  readCommit?: string;
+  observedMtime?: string;
 };
 
 export class ZenithRepository {
@@ -376,6 +540,87 @@ export class ZenithRepository {
 
   close(): void {
     this.db.close();
+  }
+
+  listMemoryEvidence(
+    projectId: string,
+    filters: { entityType?: MemoryEntityType; entityId?: string } = {},
+  ): MemoryEvidenceRecord[] {
+    const params: string[] = [projectId];
+    let sql = "SELECT * FROM memory_evidence WHERE project_id = ?";
+    if (filters.entityType) {
+      sql += " AND entity_type = ?";
+      params.push(filters.entityType);
+    }
+    if (filters.entityId) {
+      sql += " AND entity_id = ?";
+      params.push(filters.entityId);
+    }
+    sql += " ORDER BY created_at ASC, id ASC";
+    return this.db.query<MemoryEvidenceRow, string[]>(sql).all(...params).map(mapMemoryEvidence);
+  }
+
+  getLifecycle(projectId: string, entityType: MemoryEntityType, entityId: string): MemoryLifecycle | null {
+    const row = this.db
+      .query<MemoryLifecycleRow, [string, string, string]>(
+        "SELECT * FROM memory_lifecycle WHERE project_id = ? AND entity_type = ? AND entity_id = ?",
+      )
+      .get(projectId, entityType, entityId);
+    return row?.lifecycle ?? null;
+  }
+
+  setLifecycle(input: {
+    projectId: string;
+    entityType: MemoryEntityType;
+    entityId: string;
+    lifecycle: MemoryLifecycle;
+    reason?: string;
+    supersededBy?: string;
+  }): MemoryLifecycle {
+    guardMemoryWrite(input, "lifecycle");
+    const timestamp = nowIso();
+    const existing = this.getLifecycle(input.projectId, input.entityType, input.entityId);
+    this.db.transaction(() => {
+      if (existing) {
+        this.db
+          .query(
+            `UPDATE memory_lifecycle
+             SET lifecycle = ?, reason = ?, superseded_by = ?, updated_at = ?
+             WHERE project_id = ? AND entity_type = ? AND entity_id = ?`,
+          )
+          .run(
+            input.lifecycle,
+            input.reason ?? null,
+            input.supersededBy ?? null,
+            timestamp,
+            input.projectId,
+            input.entityType,
+            input.entityId,
+          );
+      } else {
+        this.db
+          .query(
+            `INSERT INTO memory_lifecycle (
+              id, project_id, entity_type, entity_id, lifecycle, reason, superseded_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            createId("life"),
+            input.projectId,
+            input.entityType,
+            input.entityId,
+            input.lifecycle,
+            input.reason ?? null,
+            input.supersededBy ?? null,
+            timestamp,
+            timestamp,
+          );
+      }
+      this.recordEvent(input.projectId, "memory.lifecycle_set", input.entityType, input.entityId, {
+        lifecycle: input.lifecycle,
+      });
+    })();
+    return input.lifecycle;
   }
 
   // Project identity
@@ -471,6 +716,7 @@ export class ZenithRepository {
 
   // Brief memory
   setProjectBrief(input: SetProjectBriefInput): ProjectBrief {
+    guardMemoryWrite(input, "brief");
     const timestamp = nowIso();
     const row = this.db
       .query<{ version: number | null }, [string]>("SELECT MAX(version) AS version FROM project_briefs WHERE project_id = ?")
@@ -506,6 +752,7 @@ export class ZenithRepository {
         );
 
       this.recordEvent(input.projectId, "brief.set", "brief", id, { title: input.title, version });
+      this.syncLifecycle(input.projectId, "brief", id, "active", timestamp);
     })();
 
     const brief = this.getProjectBriefById(id);
@@ -540,11 +787,13 @@ export class ZenithRepository {
 
   // Roadmap memory
   createRoadmap(input: InsertRoadmapInput): Roadmap {
+    guardMemoryWrite(input, "roadmap");
     const id = createId("roadmap");
     const timestamp = nowIso();
 
     this.db.transaction(() => {
       this.insertRoadmapRows(id, input, timestamp);
+      this.syncLifecycle(input.projectId, "roadmap", id, lifecycleForRoadmapStatus(input.status), timestamp);
       this.recordEvent(input.projectId, "roadmap.created", "roadmap", id, { title: input.title });
     })();
 
@@ -578,6 +827,7 @@ export class ZenithRepository {
 
     this.db.transaction(() => {
       this.insertRoadmapRows(id, roadmapInput, timestamp);
+      this.syncLifecycle(plan.projectId, "roadmap", id, lifecycleForRoadmapStatus(input.status), timestamp);
       this.recordEvent(plan.projectId, "roadmap.created", "roadmap", id, { title: roadmapInput.title });
 
       if (input.archivePlan) {
@@ -604,6 +854,7 @@ export class ZenithRepository {
   }
 
   addRoadmapItem(roadmapId: string, input: AddRoadmapItemInput): Roadmap {
+    guardMemoryWrite(input, "roadmap_item");
     const roadmap = this.getRoadmapById(roadmapId);
     if (!roadmap) {
       throw new Error(`Roadmap not found: ${roadmapId}`);
@@ -642,13 +893,15 @@ export class ZenithRepository {
           input.description ?? null,
           input.status,
           input.justification ?? null,
-          JSON.stringify(input.evidence),
+          JSON.stringify(normalizeStoredEvidence(input.evidence)),
           input.sourcePhaseId ?? null,
           timestamp,
           timestamp,
         );
 
       this.db.query("UPDATE roadmaps SET updated_at = ? WHERE id = ?").run(timestamp, roadmapId);
+      this.insertEvidenceRecords(roadmap.projectId, "roadmap_item", itemId, input.evidence, timestamp);
+      this.syncLifecycle(roadmap.projectId, "roadmap_item", itemId, lifecycleForRoadmapItemStatus(input.status), timestamp);
       this.recordEvent(roadmap.projectId, "roadmap.item_added", "roadmap_item", itemId, {
         title: input.title,
         position,
@@ -659,6 +912,7 @@ export class ZenithRepository {
   }
 
   updateRoadmap(roadmapId: string, patch: UpdateRoadmapPatch): Roadmap {
+    guardMemoryWrite(patch, "roadmap");
     const roadmap = this.getRoadmapById(roadmapId);
     if (!roadmap) {
       throw new Error(`Roadmap not found: ${roadmapId}`);
@@ -680,8 +934,11 @@ export class ZenithRepository {
           patch.status ?? roadmap.status,
           timestamp,
           roadmapId,
-        );
+      );
 
+      if (patch.status) {
+        this.syncLifecycle(roadmap.projectId, "roadmap", roadmap.id, lifecycleForRoadmapStatus(patch.status), timestamp);
+      }
       this.recordEvent(roadmap.projectId, "roadmap.updated", "roadmap", roadmap.id, patch);
     })();
 
@@ -693,6 +950,7 @@ export class ZenithRepository {
     itemIdOrTitle: { itemId?: string; itemTitle?: string },
     patch: UpdateRoadmapItemPatch,
   ): Roadmap {
+    guardMemoryWrite(patch, "roadmap_item");
     const roadmap = this.getRoadmapById(roadmapId);
     if (!roadmap) {
       throw new Error(`Roadmap not found: ${roadmapId}`);
@@ -707,7 +965,8 @@ export class ZenithRepository {
     }
 
     const timestamp = nowIso();
-    const nextEvidence = patch.evidence === undefined ? item.evidence : [...item.evidence, ...patch.evidence];
+    const nextEvidence =
+      patch.evidence === undefined ? item.evidence : [...item.evidence, ...normalizeStoredEvidence(patch.evidence)];
 
     this.db.transaction(() => {
       this.db
@@ -729,6 +988,12 @@ export class ZenithRepository {
         );
 
       this.db.query("UPDATE roadmaps SET updated_at = ? WHERE id = ?").run(timestamp, roadmapId);
+      if (patch.evidence) {
+        this.insertEvidenceRecords(roadmap.projectId, "roadmap_item", item.id, patch.evidence, timestamp);
+      }
+      if (patch.status) {
+        this.syncLifecycle(roadmap.projectId, "roadmap_item", item.id, lifecycleForRoadmapItemStatus(patch.status), timestamp);
+      }
       this.recordEvent(roadmap.projectId, "roadmap.item_updated", "roadmap_item", item.id, patch);
     })();
 
@@ -737,6 +1002,7 @@ export class ZenithRepository {
 
   // Spike memory
   createSpike(input: InsertSpikeInput): Spike {
+    guardMemoryWrite(input, "spike");
     const id = createId("spike");
     const timestamp = nowIso();
     const concludedAt = input.status === "open" ? null : timestamp;
@@ -762,13 +1028,15 @@ export class ZenithRepository {
           JSON.stringify(input.options),
           input.result ?? null,
           input.recommendation ?? null,
-          JSON.stringify(input.evidence),
+          JSON.stringify(normalizeStoredEvidence(input.evidence)),
           input.status,
           timestamp,
           timestamp,
           concludedAt,
         );
 
+      this.insertEvidenceRecords(input.projectId, "spike", id, input.evidence, timestamp);
+      this.syncLifecycle(input.projectId, "spike", id, lifecycleForSpikeStatus(input.status), timestamp);
       this.recordEvent(input.projectId, "spike.created", "spike", id, { title: input.title, status: input.status });
     })();
 
@@ -799,13 +1067,15 @@ export class ZenithRepository {
   }
 
   concludeSpike(spikeId: string, patch: ConcludeSpikePatch): Spike {
+    guardMemoryWrite(patch, "spike");
     const spike = this.getSpikeById(spikeId);
     if (!spike) {
       throw new Error(`Spike not found: ${spikeId}`);
     }
 
     const timestamp = nowIso();
-    const nextEvidence = patch.evidence === undefined ? spike.evidence : [...spike.evidence, ...patch.evidence];
+    const nextEvidence =
+      patch.evidence === undefined ? spike.evidence : [...spike.evidence, ...normalizeStoredEvidence(patch.evidence)];
 
     this.db.transaction(() => {
       this.db
@@ -826,6 +1096,10 @@ export class ZenithRepository {
           spikeId,
         );
 
+      if (patch.evidence) {
+        this.insertEvidenceRecords(spike.projectId, "spike", spike.id, patch.evidence, timestamp);
+      }
+      this.syncLifecycle(spike.projectId, "spike", spike.id, lifecycleForSpikeStatus(patch.status), timestamp);
       this.recordEvent(spike.projectId, "spike.concluded", "spike", spike.id, patch);
     })();
 
@@ -834,6 +1108,7 @@ export class ZenithRepository {
 
   // Plan memory
   createPlan(input: InsertPlanInput): Plan {
+    guardMemoryWrite(input, "plan");
     const id = createId("plan");
     const timestamp = nowIso();
 
@@ -862,6 +1137,7 @@ export class ZenithRepository {
         );
 
       input.phases.forEach((phase, index) => {
+        const phaseId = phase.id ?? createId("phase");
         this.db
           .query(
             `
@@ -873,20 +1149,23 @@ export class ZenithRepository {
           `,
           )
           .run(
-            phase.id ?? createId("phase"),
+            phaseId,
             id,
             index,
             phase.title,
             phase.description ?? null,
             phase.status,
             JSON.stringify(phase.acceptanceCriteria),
-            JSON.stringify(phase.evidence),
+            JSON.stringify(normalizeStoredEvidence(phase.evidence)),
             JSON.stringify(phase.dependsOn ?? []),
             timestamp,
             timestamp,
           );
+        this.insertEvidenceRecords(input.projectId, "phase", phaseId, phase.evidence, timestamp);
+        this.syncLifecycle(input.projectId, "phase", phaseId, lifecycleForPhaseStatus(phase.status), timestamp);
       });
 
+      this.syncLifecycle(input.projectId, "plan", id, lifecycleForPlanStatus(input.status), timestamp);
       this.recordEvent(input.projectId, "plan.created", "plan", id, {
         title: input.title,
         sourceRoadmapId: input.sourceRoadmapId,
@@ -1034,6 +1313,7 @@ export class ZenithRepository {
     role?: string;
     note?: string;
   }): AgentStageState {
+    guardMemoryWrite(input, "stage");
     const scope = { ...(input.planId ? { planId: input.planId } : {}), ...(input.phaseId ? { phaseId: input.phaseId } : {}) };
     const scopeKey = agentStageScopeKey(scope);
     const timestamp = nowIso();
@@ -1094,6 +1374,7 @@ export class ZenithRepository {
     entityId: string;
     tags: string[];
   }): MemoryTag[] {
+    guardMemoryWrite(input, "memory_tags");
     const timestamp = nowIso();
     const uniqueTags = [...new Set(input.tags)];
 
@@ -1128,6 +1409,96 @@ export class ZenithRepository {
     });
   }
 
+  upsertTagCatalog(input: CreateTagCatalogInput): TagCatalogEntry {
+    guardMemoryWrite(input, "tag_catalog");
+    const timestamp = nowIso();
+    const existing = this.getTagCatalogEntry(input.projectId, input.tag);
+    this.db.transaction(() => {
+      if (existing) {
+        this.db
+          .query("UPDATE tag_catalog SET description = ?, updated_at = ? WHERE id = ?")
+          .run(input.description ?? existing.description ?? null, timestamp, existing.id);
+      } else {
+        this.db
+          .query(
+            "INSERT INTO tag_catalog (id, project_id, tag, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .run(createId("tagcat"), input.projectId, input.tag, input.description ?? null, timestamp, timestamp);
+      }
+      this.recordEvent(input.projectId, "tag.catalog_upserted", "tag_catalog", input.tag, {
+        tag: input.tag,
+      });
+    })();
+    return this.getTagCatalogEntry(input.projectId, input.tag)!;
+  }
+
+  upsertTagAlias(input: CreateTagAliasInput): TagAlias {
+    guardMemoryWrite(input, "tag_alias");
+    const timestamp = nowIso();
+    const target = this.getTagCatalogEntry(input.projectId, input.tag);
+    if (!target) {
+      throw new ZenithError(`Tag not found: ${input.tag}`, {
+        code: "tag_not_found",
+        details: { tag: input.tag },
+      });
+    }
+    const existing = this.getTagAlias(input.projectId, input.alias);
+    this.db.transaction(() => {
+      if (existing) {
+        this.db.query("UPDATE tag_aliases SET tag = ?, updated_at = ? WHERE id = ?").run(input.tag, timestamp, existing.id);
+      } else {
+        this.db
+          .query("INSERT INTO tag_aliases (id, project_id, alias, tag, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(createId("tagalias"), input.projectId, input.alias, input.tag, timestamp, timestamp);
+      }
+      this.recordEvent(input.projectId, "tag.alias_upserted", "tag_alias", input.alias, {
+        alias: input.alias,
+        tag: input.tag,
+      });
+    })();
+    return this.getTagAlias(input.projectId, input.alias)!;
+  }
+
+  getTagCatalogEntry(projectId: string, tag: string): TagCatalogEntry | null {
+    const row = this.db
+      .query<TagCatalogRow, [string, string]>(
+        `SELECT c.*, COUNT(t.id) AS usage_count
+         FROM tag_catalog c
+         LEFT JOIN memory_tags t ON t.project_id = c.project_id AND t.tag = c.tag
+         WHERE c.project_id = ? AND c.tag = ?
+         GROUP BY c.id`,
+      )
+      .get(projectId, tag);
+    return row ? mapTagCatalogEntry(row) : null;
+  }
+
+  getTagAlias(projectId: string, alias: string): TagAlias | null {
+    const row = this.db
+      .query<TagAliasRow, [string, string]>("SELECT * FROM tag_aliases WHERE project_id = ? AND alias = ?")
+      .get(projectId, alias);
+    return row ? mapTagAlias(row) : null;
+  }
+
+  resolveTagAlias(projectId: string, tag: string): string {
+    return this.getTagAlias(projectId, tag)?.tag ?? tag;
+  }
+
+  listTagCatalog(projectId: string, options: { unused?: boolean } = {}): TagCatalogEntry[] {
+    const params: string[] = [projectId];
+    let sql = `
+      SELECT c.*, COUNT(t.id) AS usage_count
+      FROM tag_catalog c
+      LEFT JOIN memory_tags t ON t.project_id = c.project_id AND t.tag = c.tag
+      WHERE c.project_id = ?
+      GROUP BY c.id
+    `;
+    if (options.unused) {
+      sql += " HAVING COUNT(t.id) = 0";
+    }
+    sql += " ORDER BY c.tag ASC";
+    return this.db.query<TagCatalogRow, string[]>(sql).all(...params).map(mapTagCatalogEntry);
+  }
+
   listMemoryTags(projectId: string, filters: MemoryTagFilters = {}): MemoryTag[] {
     const params: string[] = [projectId];
     let sql = "SELECT * FROM memory_tags WHERE project_id = ?";
@@ -1150,6 +1521,187 @@ export class ZenithRepository {
     return this.db.query<MemoryTagRow, string[]>(sql).all(...params).map(mapMemoryTag);
   }
 
+  createClaim(input: CreateClaimInput): MemoryClaim {
+    guardMemoryWrite(input, "claim");
+    const timestamp = nowIso();
+    this.expireClaims(input.projectId, timestamp);
+    const expiresAt = new Date(Date.parse(timestamp) + input.ttlMs).toISOString();
+    const activeClaims = this.listClaims(input.projectId, { status: "active", includeExpired: false });
+    const conflict = activeClaims.find((claim) => claim.id !== input.entityId && scopesOverlap(claim.scope, input.scope));
+    if (conflict) {
+      throw new ZenithError(`Claim conflicts with active claim ${conflict.id}.`, {
+        code: "claim_conflict",
+        details: { claimId: conflict.id, scope: conflict.scope },
+      });
+    }
+
+    const id = createId("claim");
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO memory_claims (
+            id, project_id, entity_id, scope, role, owner, worktree, branch, hostname,
+            status, created_at, expires_at, released_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?)`,
+        )
+        .run(
+          id,
+          input.projectId,
+          input.entityId,
+          normalizeScope(input.scope),
+          input.role,
+          input.owner ?? null,
+          input.worktree ?? null,
+          input.branch ?? null,
+          input.hostname ?? null,
+          timestamp,
+          expiresAt,
+          timestamp,
+        );
+      this.recordEvent(input.projectId, "claim.created", "claim", id, {
+        entityId: input.entityId,
+        scope: normalizeScope(input.scope),
+        role: input.role,
+        expiresAt,
+      });
+    })();
+    return this.getClaimById(id)!;
+  }
+
+  getClaimById(claimId: string): MemoryClaim | null {
+    const row = this.db.query<MemoryClaimRow, [string]>("SELECT * FROM memory_claims WHERE id = ?").get(claimId);
+    return row ? mapMemoryClaim(row) : null;
+  }
+
+  listClaims(
+    projectId: string,
+    options: { status?: MemoryClaim["status"]; includeExpired?: boolean } = {},
+  ): MemoryClaim[] {
+    const now = nowIso();
+    this.expireClaims(projectId, now);
+    const params: string[] = [projectId];
+    let sql = "SELECT * FROM memory_claims WHERE project_id = ?";
+    if (options.status) {
+      sql += " AND status = ?";
+      params.push(options.status);
+    }
+    if (!options.includeExpired) {
+      sql += " AND NOT (status = 'expired')";
+    }
+    sql += " ORDER BY updated_at DESC, id DESC";
+    return this.db.query<MemoryClaimRow, string[]>(sql).all(...params).map(mapMemoryClaim);
+  }
+
+  refreshClaim(input: RefreshClaimInput): MemoryClaim {
+    const timestamp = nowIso();
+    this.expireClaims(input.projectId, timestamp);
+    const claim = this.getClaimById(input.claimId);
+    if (!claim || claim.projectId !== input.projectId) {
+      throw new ZenithError(`Claim not found: ${input.claimId}`, {
+        code: "claim_not_found",
+        details: { claimId: input.claimId },
+      });
+    }
+    if (claim.status !== "active") {
+      throw new ZenithError(`Claim is not active: ${input.claimId}`, {
+        code: "claim_not_active",
+        details: { claimId: input.claimId, status: claim.status },
+      });
+    }
+    const expiresAt = new Date(Date.parse(timestamp) + input.ttlMs).toISOString();
+    this.db.transaction(() => {
+      this.db.query("UPDATE memory_claims SET expires_at = ?, updated_at = ? WHERE id = ?").run(expiresAt, timestamp, input.claimId);
+      this.recordEvent(input.projectId, "claim.refreshed", "claim", input.claimId, { expiresAt });
+    })();
+    return this.getClaimById(input.claimId)!;
+  }
+
+  releaseClaim(projectId: string, claimIdOrEntityId: string): MemoryClaim[] {
+    const timestamp = nowIso();
+    this.expireClaims(projectId, timestamp);
+    const claims = this.db
+      .query<MemoryClaimRow, [string, string, string]>(
+        "SELECT * FROM memory_claims WHERE project_id = ? AND status = 'active' AND (id = ? OR entity_id = ?)",
+      )
+      .all(projectId, claimIdOrEntityId, claimIdOrEntityId)
+      .map(mapMemoryClaim);
+    if (claims.length === 0) {
+      throw new ZenithError(`Claim not found: ${claimIdOrEntityId}`, {
+        code: "claim_not_found",
+        details: { claimIdOrEntityId },
+      });
+    }
+    this.db.transaction(() => {
+      for (const claim of claims) {
+        this.db
+          .query("UPDATE memory_claims SET status = 'released', released_at = ?, updated_at = ? WHERE id = ?")
+          .run(timestamp, timestamp, claim.id);
+        this.recordEvent(projectId, "claim.released", "claim", claim.id, {
+          entityId: claim.entityId,
+          scope: claim.scope,
+        });
+      }
+    })();
+    return claims.map((claim) => this.getClaimById(claim.id)!).filter(Boolean);
+  }
+
+  inspectRawEntity(projectId: string, entityType: MemoryEntityType, entityId: string): RawMemoryEntity {
+    const raw = this.getMemoryEntity(projectId, entityType, entityId);
+    if (!raw) {
+      throw new ZenithError(`Memory entity not found: ${entityType}:${entityId}`, {
+        code: "memory_entity_not_found",
+        details: { entityType, entityId },
+      });
+    }
+    return RawMemoryEntitySchema.parse({
+      entityType,
+      entityId,
+      raw,
+      evidence: this.listMemoryEvidence(projectId, { entityType, entityId }),
+      lifecycle: this.getLifecycle(projectId, entityType, entityId) ?? lifecycleForEntity(raw),
+      tags: this.listMemoryTags(projectId, { entityType, entityId }).map((tag) => tag.tag),
+    });
+  }
+
+  purge(target: PurgeTarget): { purged: boolean; entityType: string; entityId: string } {
+    const timestamp = nowIso();
+    if (target.kind === "tag") {
+      this.db.transaction(() => {
+        this.db.query("DELETE FROM memory_tags WHERE project_id = ? AND tag = ?").run(target.projectId, target.tag);
+        this.db.query("DELETE FROM tag_aliases WHERE project_id = ? AND (tag = ? OR alias = ?)").run(target.projectId, target.tag, target.tag);
+        this.db.query("DELETE FROM tag_catalog WHERE project_id = ? AND tag = ?").run(target.projectId, target.tag);
+        this.recordTombstone(target.projectId, "tag", target.tag, target.reason, timestamp);
+        this.recordEvent(target.projectId, "memory.purged", "tag", target.tag, { entityType: "tag" });
+      })();
+      return { purged: true, entityType: "tag", entityId: target.tag };
+    }
+
+    if (target.kind === "project") {
+      this.db.transaction(() => {
+        this.recordTombstone(target.projectId, "project", target.projectId, target.reason, timestamp);
+        this.recordEvent(null, "memory.purged", "project", target.projectId, { entityType: "project" });
+        this.db.query("DELETE FROM projects WHERE id = ?").run(target.projectId);
+      })();
+      return { purged: true, entityType: "project", entityId: target.projectId };
+    }
+
+    this.db.transaction(() => {
+      this.deleteMemoryEntity(target.entityType, target.entityId);
+      this.db
+        .query("DELETE FROM memory_tags WHERE project_id = ? AND entity_type = ? AND entity_id = ?")
+        .run(target.projectId, target.entityType, target.entityId);
+      this.db
+        .query("DELETE FROM memory_evidence WHERE project_id = ? AND entity_type = ? AND entity_id = ?")
+        .run(target.projectId, target.entityType, target.entityId);
+      this.db
+        .query("DELETE FROM memory_lifecycle WHERE project_id = ? AND entity_type = ? AND entity_id = ?")
+        .run(target.projectId, target.entityType, target.entityId);
+      this.recordTombstone(target.projectId, target.entityType, target.entityId, target.reason, timestamp);
+      this.recordEvent(target.projectId, "memory.purged", target.entityType, target.entityId, { entityType: target.entityType });
+    })();
+    return { purged: true, entityType: target.entityType, entityId: target.entityId };
+  }
+
   listSearchableMemoryEntities(projectId: string): SearchableMemoryEntity[] {
     const records: SearchableMemoryEntity[] = [];
     const briefs = this.listProjectBriefs(projectId, 1000);
@@ -1159,6 +1711,7 @@ export class ZenithRepository {
     const decisions = this.listDecisions(projectId, 1000);
     const findings = this.listFindings(projectId, "all");
     const sessions = this.listSessions(projectId, 1000);
+    const contextDocs = this.listContextDocs(projectId);
 
     for (const brief of briefs) {
       records.push({
@@ -1167,6 +1720,7 @@ export class ZenithRepository {
         title: brief.title,
         text: joinSearchText([brief.title, brief.summary, brief.body, brief.source, brief.status]),
         updatedAt: brief.updatedAt,
+        lifecycle: brief.lifecycle,
       });
     }
 
@@ -1177,6 +1731,7 @@ export class ZenithRepository {
         title: roadmap.title,
         text: joinSearchText([roadmap.title, roadmap.description, roadmap.status]),
         updatedAt: roadmap.updatedAt,
+        lifecycle: roadmap.lifecycle,
       });
       for (const item of roadmap.items) {
         records.push({
@@ -1191,6 +1746,7 @@ export class ZenithRepository {
             ...item.evidence.map((evidence) => evidence.value),
           ]),
           updatedAt: roadmap.updatedAt,
+          lifecycle: item.lifecycle,
         });
       }
     }
@@ -1202,6 +1758,7 @@ export class ZenithRepository {
         title: plan.title,
         text: joinSearchText([plan.title, plan.description, plan.status, plan.priority, plan.sourceRoadmapId, plan.sourceRoadmapItemId]),
         updatedAt: plan.updatedAt,
+        lifecycle: plan.lifecycle,
       });
       for (const phase of plan.phases) {
         records.push({
@@ -1217,6 +1774,7 @@ export class ZenithRepository {
             ...phase.evidence.map((evidence) => evidence.value),
           ]),
           updatedAt: plan.updatedAt,
+          lifecycle: phase.lifecycle,
         });
       }
     }
@@ -1237,6 +1795,7 @@ export class ZenithRepository {
           ...spike.evidence.map((evidence) => evidence.value),
         ]),
         updatedAt: spike.updatedAt,
+        lifecycle: spike.lifecycle,
       });
     }
 
@@ -1252,8 +1811,10 @@ export class ZenithRepository {
           decision.consequences,
           ...decision.alternatives,
           ...decision.relatedPlanIds,
+          ...decision.evidence.map((evidence) => evidence.value),
         ]),
         updatedAt: decision.createdAt,
+        lifecycle: decision.lifecycle,
       });
     }
 
@@ -1271,8 +1832,10 @@ export class ZenithRepository {
           ...finding.relatedFiles,
           finding.relatedPlanId,
           finding.relatedPhaseId,
+          ...finding.evidence.map((evidence) => evidence.value),
         ]),
         updatedAt: finding.closedAt ?? finding.createdAt,
+        lifecycle: finding.lifecycle,
       });
     }
 
@@ -1288,15 +1851,155 @@ export class ZenithRepository {
           session.relatedPlanId,
           ...session.changedFiles,
           ...session.nextSteps,
+          ...session.evidence.map((evidence) => evidence.value),
         ]),
         updatedAt: session.endedAt ?? session.startedAt,
+        lifecycle: session.lifecycle,
+      });
+    }
+
+    for (const doc of contextDocs) {
+      records.push({
+        entityType: "context_doc",
+        entityId: doc.id,
+        title: doc.path,
+        text: joinSearchText([
+          doc.path,
+          doc.scope,
+          doc.reason,
+          doc.summary,
+          doc.confidence,
+          doc.status,
+          doc.readCommit,
+          ...doc.assumptions,
+        ]),
+        updatedAt: doc.updatedAt,
+        lifecycle: doc.lifecycle,
       });
     }
 
     return records;
   }
 
+  // Context docs: lightweight anchors, not copied docs
+  listContextDocs(projectId: string, filters: { status?: ContextDocStatus; scope?: ContextDocScope } = {}): ContextDoc[] {
+    const params: string[] = [projectId];
+    let sql = "SELECT * FROM context_docs WHERE project_id = ?";
+
+    if (filters.status) {
+      sql += " AND status = ?";
+      params.push(filters.status);
+    }
+    if (filters.scope) {
+      sql += " AND scope = ?";
+      params.push(filters.scope);
+    }
+
+    sql += " ORDER BY status ASC, updated_at DESC, path ASC";
+    return this.db.query<ContextDocRow, string[]>(sql).all(...params).map(mapContextDoc);
+  }
+
+  getContextDocByPath(input: {
+    projectId: string;
+    scope: ContextDocScope;
+    planId?: string;
+    phaseId?: string;
+    path: string;
+  }): ContextDoc | null {
+    const row = this.db
+      .query<ContextDocRow, [string, string, string, string, string]>(
+        `
+        SELECT * FROM context_docs
+        WHERE project_id = ?
+          AND scope = ?
+          AND IFNULL(plan_id, '') = ?
+          AND IFNULL(phase_id, '') = ?
+          AND path = ?
+        LIMIT 1
+      `,
+      )
+      .get(input.projectId, input.scope, input.planId ?? "", input.phaseId ?? "", input.path);
+    return row ? mapContextDoc(row) : null;
+  }
+
+  upsertContextDoc(input: UpsertContextDocInput): ContextDoc {
+    guardMemoryWrite(input, "context_doc");
+    const timestamp = nowIso();
+    const existing = this.getContextDocByPath(input);
+    const id = existing?.id ?? createId("ctxdoc");
+
+    this.db.transaction(() => {
+      if (existing) {
+        this.db
+          .query(
+            `
+            UPDATE context_docs
+            SET reason = ?, summary = ?, assumptions_json = ?, confidence = ?, status = ?,
+                read_at = ?, read_commit = ?, observed_mtime = ?, updated_at = ?
+            WHERE id = ?
+          `,
+          )
+          .run(
+            input.reason,
+            input.summary,
+            JSON.stringify(input.assumptions),
+            input.confidence,
+            input.status,
+            input.readAt,
+            input.readCommit ?? null,
+            input.observedMtime ?? null,
+            timestamp,
+            existing.id,
+          );
+      } else {
+        this.db
+          .query(
+            `
+            INSERT INTO context_docs (
+              id, project_id, scope, plan_id, phase_id, path, reason, summary,
+              assumptions_json, confidence, status, read_at, read_commit,
+              observed_mtime, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            id,
+            input.projectId,
+            input.scope,
+            input.planId ?? null,
+            input.phaseId ?? null,
+            input.path,
+            input.reason,
+            input.summary,
+            JSON.stringify(input.assumptions),
+            input.confidence,
+            input.status,
+            input.readAt,
+            input.readCommit ?? null,
+            input.observedMtime ?? null,
+            timestamp,
+            timestamp,
+          );
+      }
+
+      this.recordEvent(input.projectId, "context_doc.upserted", "context_doc", id, {
+        path: input.path,
+        scope: input.scope,
+        status: input.status,
+      });
+      this.syncLifecycle(input.projectId, "context_doc", id, input.status === "ignored" ? "archived" : "active", timestamp);
+    })();
+
+    const doc = this.getContextDocByPath(input);
+    if (!doc) {
+      throw new Error(`Context doc not found after upsert: ${input.path}`);
+    }
+    return doc;
+  }
+
   updatePlan(planId: string, patch: UpdatePlanPatch): Plan {
+    guardMemoryWrite(patch, "plan");
     const plan = this.getPlanById(planId);
     if (!plan) {
       throw new Error(`Plan not found: ${planId}`);
@@ -1321,6 +2024,9 @@ export class ZenithRepository {
           planId,
         );
 
+      if (patch.status) {
+        this.syncLifecycle(plan.projectId, "plan", plan.id, lifecycleForPlanStatus(patch.status), timestamp);
+      }
       this.recordEvent(plan.projectId, "plan.updated", "plan", plan.id, patch);
     })();
 
@@ -1328,6 +2034,7 @@ export class ZenithRepository {
   }
 
   updatePhase(planId: string, phaseIdOrTitle: { phaseId?: string; phaseTitle?: string }, patch: UpdatePhasePatch): Plan {
+    guardMemoryWrite(patch, "phase");
     const plan = this.getPlanById(planId);
     if (!plan) {
       throw new Error(`Plan not found: ${planId}`);
@@ -1342,7 +2049,8 @@ export class ZenithRepository {
     }
 
     const timestamp = nowIso();
-    const nextEvidence = patch.evidence === undefined ? phase.evidence : [...phase.evidence, ...patch.evidence];
+    const nextEvidence =
+      patch.evidence === undefined ? phase.evidence : [...phase.evidence, ...normalizeStoredEvidence(patch.evidence)];
     const nextAcceptance =
       patch.acceptanceCriteria === undefined ? phase.acceptanceCriteria : patch.acceptanceCriteria;
     const nextDependsOn = patch.dependsOn === undefined ? phase.dependsOn : patch.dependsOn;
@@ -1368,6 +2076,12 @@ export class ZenithRepository {
         );
 
       this.db.query("UPDATE plans SET updated_at = ? WHERE id = ?").run(timestamp, planId);
+      if (patch.evidence) {
+        this.insertEvidenceRecords(plan.projectId, "phase", phase.id, patch.evidence, timestamp);
+      }
+      if (patch.status) {
+        this.syncLifecycle(plan.projectId, "phase", phase.id, lifecycleForPhaseStatus(patch.status), timestamp);
+      }
       this.recordEvent(plan.projectId, "plan.phase_updated", "phase", phase.id, patch);
     })();
 
@@ -1375,7 +2089,8 @@ export class ZenithRepository {
   }
 
   // Decision memory
-  recordDecision(input: Omit<Decision, "id" | "createdAt">): Decision {
+  recordDecision(input: Omit<Decision, "id" | "createdAt" | "evidence"> & { evidence?: Evidence[] }): Decision {
+    guardMemoryWrite(input, "decision");
     const id = createId("dec");
     const timestamp = nowIso();
 
@@ -1385,9 +2100,9 @@ export class ZenithRepository {
           `
           INSERT INTO decisions (
             id, project_id, title, context, decision, consequences,
-            alternatives_json, related_plan_ids_json, created_at
+            alternatives_json, related_plan_ids_json, evidence_json, created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -1399,9 +2114,12 @@ export class ZenithRepository {
           input.consequences ?? null,
           JSON.stringify(input.alternatives),
           JSON.stringify(input.relatedPlanIds),
+          JSON.stringify(normalizeStoredEvidence(input.evidence ?? [])),
           timestamp,
         );
 
+      this.insertEvidenceRecords(input.projectId, "decision", id, input.evidence ?? [], timestamp);
+      this.syncLifecycle(input.projectId, "decision", id, "active", timestamp);
       this.recordEvent(input.projectId, "decision.recorded", "decision", id, { title: input.title });
     })();
 
@@ -1428,6 +2146,7 @@ export class ZenithRepository {
 
   // Finding memory
   recordFinding(input: InsertFindingInput): Finding {
+    guardMemoryWrite(input, "finding");
     const id = createId("finding");
     const timestamp = nowIso();
 
@@ -1437,10 +2156,10 @@ export class ZenithRepository {
           `
           INSERT INTO findings (
             id, project_id, type, severity, title, description,
-            status, related_files_json, created_at, closed_at,
+            status, related_files_json, evidence_json, created_at, closed_at,
             related_plan_id, related_phase_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, NULL, ?, ?)
         `,
         )
         .run(
@@ -1451,11 +2170,14 @@ export class ZenithRepository {
           input.title,
           input.description,
           JSON.stringify(input.relatedFiles),
+          JSON.stringify(normalizeStoredEvidence(input.evidence ?? [])),
           timestamp,
           input.relatedPlanId ?? null,
           input.relatedPhaseId ?? null,
         );
 
+      this.insertEvidenceRecords(input.projectId, "finding", id, input.evidence ?? [], timestamp);
+      this.syncLifecycle(input.projectId, "finding", id, "active", timestamp);
       this.recordEvent(input.projectId, "finding.recorded", "finding", id, {
         type: input.type,
         severity: input.severity,
@@ -1496,17 +2218,21 @@ export class ZenithRepository {
   }
 
   updateFinding(findingId: string, patch: UpdateFindingPatch): Finding {
+    guardMemoryWrite(patch, "finding");
     const finding = this.getFindingById(findingId);
     if (!finding) {
       throw new Error(`Finding not found: ${findingId}`);
     }
+
+    const nextEvidence =
+      patch.evidence === undefined ? finding.evidence : [...finding.evidence, ...normalizeStoredEvidence(patch.evidence)];
 
     this.db.transaction(() => {
       this.db
         .query(
           `
           UPDATE findings
-          SET type = ?, severity = ?, title = ?, description = ?, related_files_json = ?,
+          SET type = ?, severity = ?, title = ?, description = ?, related_files_json = ?, evidence_json = ?,
               related_plan_id = ?, related_phase_id = ?
           WHERE id = ?
         `,
@@ -1517,18 +2243,22 @@ export class ZenithRepository {
           patch.title ?? finding.title,
           patch.description ?? finding.description,
           JSON.stringify(patch.relatedFiles ?? finding.relatedFiles),
+          JSON.stringify(nextEvidence),
           patch.relatedPlanId !== undefined ? patch.relatedPlanId : (finding.relatedPlanId ?? null),
           patch.relatedPhaseId !== undefined ? patch.relatedPhaseId : (finding.relatedPhaseId ?? null),
           findingId,
         );
 
+      if (patch.evidence) {
+        this.insertEvidenceRecords(finding.projectId, "finding", finding.id, patch.evidence, nowIso());
+      }
       this.recordEvent(finding.projectId, "finding.updated", "finding", finding.id, patch);
     })();
 
     return this.getFindingById(findingId)!;
   }
 
-  closeFinding(findingId: string): Finding {
+  closeFinding(findingId: string, evidence: Evidence[] = []): Finding {
     const finding = this.getFindingById(findingId);
     if (!finding) {
       throw new Error(`Finding not found: ${findingId}`);
@@ -1540,7 +2270,12 @@ export class ZenithRepository {
 
     const timestamp = nowIso();
     this.db.transaction(() => {
-      this.db.query("UPDATE findings SET status = 'closed', closed_at = ? WHERE id = ?").run(timestamp, findingId);
+      const nextEvidence = [...finding.evidence, ...normalizeStoredEvidence(evidence)];
+      this.db
+        .query("UPDATE findings SET status = 'closed', closed_at = ?, evidence_json = ? WHERE id = ?")
+        .run(timestamp, JSON.stringify(nextEvidence), findingId);
+      this.insertEvidenceRecords(finding.projectId, "finding", finding.id, evidence, timestamp);
+      this.syncLifecycle(finding.projectId, "finding", finding.id, "done", timestamp);
       this.recordEvent(finding.projectId, "finding.closed", "finding", finding.id, {
         title: finding.title,
         severity: finding.severity,
@@ -1551,7 +2286,8 @@ export class ZenithRepository {
   }
 
   // Session memory
-  startSession(input: Omit<Session, "id">): Session {
+  startSession(input: InsertSessionInput): Session {
+    guardMemoryWrite(input, "session");
     const id = createId("sess");
     const timestamp = nowIso();
 
@@ -1561,9 +2297,9 @@ export class ZenithRepository {
           `
           INSERT INTO sessions (
             id, project_id, started_at, ended_at, branch, summary,
-            changed_files_json, related_plan_id, next_steps_json, created_at
+            changed_files_json, related_plan_id, next_steps_json, evidence_json, created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -1576,9 +2312,12 @@ export class ZenithRepository {
           JSON.stringify(input.changedFiles),
           input.relatedPlanId ?? null,
           JSON.stringify(input.nextSteps),
+          JSON.stringify(normalizeStoredEvidence(input.evidence ?? [])),
           timestamp,
         );
 
+      this.insertEvidenceRecords(input.projectId, "session", id, input.evidence ?? [], timestamp);
+      this.syncLifecycle(input.projectId, "session", id, input.endedAt ? "done" : "active", timestamp);
       this.recordEvent(input.projectId, input.endedAt ? "session.ended" : "session.started", "session", id, {
         summary: input.summary,
         nextSteps: input.nextSteps,
@@ -1592,7 +2331,8 @@ export class ZenithRepository {
     return session;
   }
 
-  recordSessionSummary(input: Omit<Session, "id">): Session {
+  recordSessionSummary(input: InsertSessionInput): Session {
+    guardMemoryWrite(input, "session");
     const id = createId("sess");
     const timestamp = nowIso();
 
@@ -1602,9 +2342,9 @@ export class ZenithRepository {
           `
           INSERT INTO sessions (
             id, project_id, started_at, ended_at, branch, summary,
-            changed_files_json, related_plan_id, next_steps_json, created_at
+            changed_files_json, related_plan_id, next_steps_json, evidence_json, created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -1617,9 +2357,12 @@ export class ZenithRepository {
           JSON.stringify(input.changedFiles),
           input.relatedPlanId ?? null,
           JSON.stringify(input.nextSteps),
+          JSON.stringify(normalizeStoredEvidence(input.evidence ?? [])),
           timestamp,
         );
 
+      this.insertEvidenceRecords(input.projectId, "session", id, input.evidence ?? [], timestamp);
+      this.syncLifecycle(input.projectId, "session", id, input.endedAt ? "done" : "active", timestamp);
       this.recordEvent(input.projectId, "session.summarized", "session", id, {
         summary: input.summary,
         nextSteps: input.nextSteps,
@@ -1634,6 +2377,7 @@ export class ZenithRepository {
   }
 
   captureSession(sessionId: string, patch: UpdateSessionPatch): Session {
+    guardMemoryWrite(patch, "session");
     const session = this.getSessionById(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
@@ -1642,6 +2386,9 @@ export class ZenithRepository {
     let updated: Session | null = null;
     this.db.transaction(() => {
       updated = this.updateSession(session, patch);
+      if (patch.evidence) {
+        this.insertEvidenceRecords(session.projectId, "session", session.id, patch.evidence, nowIso());
+      }
       this.recordEvent(session.projectId, "session.captured", "session", session.id, {
         summary: patch.summary,
         nextSteps: patch.nextSteps,
@@ -1655,6 +2402,7 @@ export class ZenithRepository {
   }
 
   endSession(sessionId: string, patch: UpdateSessionPatch): Session {
+    guardMemoryWrite(patch, "session");
     const session = this.getSessionById(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
@@ -1666,6 +2414,10 @@ export class ZenithRepository {
         ...patch,
         endedAt: patch.endedAt ?? nowIso(),
       });
+      if (patch.evidence) {
+        this.insertEvidenceRecords(session.projectId, "session", session.id, patch.evidence, nowIso());
+      }
+      this.syncLifecycle(session.projectId, "session", session.id, "done", nowIso());
       this.recordEvent(session.projectId, "session.ended", "session", session.id, {
         summary: updated.summary,
         nextSteps: updated.nextSteps,
@@ -1718,11 +2470,13 @@ export class ZenithRepository {
   }
 
   private updateSession(session: Session, patch: UpdateSessionPatch): Session {
+    const nextEvidence =
+      patch.evidence === undefined ? session.evidence : [...session.evidence, ...normalizeStoredEvidence(patch.evidence)];
     this.db
       .query(
         `
         UPDATE sessions
-        SET ended_at = ?, branch = ?, summary = ?, changed_files_json = ?, related_plan_id = ?, next_steps_json = ?
+        SET ended_at = ?, branch = ?, summary = ?, changed_files_json = ?, related_plan_id = ?, next_steps_json = ?, evidence_json = ?
         WHERE id = ?
       `,
       )
@@ -1733,6 +2487,7 @@ export class ZenithRepository {
         JSON.stringify(patch.changedFiles ?? session.changedFiles),
         patch.relatedPlanId ?? session.relatedPlanId ?? null,
         JSON.stringify(patch.nextSteps ?? session.nextSteps),
+        JSON.stringify(nextEvidence),
         session.id,
       );
 
@@ -1758,6 +2513,7 @@ export class ZenithRepository {
       title: row.title,
       ...(row.description === null ? {} : { description: row.description }),
       status: row.status,
+      lifecycle: lifecycleForPlanStatus(row.status),
       ...(row.priority === null ? {} : { priority: row.priority }),
       ...(row.source_roadmap_id === null ? {} : { sourceRoadmapId: row.source_roadmap_id }),
       ...(row.source_roadmap_item_id === null ? {} : { sourceRoadmapItemId: row.source_roadmap_item_id }),
@@ -1781,6 +2537,7 @@ export class ZenithRepository {
       title: row.title,
       ...(row.description === null ? {} : { description: row.description }),
       status: row.status,
+      lifecycle: lifecycleForRoadmapStatus(row.status),
       ...(row.source_plan_id === null ? {} : { sourcePlanId: row.source_plan_id }),
       items: this.getRoadmapItems(row.id),
       createdAt: row.created_at,
@@ -1808,6 +2565,7 @@ export class ZenithRepository {
       );
 
     input.items.forEach((item, index) => {
+      const itemId = item.id ?? createId("rmi");
       this.db
         .query(
           `
@@ -1819,18 +2577,20 @@ export class ZenithRepository {
         `,
         )
         .run(
-          item.id ?? createId("rmi"),
+          itemId,
           roadmapId,
           index,
           item.title,
           item.description ?? null,
           item.status,
           item.justification ?? null,
-          JSON.stringify(item.evidence),
+          JSON.stringify(normalizeStoredEvidence(item.evidence)),
           item.sourcePhaseId ?? null,
           timestamp,
           timestamp,
         );
+      this.insertEvidenceRecords(input.projectId, "roadmap_item", itemId, item.evidence, timestamp);
+      this.syncLifecycle(input.projectId, "roadmap_item", itemId, lifecycleForRoadmapItemStatus(item.status), timestamp);
     });
   }
 
@@ -1854,6 +2614,7 @@ export class ZenithRepository {
       this.db
         .query("UPDATE plans SET status = 'completed', updated_at = ? WHERE id = ?")
         .run(timestamp, planId);
+      this.syncLifecycle(plan.projectId, "plan", planId, "done", timestamp);
       this.recordEvent(plan.projectId, "plan.completed", "plan", planId, {
         title: plan.title,
         sourceRoadmapId: plan.sourceRoadmapId,
@@ -1865,6 +2626,7 @@ export class ZenithRepository {
         this.db
           .query("UPDATE roadmap_items SET status = 'done', updated_at = ? WHERE id = ?")
           .run(timestamp, plan.sourceRoadmapItemId);
+        this.syncLifecycle(plan.projectId, "roadmap_item", plan.sourceRoadmapItemId, "done", timestamp);
         this.db
           .query("UPDATE roadmaps SET updated_at = ? WHERE id = ?")
           .run(timestamp, plan.sourceRoadmapId);
@@ -1896,6 +2658,7 @@ export class ZenithRepository {
       this.db
         .query("UPDATE roadmap_items SET status = 'in_progress', updated_at = ? WHERE id = ? AND status = 'todo'")
         .run(timestamp, itemId);
+      this.syncLifecycle(projectId, "roadmap_item", itemId, "active", timestamp);
       this.db
         .query("UPDATE roadmaps SET updated_at = ? WHERE id = ?")
         .run(timestamp, roadmapId);
@@ -2042,6 +2805,132 @@ export class ZenithRepository {
     return this.db.query<EventDayCount, string[]>(sql).all(...params);
   }
 
+  private expireClaims(projectId: string, timestamp: string): void {
+    this.db
+      .query("UPDATE memory_claims SET status = 'expired', updated_at = ? WHERE project_id = ? AND status = 'active' AND expires_at <= ?")
+      .run(timestamp, projectId, timestamp);
+  }
+
+  private getMemoryEntity(projectId: string, entityType: MemoryEntityType, entityId: string): unknown | null {
+    if (entityType === "brief") {
+      const entity = this.getProjectBriefById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "roadmap") {
+      const entity = this.getRoadmapById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "roadmap_item") {
+      return this.listRoadmaps(projectId, 1000).flatMap((roadmap) => roadmap.items).find((item) => item.id === entityId) ?? null;
+    }
+    if (entityType === "plan") {
+      const entity = this.getPlanById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "phase") {
+      const result = this.getPlanByPhaseId(entityId);
+      return result?.plan.projectId === projectId ? result.phase : null;
+    }
+    if (entityType === "spike") {
+      const entity = this.getSpikeById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "decision") {
+      const entity = this.getDecisionById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "finding") {
+      const entity = this.getFindingById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "session") {
+      const entity = this.getSessionById(entityId);
+      return entity?.projectId === projectId ? entity : null;
+    }
+    if (entityType === "context_doc") {
+      return this.listContextDocs(projectId).find((doc) => doc.id === entityId) ?? null;
+    }
+    return null;
+  }
+
+  private deleteMemoryEntity(entityType: MemoryEntityType, entityId: string): void {
+    const tableByEntity: Record<MemoryEntityType, string> = {
+      brief: "project_briefs",
+      roadmap: "roadmaps",
+      roadmap_item: "roadmap_items",
+      plan: "plans",
+      phase: "plan_phases",
+      spike: "spikes",
+      decision: "decisions",
+      finding: "findings",
+      session: "sessions",
+      context_doc: "context_docs",
+    };
+    this.db.query(`DELETE FROM ${tableByEntity[entityType]} WHERE id = ?`).run(entityId);
+  }
+
+  private recordTombstone(projectId: string | null, entityType: string, entityId: string, reason: string | undefined, timestamp: string): void {
+    this.db
+      .query("INSERT INTO memory_tombstones (id, project_id, entity_type, entity_id, reason, purged_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(createId("tomb"), projectId, entityType, entityId, reason ?? null, timestamp);
+  }
+
+  private insertEvidenceRecords(
+    projectId: string,
+    entityType: MemoryEntityType,
+    entityId: string,
+    evidence: Evidence[],
+    timestamp: string,
+  ): void {
+    const insert = this.db.query(
+      `INSERT OR IGNORE INTO memory_evidence (
+        id, project_id, entity_type, entity_id, kind, value, path, line, end_line,
+        label, checked_at, stale, superseded_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const item of normalizeStoredEvidence(evidence)) {
+      insert.run(
+        item.id,
+        projectId,
+        entityType,
+        entityId,
+        item.kind,
+        item.value,
+        item.path ?? null,
+        item.line ?? null,
+        item.endLine ?? null,
+        item.label ?? null,
+        item.checkedAt ?? null,
+        item.stale ? 1 : 0,
+        item.supersededBy ?? null,
+        item.createdAt ?? timestamp,
+      );
+    }
+  }
+
+  private syncLifecycle(
+    projectId: string,
+    entityType: MemoryEntityType,
+    entityId: string,
+    lifecycle: MemoryLifecycle,
+    timestamp: string,
+  ): void {
+    const existing = this.getLifecycle(projectId, entityType, entityId);
+    if (existing) {
+      this.db
+        .query("UPDATE memory_lifecycle SET lifecycle = ?, updated_at = ? WHERE project_id = ? AND entity_type = ? AND entity_id = ?")
+        .run(lifecycle, timestamp, projectId, entityType, entityId);
+    } else {
+      this.db
+        .query(
+          `INSERT INTO memory_lifecycle (
+            id, project_id, entity_type, entity_id, lifecycle, reason, superseded_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+        )
+        .run(createId("life"), projectId, entityType, entityId, lifecycle, timestamp, timestamp);
+    }
+  }
+
   private recordEvent(
     projectId: string | null,
     type: string,
@@ -2056,7 +2945,7 @@ export class ZenithRepository {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
       )
-      .run(createId("evt"), projectId, type, entityType, entityId, JSON.stringify(payload), nowIso());
+      .run(createId("evt"), projectId, type, entityType, entityId, JSON.stringify(sanitizeEventPayload(payload)), nowIso());
   }
 }
 
@@ -2130,6 +3019,89 @@ function mapMemoryTag(row: MemoryTagRow): MemoryTag {
   });
 }
 
+function mapMemoryEvidence(row: MemoryEvidenceRow): MemoryEvidenceRecord {
+  return MemoryEvidenceRecordSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    kind: row.kind,
+    value: row.value,
+    ...(row.path === null ? {} : { path: row.path }),
+    ...(row.line === null ? {} : { line: row.line }),
+    ...(row.end_line === null ? {} : { endLine: row.end_line }),
+    ...(row.label === null ? {} : { label: row.label }),
+    ...(row.checked_at === null ? {} : { checkedAt: row.checked_at }),
+    stale: Boolean(row.stale),
+    ...(row.superseded_by === null ? {} : { supersededBy: row.superseded_by }),
+    createdAt: row.created_at,
+  });
+}
+
+function mapMemoryClaim(row: MemoryClaimRow): MemoryClaim {
+  return MemoryClaimSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    entityId: row.entity_id,
+    scope: row.scope,
+    role: row.role,
+    ...(row.owner === null ? {} : { owner: row.owner }),
+    ...(row.worktree === null ? {} : { worktree: row.worktree }),
+    ...(row.branch === null ? {} : { branch: row.branch }),
+    ...(row.hostname === null ? {} : { hostname: row.hostname }),
+    status: row.status,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    ...(row.released_at === null ? {} : { releasedAt: row.released_at }),
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapTagCatalogEntry(row: TagCatalogRow): TagCatalogEntry {
+  return TagCatalogEntrySchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    tag: row.tag,
+    ...(row.description === null ? {} : { description: row.description }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    usageCount: row.usage_count ?? 0,
+  });
+}
+
+function mapTagAlias(row: TagAliasRow): TagAlias {
+  return TagAliasSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    alias: row.alias,
+    tag: row.tag,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapContextDoc(row: ContextDocRow): ContextDoc {
+  return ContextDocSchema.parse({
+    id: row.id,
+    projectId: row.project_id,
+    scope: row.scope,
+    ...(row.plan_id === null ? {} : { planId: row.plan_id }),
+    ...(row.phase_id === null ? {} : { phaseId: row.phase_id }),
+    path: row.path,
+    reason: row.reason,
+    summary: row.summary,
+    assumptions: parseJsonArray<string>(row.assumptions_json),
+    confidence: row.confidence,
+    status: row.status,
+    lifecycle: row.status === "ignored" ? "archived" : "active",
+    readAt: row.read_at,
+    ...(row.read_commit === null ? {} : { readCommit: row.read_commit }),
+    ...(row.observed_mtime === null ? {} : { observedMtime: row.observed_mtime }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
 function agentStageScopeKey(scope: AgentStageScope): string {
   if (scope.phaseId) {
     return `phase:${scope.phaseId}`;
@@ -2146,6 +3118,7 @@ function mapPhase(row: PhaseRow): PlanPhase {
     title: row.title,
     ...(row.description === null ? {} : { description: row.description }),
     status: row.status,
+    lifecycle: lifecycleForPhaseStatus(row.status),
     acceptanceCriteria: parseJsonArray<string>(row.acceptance_criteria_json),
     evidence: parseJsonArray<PlanPhase["evidence"][number]>(row.evidence_json),
     dependsOn: parseJsonArray<string>(row.depends_on_json),
@@ -2162,6 +3135,8 @@ function mapDecision(row: DecisionRow): Decision {
     ...(row.consequences === null ? {} : { consequences: row.consequences }),
     alternatives: parseJsonArray<string>(row.alternatives_json),
     relatedPlanIds: parseJsonArray<string>(row.related_plan_ids_json),
+    evidence: parseJsonArray<Decision["evidence"][number]>(row.evidence_json),
+    lifecycle: "active",
     createdAt: row.created_at,
   });
 }
@@ -2176,6 +3151,7 @@ function mapProjectBrief(row: ProjectBriefRow): ProjectBrief {
     body: row.body,
     ...(row.source === null ? {} : { source: row.source }),
     status: row.status,
+    lifecycle: row.status === "archived" ? "archived" : "active",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -2189,6 +3165,7 @@ function mapRoadmapItem(row: RoadmapItemRow): RoadmapItem {
     ...(row.description === null ? {} : { description: row.description }),
     ...(row.justification === null ? {} : { justification: row.justification }),
     status: row.status,
+    lifecycle: lifecycleForRoadmapItemStatus(row.status),
     evidence: parseJsonArray<RoadmapItem["evidence"][number]>(row.evidence_json),
     ...(row.source_phase_id === null ? {} : { sourcePhaseId: row.source_phase_id }),
   };
@@ -2206,6 +3183,7 @@ function mapSpike(row: SpikeRow): Spike {
     ...(row.recommendation === null ? {} : { recommendation: row.recommendation }),
     evidence: parseJsonArray<Spike["evidence"][number]>(row.evidence_json),
     status: row.status,
+    lifecycle: lifecycleForSpikeStatus(row.status),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.concluded_at === null ? {} : { concludedAt: row.concluded_at }),
@@ -2222,6 +3200,8 @@ function mapFinding(row: FindingRow): Finding {
     description: row.description,
     status: row.status,
     relatedFiles: parseJsonArray<string>(row.related_files_json),
+    evidence: parseJsonArray<Finding["evidence"][number]>(row.evidence_json),
+    lifecycle: row.status === "closed" ? "done" : "active",
     createdAt: row.created_at,
     ...(row.closed_at === null ? {} : { closedAt: row.closed_at }),
     ...(row.related_plan_id === null ? {} : { relatedPlanId: row.related_plan_id }),
@@ -2240,6 +3220,8 @@ function mapSession(row: SessionRow): Session {
     changedFiles: parseJsonArray<string>(row.changed_files_json),
     ...(row.related_plan_id === null ? {} : { relatedPlanId: row.related_plan_id }),
     nextSteps: parseJsonArray<string>(row.next_steps_json),
+    evidence: parseJsonArray<Session["evidence"][number]>(row.evidence_json),
+    lifecycle: row.ended_at === null ? "active" : "done",
   });
 }
 
@@ -2261,6 +3243,78 @@ function mapEvent(row: EventRow): Event {
 function parseJsonArray<T>(value: string): T[] {
   const parsed = JSON.parse(value) as unknown;
   return Array.isArray(parsed) ? (parsed as T[]) : [];
+}
+
+function normalizeStoredEvidence(evidence: Evidence[]): Array<PlanPhase["evidence"][number]> {
+  return evidence.map((item) => ({
+    id: item.id ?? createId("ev"),
+    kind: item.kind ?? "note",
+    value: item.value,
+    ...(item.path ? { path: item.path } : {}),
+    ...(item.line ? { line: item.line } : {}),
+    ...(item.endLine ? { endLine: item.endLine } : {}),
+    ...(item.label ? { label: item.label } : {}),
+    ...(item.checkedAt ? { checkedAt: item.checkedAt } : {}),
+    ...(item.stale !== undefined ? { stale: item.stale } : {}),
+    ...(item.supersededBy ? { supersededBy: item.supersededBy } : {}),
+    createdAt: item.createdAt ?? nowIso(),
+  }));
+}
+
+function lifecycleForPlanStatus(status: PlanStatus): MemoryLifecycle {
+  if (status === "completed") return "done";
+  if (status === "archived") return "archived";
+  if (status === "paused") return "stale";
+  return "active";
+}
+
+function lifecycleForRoadmapStatus(status: RoadmapStatus): MemoryLifecycle {
+  if (status === "completed") return "done";
+  if (status === "archived") return "archived";
+  if (status === "paused") return "stale";
+  return "active";
+}
+
+function lifecycleForRoadmapItemStatus(status: RoadmapItemStatus): MemoryLifecycle {
+  if (status === "done") return "done";
+  if (status === "deferred") return "stale";
+  if (status === "discarded") return "archived";
+  return "active";
+}
+
+function lifecycleForPhaseStatus(status: PlanPhase["status"]): MemoryLifecycle {
+  if (status === "done") return "done";
+  if (status === "blocked") return "blocked";
+  return "active";
+}
+
+function lifecycleForSpikeStatus(status: SpikeStatus): MemoryLifecycle {
+  if (status === "concluded") return "done";
+  if (status === "abandoned") return "archived";
+  return "active";
+}
+
+function lifecycleForEntity(raw: unknown): MemoryLifecycle {
+  const status = typeof raw === "object" && raw ? (raw as { status?: unknown }).status : undefined;
+  if (status && typeof status === "string") {
+    const parsed = MemoryLifecycleSchema.safeParse(status);
+    if (parsed.success) return parsed.data;
+    if (status === "completed" || status === "concluded" || status === "closed") return "done";
+    if (status === "blocked") return "blocked";
+    if (status === "archived" || status === "discarded" || status === "abandoned" || status === "ignored") return "archived";
+    if (status === "paused" || status === "deferred") return "stale";
+  }
+  return "active";
+}
+
+function normalizeScope(scope: string): string {
+  return scope.trim().replace(/\/+$/, "") || ".";
+}
+
+function scopesOverlap(a: string, b: string): boolean {
+  const left = normalizeScope(a);
+  const right = normalizeScope(b);
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
 function joinSearchText(parts: Array<string | undefined>): string {
@@ -2300,6 +3354,10 @@ function phaseStatusToRoadmapItemStatus(status: PlanPhase["status"]): RoadmapIte
   }
 
   if (status === "in_progress") {
+    return "in_progress";
+  }
+
+  if (status === "needs_review") {
     return "in_progress";
   }
 

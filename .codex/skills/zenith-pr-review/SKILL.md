@@ -16,7 +16,7 @@ This skill reviews; it does not implement fixes unless the user explicitly asks 
    - `zenith plan next --json`
    - `zenith finding list --status all --json`
    - `zenith decision list --json`
-   - Optional when useful: `zenith diff --json`, `zenith timeline --json --since <cursor>`, `zenith standup --json`
+   - Optional when useful: `zenith report diff --json`, `zenith report timeline --json --since <cursor>`, `zenith report standup --json`
 2. Put the reviewed code on disk safely. Local staged/branch diffs can use the current checkout. Remote PRs should use a temporary worktree at the PR head when possible so surrounding file reads match the diff.
 3. Gather shared review context once: base/head SHAs, diff, PR description or commit messages, touched modules, project conventions, and relevant surrounding code.
 4. Run focused review passes. Scale to the change size: small patches usually need correctness plus docs/consistency; larger features/refactors should use all relevant passes.

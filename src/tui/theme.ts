@@ -22,6 +22,7 @@ const statusMap: Record<string, StatusGlyph> = {
   // work-item lifecycle (phases + roadmap items)
   todo: { glyph: "○", color: palette.muted, label: "todo" },
   in_progress: { glyph: "◐", color: palette.accent, label: "in progress" },
+  needs_review: { glyph: "◇", color: palette.warning, label: "needs review" },
   done: { glyph: "✓", color: palette.success, label: "done" },
   blocked: { glyph: "✕", color: palette.danger, label: "blocked" },
   deferred: { glyph: "⊘", color: palette.faint, label: "deferred" },

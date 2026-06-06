@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
+import { createId, nowIso } from "../domain/ids";
 import { getDatabasePath, ensureZenithHome } from "./paths";
 
 export type DatabaseOptions = {
@@ -223,6 +224,14 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
     version: 11,
     sql: "",
   },
+  {
+    version: 12,
+    sql: "",
+  },
+  {
+    version: 13,
+    sql: "",
+  },
 ];
 
 export function openZenithDatabase(options: DatabaseOptions = {}): Database {
@@ -282,6 +291,10 @@ export function runMigrations(db: Database): void {
         runRoadmapItemDiscardedStatusMigration(db);
       } else if (migration.version === 11) {
         runMemoryTagsMigration(db);
+      } else if (migration.version === 12) {
+        runActionableContinuityMigration(db);
+      } else if (migration.version === 13) {
+        runHardeningMigration(db);
       } else {
         db.run(migration.sql);
       }
@@ -290,6 +303,305 @@ export function runMigrations(db: Database): void {
         new Date().toISOString(),
       );
     })();
+  }
+}
+
+function runHardeningMigration(db: Database): void {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS memory_evidence (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      value TEXT NOT NULL,
+      path TEXT,
+      line INTEGER,
+      end_line INTEGER,
+      label TEXT,
+      checked_at TEXT,
+      stale INTEGER NOT NULL DEFAULT 0,
+      superseded_by TEXT,
+      created_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_memory_evidence_entity
+      ON memory_evidence(project_id, entity_type, entity_id, created_at ASC)`,
+  );
+
+  db.run(
+    `CREATE TABLE IF NOT EXISTS memory_lifecycle (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      lifecycle TEXT NOT NULL,
+      reason TEXT,
+      superseded_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_lifecycle_entity
+      ON memory_lifecycle(project_id, entity_type, entity_id)`,
+  );
+
+  db.run(
+    `CREATE TABLE IF NOT EXISTS memory_claims (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      entity_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      role TEXT NOT NULL,
+      owner TEXT,
+      worktree TEXT,
+      branch TEXT,
+      hostname TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      released_at TEXT,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_memory_claims_project_status
+      ON memory_claims(project_id, status, expires_at, scope)`,
+  );
+
+  db.run(
+    `CREATE TABLE IF NOT EXISTS tag_catalog (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      tag TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_catalog_project_tag
+      ON tag_catalog(project_id, tag)`,
+  );
+
+  db.run(
+    `CREATE TABLE IF NOT EXISTS tag_aliases (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      alias TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_aliases_project_alias
+      ON tag_aliases(project_id, alias)`,
+  );
+
+  db.run(
+    `CREATE TABLE IF NOT EXISTS memory_tombstones (
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      reason TEXT,
+      purged_at TEXT NOT NULL
+    )`,
+  );
+
+  for (const statement of HARDENING_TRIGGERS) {
+    db.run(statement);
+  }
+
+  backfillEvidence(db);
+  backfillLifecycle(db);
+}
+
+function backfillEvidence(db: Database): void {
+  const rows: Array<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }> = [
+    ...db
+      .query<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }, []>(
+        `SELECT p.project_id, 'phase' AS entity_type, ph.id AS entity_id, ph.evidence_json
+         FROM plan_phases ph JOIN plans p ON p.id = ph.plan_id`,
+      )
+      .all(),
+    ...db
+      .query<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }, []>(
+        `SELECT r.project_id, 'roadmap_item' AS entity_type, ri.id AS entity_id, ri.evidence_json
+         FROM roadmap_items ri JOIN roadmaps r ON r.id = ri.roadmap_id`,
+      )
+      .all(),
+    ...db
+      .query<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }, []>(
+        `SELECT project_id, 'spike' AS entity_type, id AS entity_id, evidence_json FROM spikes`,
+      )
+      .all(),
+    ...db
+      .query<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }, []>(
+        `SELECT project_id, 'decision' AS entity_type, id AS entity_id, evidence_json FROM decisions`,
+      )
+      .all(),
+    ...db
+      .query<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }, []>(
+        `SELECT project_id, 'finding' AS entity_type, id AS entity_id, evidence_json FROM findings`,
+      )
+      .all(),
+    ...db
+      .query<{ project_id: string; entity_type: string; entity_id: string; evidence_json: string }, []>(
+        `SELECT project_id, 'session' AS entity_type, id AS entity_id, evidence_json FROM sessions`,
+      )
+      .all(),
+  ];
+
+  const insert = db.query(
+    `INSERT OR IGNORE INTO memory_evidence (
+      id, project_id, entity_type, entity_id, kind, value, path, line, end_line,
+      label, checked_at, stale, superseded_by, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const timestamp = nowIso();
+  for (const row of rows) {
+    for (const item of parseEvidence(row.evidence_json)) {
+      insert.run(
+        typeof item.id === "string" ? item.id : createId("ev"),
+        row.project_id,
+        row.entity_type,
+        row.entity_id,
+        typeof item.kind === "string" ? item.kind : "note",
+        typeof item.value === "string" ? item.value : "",
+        typeof item.path === "string" ? item.path : null,
+        typeof item.line === "number" && Number.isInteger(item.line) ? item.line : null,
+        typeof item.endLine === "number" && Number.isInteger(item.endLine) ? item.endLine : null,
+        typeof item.label === "string" ? item.label : null,
+        typeof item.checkedAt === "string" ? item.checkedAt : null,
+        item.stale ? 1 : 0,
+        typeof item.supersededBy === "string" ? item.supersededBy : null,
+        typeof item.createdAt === "string" ? item.createdAt : timestamp,
+      );
+    }
+  }
+}
+
+function backfillLifecycle(db: Database): void {
+  const timestamp = nowIso();
+  const insert = db.query(
+    `INSERT OR IGNORE INTO memory_lifecycle (
+      id, project_id, entity_type, entity_id, lifecycle, reason, superseded_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+  );
+  const rows: Array<{ project_id: string; entity_type: string; entity_id: string; status: string; ended_at?: string | null }> = [
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT project_id, 'brief' AS entity_type, id AS entity_id, status FROM project_briefs`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT project_id, 'roadmap' AS entity_type, id AS entity_id, status FROM roadmaps`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT r.project_id, 'roadmap_item' AS entity_type, ri.id AS entity_id, ri.status
+       FROM roadmap_items ri JOIN roadmaps r ON r.id = ri.roadmap_id`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT project_id, 'plan' AS entity_type, id AS entity_id, status FROM plans`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT p.project_id, 'phase' AS entity_type, ph.id AS entity_id, ph.status
+       FROM plan_phases ph JOIN plans p ON p.id = ph.plan_id`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT project_id, 'spike' AS entity_type, id AS entity_id, status FROM spikes`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT project_id, 'finding' AS entity_type, id AS entity_id, status FROM findings`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string; ended_at: string | null }, []>(
+      `SELECT project_id, 'session' AS entity_type, id AS entity_id, CASE WHEN ended_at IS NULL THEN 'open' ELSE 'ended' END AS status, ended_at FROM sessions`,
+    ).all(),
+    ...db.query<{ project_id: string; entity_type: string; entity_id: string; status: string }, []>(
+      `SELECT project_id, 'context_doc' AS entity_type, id AS entity_id, status FROM context_docs`,
+    ).all(),
+  ];
+
+  for (const row of rows) {
+    insert.run(createId("life"), row.project_id, row.entity_type, row.entity_id, lifecycleForStatus(row.entity_type, row.status), timestamp, timestamp);
+  }
+}
+
+function parseEvidence(value: string): Array<Record<string, unknown>> {
+  const parsed = JSON.parse(value) as unknown;
+  return Array.isArray(parsed) ? (parsed.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>>) : [];
+}
+
+function lifecycleForStatus(entityType: string, status: string): string {
+  if (entityType === "phase" && status === "blocked") return "blocked";
+  if (entityType === "phase" && status === "done") return "done";
+  if (entityType === "roadmap_item" && status === "done") return "done";
+  if (entityType === "roadmap_item" && status === "deferred") return "stale";
+  if (entityType === "roadmap_item" && status === "discarded") return "archived";
+  if (entityType === "plan" && status === "completed") return "done";
+  if (entityType === "plan" && status === "archived") return "archived";
+  if (entityType === "plan" && status === "paused") return "stale";
+  if (entityType === "roadmap" && status === "completed") return "done";
+  if (entityType === "roadmap" && status === "archived") return "archived";
+  if (entityType === "roadmap" && status === "paused") return "stale";
+  if (entityType === "brief" && status === "archived") return "archived";
+  if (entityType === "spike" && status === "concluded") return "done";
+  if (entityType === "spike" && status === "abandoned") return "archived";
+  if (entityType === "finding" && status === "closed") return "done";
+  if (entityType === "session" && status === "ended") return "done";
+  if (entityType === "context_doc" && status === "ignored") return "archived";
+  return "active";
+}
+
+function runActionableContinuityMigration(db: Database): void {
+  if (!tableHasColumn(db, "decisions", "evidence_json")) {
+    db.run("ALTER TABLE decisions ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!tableHasColumn(db, "findings", "evidence_json")) {
+    db.run("ALTER TABLE findings ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!tableHasColumn(db, "sessions", "evidence_json")) {
+    db.run("ALTER TABLE sessions ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  db.run(
+    `CREATE TABLE IF NOT EXISTS context_docs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL,
+      plan_id TEXT REFERENCES plans(id) ON DELETE CASCADE,
+      phase_id TEXT REFERENCES plan_phases(id) ON DELETE CASCADE,
+      path TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      assumptions_json TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      status TEXT NOT NULL,
+      read_at TEXT NOT NULL,
+      read_commit TEXT,
+      observed_mtime TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_context_docs_scope_path
+      ON context_docs(project_id, scope, IFNULL(plan_id, ''), IFNULL(phase_id, ''), path)`,
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_context_docs_project_status
+      ON context_docs(project_id, status, updated_at DESC)`,
+  );
+
+  db.run("DROP TRIGGER IF EXISTS trg_plan_phases_status_insert");
+  db.run("DROP TRIGGER IF EXISTS trg_plan_phases_status_update");
+  db.run("DROP TRIGGER IF EXISTS trg_memory_tags_entity_type_insert");
+  db.run("DROP TRIGGER IF EXISTS trg_memory_tags_entity_type_update");
+
+  for (const statement of ACTIONABLE_CONTINUITY_TRIGGERS) {
+    db.run(statement);
   }
 }
 
@@ -479,17 +791,125 @@ const ROADMAP_ITEM_STATUS_TRIGGERS = [
 const STATUS_VOCABULARY_TRIGGERS = [
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
     BEFORE INSERT ON plan_phases
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'needs_review', 'done', 'blocked')
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_update
     BEFORE UPDATE OF status ON plan_phases
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'needs_review', 'done', 'blocked')
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
   ...ROADMAP_ITEM_STATUS_TRIGGERS,
+];
+
+const ACTIONABLE_CONTINUITY_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
+    BEFORE INSERT ON plan_phases
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'needs_review', 'done', 'blocked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plan_phases.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_update
+    BEFORE UPDATE OF status ON plan_phases
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'needs_review', 'done', 'blocked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid plan_phases.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_context_docs_scope_insert
+    BEFORE INSERT ON context_docs
+    WHEN NEW.scope NOT IN ('project', 'plan', 'phase')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid context_docs.scope');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_context_docs_scope_update
+    BEFORE UPDATE OF scope ON context_docs
+    WHEN NEW.scope NOT IN ('project', 'plan', 'phase')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid context_docs.scope');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_context_docs_confidence_insert
+    BEFORE INSERT ON context_docs
+    WHEN NEW.confidence NOT IN ('low', 'medium', 'high')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid context_docs.confidence');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_context_docs_confidence_update
+    BEFORE UPDATE OF confidence ON context_docs
+    WHEN NEW.confidence NOT IN ('low', 'medium', 'high')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid context_docs.confidence');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_context_docs_status_insert
+    BEFORE INSERT ON context_docs
+    WHEN NEW.status NOT IN ('pinned', 'ignored')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid context_docs.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_context_docs_status_update
+    BEFORE UPDATE OF status ON context_docs
+    WHEN NEW.status NOT IN ('pinned', 'ignored')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid context_docs.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_tags_entity_type_insert
+    BEFORE INSERT ON memory_tags
+    WHEN NEW.entity_type NOT IN ('brief', 'roadmap', 'roadmap_item', 'plan', 'phase', 'spike', 'decision', 'finding', 'session', 'context_doc')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_tags.entity_type');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_tags_entity_type_update
+    BEFORE UPDATE OF entity_type ON memory_tags
+    WHEN NEW.entity_type NOT IN ('brief', 'roadmap', 'roadmap_item', 'plan', 'phase', 'spike', 'decision', 'finding', 'session', 'context_doc')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_tags.entity_type');
+    END`,
+];
+
+const HARDENING_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_evidence_entity_type_insert
+    BEFORE INSERT ON memory_evidence
+    WHEN NEW.entity_type NOT IN ('brief', 'roadmap', 'roadmap_item', 'plan', 'phase', 'spike', 'decision', 'finding', 'session', 'context_doc')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_evidence.entity_type');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_evidence_kind_insert
+    BEFORE INSERT ON memory_evidence
+    WHEN NEW.kind NOT IN ('note', 'commit', 'file', 'pr', 'issue', 'command', 'test', 'link', 'adr', 'branch')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_evidence.kind');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_lifecycle_entity_type_insert
+    BEFORE INSERT ON memory_lifecycle
+    WHEN NEW.entity_type NOT IN ('brief', 'roadmap', 'roadmap_item', 'plan', 'phase', 'spike', 'decision', 'finding', 'session', 'context_doc')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_lifecycle.entity_type');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_lifecycle_status_insert
+    BEFORE INSERT ON memory_lifecycle
+    WHEN NEW.lifecycle NOT IN ('active', 'done', 'blocked', 'stale', 'superseded', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_lifecycle.lifecycle');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_lifecycle_status_update
+    BEFORE UPDATE OF lifecycle ON memory_lifecycle
+    WHEN NEW.lifecycle NOT IN ('active', 'done', 'blocked', 'stale', 'superseded', 'archived')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_lifecycle.lifecycle');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_claims_status_insert
+    BEFORE INSERT ON memory_claims
+    WHEN NEW.status NOT IN ('active', 'released', 'expired')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_claims.status');
+    END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_memory_claims_status_update
+    BEFORE UPDATE OF status ON memory_claims
+    WHEN NEW.status NOT IN ('active', 'released', 'expired')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid memory_claims.status');
+    END`,
 ];
 
 function tableHasColumn(db: Database, tableName: string, columnName: string): boolean {
@@ -535,13 +955,13 @@ const INTEGRITY_HARDENING_STATEMENTS = [
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_insert
     BEFORE INSERT ON plan_phases
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'needs_review', 'done', 'blocked')
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
   `CREATE TRIGGER IF NOT EXISTS trg_plan_phases_status_update
     BEFORE UPDATE OF status ON plan_phases
-    WHEN NEW.status NOT IN ('todo', 'in_progress', 'done', 'blocked')
+    WHEN NEW.status NOT IN ('todo', 'in_progress', 'needs_review', 'done', 'blocked')
     BEGIN
       SELECT RAISE(ABORT, 'invalid plan_phases.status');
     END`,
