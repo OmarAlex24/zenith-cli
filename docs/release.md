@@ -1,11 +1,11 @@
 # Zenith Release Packaging
 
-Zenith release packaging targets curl and Homebrew distribution of the headless packaged CLI. npm publication is intentionally out of scope.
+Zenith release packaging targets curl and Homebrew distribution of the packaged CLI and OpenTUI launcher. npm publication is intentionally out of scope.
 
 ## Preconditions
 
 - A release host exists and is known.
-- Bun is available on target machines; the packaged CLI launcher executes the bundled headless JS with Bun.
+- Bun is available on target machines; the packaged CLI launcher executes the bundled JS with Bun.
 - `OWNER/REPO` placeholders in `packaging/homebrew/zenith.rb` have been replaced.
 - Release artifact SHA values are available.
 
@@ -20,7 +20,7 @@ bun run compile
 ./dist/zenith project detect --json
 ```
 
-`dist/zenith` is a headless launcher for `dist/zenith-headless.js`. Use `bun run zenith` from source for the OpenTUI.
+`dist/zenith` launches the bundled `dist/zenith.js`. It opens the OpenTUI with `./dist/zenith` or `./dist/zenith tui`, and it still supports CLI smoke tests such as `./dist/zenith project detect --json`.
 
 ## Create Artifacts
 
@@ -36,7 +36,9 @@ The packaging script creates:
 Each archive contains:
 
 - `zenith`
-- `zenith-headless.js`
+- `zenith.js`
+- emitted OpenTUI `.wasm` and `.scm` assets
+- matching native `node_modules/@opentui/core-<platform>-<arch>` package
 - `README.md`
 - `LICENSE`
 

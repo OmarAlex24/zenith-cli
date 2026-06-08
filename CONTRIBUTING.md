@@ -28,7 +28,7 @@ bun run compile
 ./dist/zenith project detect --json
 ```
 
-`bun run zenith` launches the OpenTUI from source. The packaged `dist/zenith` launcher is headless and should be used for CLI smoke tests only. It requires Bun on the target machine.
+`bun run zenith`, `bun run zenith tui`, `./dist/zenith`, and `./dist/zenith tui` launch the OpenTUI. The packaged launcher requires Bun on the target machine.
 
 ## Guidance Workflow
 

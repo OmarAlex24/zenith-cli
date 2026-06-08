@@ -319,10 +319,11 @@ Raw inspect ayuda a diagnosticar registros guardados. Purge elimina registros so
 
 ### 15. Dashboard OpenTUI
 
-Ejecutar Zenith sin comando abre un dashboard read-only desde el checkout fuente:
+Ejecutar Zenith sin comando o con `tui` abre un dashboard read-only:
 
 ```bash
-bun run zenith
+zenith
+zenith tui
 ```
 
 El dashboard muestra readiness, ROI, siguiente accion, plan activo, findings, spikes, contexto de benchmarks, actividad, search y vistas de roadmap workspace.

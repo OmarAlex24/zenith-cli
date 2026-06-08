@@ -4,6 +4,15 @@ This is the advanced command catalog for scripts, tests, integrations, and agent
 
 All commands below use `--json` when a stable machine-readable envelope is needed. When working from this source checkout and `zenith` is not on `PATH`, prefix commands with `bun run`.
 
+## OpenTUI
+
+```bash
+zenith
+zenith tui
+```
+
+Both commands open the read-only OpenTUI dashboard. `tui` does not emit a JSON envelope.
+
 ## JSON Envelope
 
 ```json

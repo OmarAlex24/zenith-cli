@@ -1038,6 +1038,7 @@ Installed role skills use this same protocol: \`zenith-planner\` creates/selects
 - \`zenith agent prompt --format markdown|agent|codex|claude --json [--role planner|implementer|reviewer|handoff] [--max-tokens <n>] [--metadata]\` — read-only prompt context for handoff or copy/paste
 - \`zenith demo list --json\` — list read-only onboarding/demo guides
 - \`zenith demo show <demo-id> --json\` — return typed guide data plus copyable markdown; built-ins include \`continuity\`, \`daily-loop\`, and \`benchmark-proof\`
+- \`zenith tui\` — open the read-only OpenTUI dashboard for human progress review
 - \`zenith plan phase show <phase-id> --json\`
 - \`zenith report timeline --json\` — read-only activity log; accepts \`--limit <n>\` and \`--since <eventId|iso>\`
 
@@ -1056,7 +1057,7 @@ Use \`--since <eventId|iso>\` to return only events after a checkpoint cursor (I
 - \`zenith finding record "Title" --description "Why blocked" --plan <plan-id> --phase <phase-id> --json\` — record a blocking finding
 - \`zenith plan block --phase <phase-id> --plan <plan-id> --json\` — explicitly mark a phase blocked
 
-These commands are intentional writes except \`session checkpoint --from-git\` without \`--save\`. Read-only commands such as \`continue\`, \`continue --compact\`, \`handoff\`, \`agent prompt\`, \`docs suggest\`, \`demo\`, TUI, and report commands must remain side-effect free.
+These commands are intentional writes except \`session checkpoint --from-git\` without \`--save\`. Read-only commands such as \`continue\`, \`continue --compact\`, \`handoff\`, \`agent prompt\`, \`docs suggest\`, \`demo\`, \`tui\`, and report commands must remain side-effect free.
 
 ## Docs Anchors
 

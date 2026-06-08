@@ -70,8 +70,8 @@ const DEMO_GUIDE_SOURCES: DemoGuideSource[] = [
       {
         title: "Open the cockpit",
         purpose: "Show the human overview for readiness, ROI, next action, Pulse, and Bench.",
-        commands: ["bun run zenith"],
-        expected: "The OpenTUI continuity cockpit opens read-only from the source checkout.",
+        commands: ["bun run zenith", "bun run zenith tui"],
+        expected: "The OpenTUI continuity cockpit opens read-only.",
         durationMinutes: 1,
       },
     ],
