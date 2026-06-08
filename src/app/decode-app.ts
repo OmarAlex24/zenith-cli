@@ -855,7 +855,7 @@ export class ZenithApp {
         for (const handoff of handoffs) {
           const created = await this.claim({
             entityId: handoff.phaseId,
-            scope: ".",
+            scope: handoff.scope,
             role: handoff.role,
             ttl: "2h",
           });

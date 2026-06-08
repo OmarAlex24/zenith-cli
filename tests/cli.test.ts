@@ -2129,6 +2129,14 @@ describe("cli json commands", () => {
     // Each prompt contains its own phase title
     expect(handoffA.prompt).toContain("Alpha Phase");
     expect(handoffB.prompt).toContain("Beta Phase");
+
+    // Each handoff uses the registered phase-show command and a phase-specific claim scope.
+    expect(handoffA.scope).toBe(`phase:${phaseAId}`);
+    expect(handoffB.scope).toBe(`phase:${phaseBId}`);
+    expect(handoffA.suggestedCommands).toContain(`zenith plan phase show ${phaseAId} --json`);
+    expect(handoffB.suggestedCommands).toContain(`zenith plan phase show ${phaseBId} --json`);
+    expect(handoffA.suggestedCommands).not.toContain(`zenith phase show ${phaseAId} --json`);
+    expect(handoffB.suggestedCommands).not.toContain(`zenith phase show ${phaseBId} --json`);
   });
 
   test("dispatch: needs_review phase appears in needsReview with reviewer role handoff", async () => {
@@ -2161,6 +2169,8 @@ describe("cli json commands", () => {
     const reviewHandoff = handoffs.find((h: any) => h.phaseId === phaseId);
     expect(reviewHandoff).toBeDefined();
     expect(reviewHandoff.role).toBe("reviewer");
+    expect(reviewHandoff.scope).toBe(`phase:${phaseId}`);
+    expect(reviewHandoff.suggestedCommands).toContain(`zenith plan phase show ${phaseId} --json`);
   });
 
   test("dispatch: open high-severity finding produces blockingFindings and warning", async () => {
@@ -2240,14 +2250,22 @@ describe("cli json commands", () => {
     const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
       cwd,
       zenithHome,
-      input: { title: "Claim Plan", phases: [{ title: "Phase To Claim" }] },
+      input: { title: "Claim Plan", phases: [{ title: "Phase To Claim" }, { title: "Another Phase To Claim" }] },
     });
     const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+    const phaseBId = (created.json as any).data.phases[1].id;
 
     const dispatchResult = await runDecode(["dispatch", planId, "--json", "--claim"], { cwd, zenithHome });
     expect(dispatchResult.exitCode).toBe(0);
     const claimsCreated = (dispatchResult.json as any).data.claimsCreated;
-    expect(claimsCreated.length).toBeGreaterThan(0);
+    expect(claimsCreated.length).toBe(2);
+
+    const claimListResult = await runDecode(["agent", "claim", "list", "--json"], { cwd, zenithHome });
+    expect(claimListResult.exitCode).toBe(0);
+    const scopes = (claimListResult.json as any).data.map((claim: any) => claim.scope);
+    expect(scopes).toContain(`phase:${phaseAId}`);
+    expect(scopes).toContain(`phase:${phaseBId}`);
 
     // Follow-up dispatchables should warn the phase is claimed
     const secondResult = await runDecode(["plan", "dispatchables", planId, "--json"], { cwd, zenithHome });

@@ -261,6 +261,7 @@ export function buildImplementerHandoff(plan: Plan, item: DispatchableWorkItem):
   const prompt = buildImplementerPrompt(plan, phase);
   const branch = slugifyPhase(phase);
   const suggestedClaim = `phase:${phase.id}`;
+  const claimScope = suggestedClaim;
 
   return {
     kind: item.kind,
@@ -269,12 +270,12 @@ export function buildImplementerHandoff(plan: Plan, item: DispatchableWorkItem):
     phaseId: phase.id,
     title: phase.title,
     role: "implementer",
-    scope: ".",
+    scope: claimScope,
     suggestedClaim,
     prompt,
     suggestedCommands: [
-      `zenith agent claim create ${phase.id} --scope . --role implementer`,
-      `zenith phase show ${phase.id} --json`,
+      `zenith agent claim create ${phase.id} --scope ${claimScope} --role implementer`,
+      `zenith plan phase show ${phase.id} --json`,
       `bun x tsc --noEmit`,
       `bun test`,
       `zenith agent stage set --input - <<< '{"stage":"review","planId":"${plan.id}","phaseId":"${phase.id}"}'`,
@@ -295,6 +296,7 @@ export function buildReviewerHandoff(plan: Plan, item: DispatchableWorkItem): Di
   const prompt = buildReviewerPrompt(plan, phase);
   const branch = slugifyPhase(phase);
   const suggestedClaim = `phase:${phase.id}`;
+  const claimScope = suggestedClaim;
 
   return {
     kind: item.kind,
@@ -303,12 +305,12 @@ export function buildReviewerHandoff(plan: Plan, item: DispatchableWorkItem): Di
     phaseId: phase.id,
     title: phase.title,
     role: "reviewer",
-    scope: ".",
+    scope: claimScope,
     suggestedClaim,
     prompt,
     suggestedCommands: [
-      `zenith agent claim create ${phase.id} --scope . --role reviewer`,
-      `zenith phase show ${phase.id} --json`,
+      `zenith agent claim create ${phase.id} --scope ${claimScope} --role reviewer`,
+      `zenith plan phase show ${phase.id} --json`,
       `zenith plan advance --json --input - <<< '{"planId":"${plan.id}","completedPhaseId":"${phase.id}"}'`,
     ],
     acceptanceCriteria: item.acceptanceCriteria.slice(),
