@@ -63,10 +63,14 @@ zenith plan next --json --stale-after-days <n>
 zenith plan complete <plan-id> --json
 zenith plan advance --json --input -
 zenith plan path <plan-id> --json
+zenith plan dispatchables [plan-id] --json
+zenith dispatch [plan-id] --json [--claim] [--format markdown|codex|conductor]
 zenith plan phase show <phase-id> --json
 ```
 
 `plan update-phase` accepts optional `dependsOn` to declare prerequisites. `plan next --json` returns an optional `kind` discriminant such as `implement_phase`, `review_phase`, `create_plan`, `review_deferred`, `blocking_finding`, `review_finding`, `ambiguous_focus`, `blocked_dependency`, `review_completed`, or `create_plan_empty`.
+
+`plan dispatchables` and `dispatch` are the parallel fan-out counterpart to the serial `plan next`. `dispatchables` returns every phase that can run now (`parallelGroups`), plus `blocked` (with `blockedBy`), `needsReview`, and `blockingFindings`. `dispatch` renders one handoff per dispatchable phase — an implementer prompt for ready phases, a reviewer prompt for `needs_review` — each with a phase-specific prompt, suggested claim, branch, and verification commands; `--claim` creates the claims and `--format conductor` lays them out as `Workspace N` blocks. Run the implementer handoffs in separate agent sessions (each takes its claim and sets its own `stage=review`), then serialize the converging `plan advance` calls in the planning session. Zenith emits the manifest only; it never spawns agents.
 
 `plan advance` payload:
 

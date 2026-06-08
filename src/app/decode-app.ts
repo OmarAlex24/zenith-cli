@@ -96,6 +96,9 @@ import {
   type Spike,
   type DoctorIssue,
   type DoctorReport,
+  type DispatchablesResult,
+  type DispatchPlanResult,
+  type DispatchHandoff,
 } from "../domain/schemas";
 import type { GitSummary } from "../integrations/git/git-adapter";
 import { GitAdapter } from "../integrations/git/git-adapter";
@@ -105,6 +108,11 @@ import { ContextEngine, type ContextOptions } from "./context-engine";
 import { computeNext, findCurrentPhase, type PlanNextResult } from "./plan-next";
 import { computePlanPath, validatePhaseDependencies } from "./plan-graph";
 import { resolveActivePlan, type FocusCandidate, type FocusResolution } from "./focus";
+import {
+  buildImplementerHandoff,
+  buildReviewerHandoff,
+  computeDispatchables,
+} from "./dispatch";
 import { buildRoadmapWorkspace, type RoadmapWorkspace } from "./roadmap-workspace";
 import { guardMemoryWrite, memoryGuardErrorForText, requireEvidenceForAction } from "./memory-guard";
 import {
@@ -787,6 +795,83 @@ export class ZenithApp {
   async planPath(planId: string): Promise<PlanPath> {
     const plan = await this.showPlan(planId);
     return computePlanPath(plan);
+  }
+
+  async planDispatchables(planId?: string): Promise<DispatchablesResult> {
+    const project = await this.requireProject();
+    const git = await this.git.inspect(this.cwd);
+    const { resolution } = this.resolveFocus(project.id, git.worktreeRoot ?? "");
+
+    let plan: Plan | null = null;
+    if (planId) {
+      plan = await this.showPlan(planId);
+    } else if (resolution.ambiguous) {
+      const openFindings = this.repository.listOpenFindings(project.id);
+      const activeClaims = (await this.listClaims()).filter((c) => c.status === "active");
+      return computeDispatchables(null, openFindings, activeClaims, {
+        ambiguous: true,
+        candidates: resolution.candidates,
+      });
+    } else if (resolution.activePlan) {
+      plan = resolution.activePlan;
+    } else {
+      throw new ZenithError("No active plan found", { code: "no_active_plan" });
+    }
+
+    const openFindings = this.repository.listOpenFindings(project.id);
+    const activeClaims = (await this.listClaims()).filter((c) => c.status === "active");
+
+    return computeDispatchables(plan, openFindings, activeClaims, {
+      ambiguous: false,
+      candidates: [],
+    });
+  }
+
+  async dispatch(options: {
+    planId?: string;
+    claim?: boolean;
+    format?: "markdown" | "codex" | "conductor";
+  }): Promise<DispatchPlanResult> {
+    const dispatchables = await this.planDispatchables(options.planId);
+    const format = options.format ?? "markdown";
+
+    let plan: Plan | null = null;
+    if (dispatchables.planId) {
+      plan = await this.showPlan(dispatchables.planId);
+    }
+
+    const handoffs: DispatchHandoff[] = [];
+    const claimsCreated: string[] = [];
+
+    if (plan) {
+      for (const item of dispatchables.parallelGroups) {
+        handoffs.push(buildImplementerHandoff(plan, item));
+      }
+      for (const item of dispatchables.needsReview) {
+        handoffs.push(buildReviewerHandoff(plan, item));
+      }
+
+      if (options.claim) {
+        for (const handoff of handoffs) {
+          const created = await this.claim({
+            entityId: handoff.phaseId,
+            scope: handoff.scope,
+            role: handoff.role,
+            ttl: "2h",
+          });
+          claimsCreated.push(created.id);
+        }
+      }
+    }
+
+    return {
+      planId: dispatchables.planId,
+      format,
+      ambiguous: dispatchables.ambiguous,
+      handoffs,
+      claimsCreated,
+      warnings: dispatchables.warnings,
+    };
   }
 
   async createSpike(rawInput: unknown): Promise<Spike> {

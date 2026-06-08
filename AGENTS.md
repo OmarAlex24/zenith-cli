@@ -33,12 +33,13 @@ Use the zenith-multi-agent skill at .codex/skills/zenith-multi-agent/SKILL.md wh
 Use the zenith-planner skill at .codex/skills/zenith-planner/SKILL.md when:
 - turning roadmap direction into executable plans for role-based handoffs
 - inspecting `continue`, `plan next`, and `plan phase show` before dispatch
+- fanning out independent phases to parallel agent sessions (`plan dispatchables`, `dispatch`)
 - setting `stage=implement` for the implementer after the plan/phase is ready
 
 Use the zenith-implementer skill at .codex/skills/zenith-implementer/SKILL.md when:
 - waiting for `stage=implement` and implementing the scoped phase
 - inspecting `zenith report diff --json` and `zenith plan phase show <phase-id> --json` after wake
-- verifying work and running `zenith plan ready` to mark `needs_review` and set `stage=review` for the reviewer
+- verifying work and setting `stage=review` for the reviewer
 
 Use the zenith-reviewer skill at .codex/skills/zenith-reviewer/SKILL.md when:
 - waiting for `stage=review` and reviewing the implementer's handoff
@@ -47,7 +48,7 @@ Use the zenith-reviewer skill at .codex/skills/zenith-reviewer/SKILL.md when:
 
 Before planning:
 - Run `zenith continue`.
-- Run `zenith handoff --to implementer --compact --max-tokens 800` when a compact handoff prompt is useful.
+- Run `zenith handoff --to implementer --compact` when a compact handoff prompt is useful.
 - Run `zenith docs suggest --task current` when repository documentation may affect the task; pin or ignore only with intent.
 - Run `zenith context compact --json` and `zenith plan next --json` only when you need exact fields for dispatch.
 - If structured output returns a `phaseId`, run `zenith plan phase show <phase-id> --json`.

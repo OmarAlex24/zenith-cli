@@ -1229,3 +1229,66 @@ export type AdvancePlanInput = z.infer<typeof AdvancePlanInputSchema>;
 export type AdvanceResult = z.infer<typeof AdvanceResultSchema>;
 export type PlanPathPhase = z.infer<typeof PlanPathPhaseSchema>;
 export type PlanPath = z.infer<typeof PlanPathSchema>;
+
+// ---------------------------------------------------------------------------
+// Dispatch / parallel-dispatch layer
+// ---------------------------------------------------------------------------
+
+export const DispatchUnitKindSchema = z.enum([
+  "implement_phase",
+  "review_phase",
+  "blocked_dependency",
+]);
+
+export const DispatchableWorkItemSchema = z.object({
+  kind: DispatchUnitKindSchema,
+  roadmapId: z.string().min(1).optional(),
+  planId: z.string().min(1),
+  phaseId: z.string().min(1),
+  title: z.string().min(1),
+  status: PhaseStatusSchema,
+  blockedBy: z.array(z.string().min(1)).default([]),
+  acceptanceCriteria: z.array(z.string().min(1)).default([]),
+});
+
+export const DispatchablesResultSchema = z.object({
+  planId: z.string().min(1).nullable(),
+  ambiguous: z.boolean(),
+  parallelGroups: z.array(DispatchableWorkItemSchema),
+  blocked: z.array(DispatchableWorkItemSchema),
+  needsReview: z.array(DispatchableWorkItemSchema),
+  blockingFindings: z.array(
+    z.object({ id: z.string().min(1), severity: FindingSeveritySchema, title: z.string().min(1) }),
+  ),
+  warnings: z.array(z.string().min(1)),
+});
+
+export const DispatchHandoffSchema = z.object({
+  kind: DispatchUnitKindSchema,
+  roadmapId: z.string().min(1).optional(),
+  planId: z.string().min(1),
+  phaseId: z.string().min(1),
+  title: z.string().min(1),
+  role: z.enum(["implementer", "reviewer"]),
+  scope: z.string().min(1),
+  suggestedClaim: z.string().min(1),
+  prompt: z.string().min(1),
+  suggestedCommands: z.array(z.string().min(1)).default([]),
+  acceptanceCriteria: z.array(z.string().min(1)).default([]),
+  branchSuggestion: z.string().min(1),
+});
+
+export const DispatchPlanResultSchema = z.object({
+  planId: z.string().min(1).nullable(),
+  format: z.enum(["markdown", "codex", "conductor"]),
+  ambiguous: z.boolean(),
+  handoffs: z.array(DispatchHandoffSchema),
+  claimsCreated: z.array(z.string().min(1)).default([]),
+  warnings: z.array(z.string().min(1)),
+});
+
+export type DispatchUnitKind = z.infer<typeof DispatchUnitKindSchema>;
+export type DispatchableWorkItem = z.infer<typeof DispatchableWorkItemSchema>;
+export type DispatchablesResult = z.infer<typeof DispatchablesResultSchema>;
+export type DispatchHandoff = z.infer<typeof DispatchHandoffSchema>;
+export type DispatchPlanResult = z.infer<typeof DispatchPlanResultSchema>;

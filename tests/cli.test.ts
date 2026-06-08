@@ -1430,9 +1430,11 @@ describe("cli json commands", () => {
     expect(stdout).not.toContain("Decode");
 
     const commandBlock = stdout.split("Commands:\n")[1] ?? "";
+    // Only parse lines that start with exactly 2 spaces (Commander's command indent),
+    // not wrapped description continuation lines which are indented further.
     const commandNames = commandBlock
-      .trim()
       .split("\n")
+      .filter((line) => /^  [^ ]/.test(line))
       .map((line) => line.trim().split(/\s+/)[0])
       .filter((name): name is string => Boolean(name) && name !== "help")
       .sort();
@@ -1444,6 +1446,7 @@ describe("cli json commands", () => {
         "continue",
         "decision",
         "demo",
+        "dispatch",
         "docs",
         "doctor",
         "finding",
@@ -2020,6 +2023,255 @@ describe("cli json commands", () => {
     const criticalPath = (result.json as any).data.criticalPath;
     expect(criticalPath).toContain(phaseAId);
     expect(criticalPath).toContain(phaseBId);
+  });
+
+  // -------------------------------------------------------------------------
+  // F4b: plan dispatchables + dispatch (parallel-dispatch layer)
+  // -------------------------------------------------------------------------
+
+  test("plan dispatchables: A and B independent, C blocked by A and B", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Dispatch Plan",
+        phases: [{ title: "Phase A" }, { title: "Phase B" }, { title: "Phase C" }],
+      },
+    });
+    const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+    const phaseBId = (created.json as any).data.phases[1].id;
+    const phaseCId = (created.json as any).data.phases[2].id;
+
+    // C depends on both A and B
+    await runDecode(["plan", "update-phase", planId, "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { phaseId: phaseCId, dependsOn: [phaseAId, phaseBId] },
+    });
+
+    const result = await runDecode(["plan", "dispatchables", planId, "--json"], { cwd, zenithHome });
+    expect(result.exitCode).toBe(0);
+    expect((result.json as any).ok).toBe(true);
+    const data = (result.json as any).data;
+
+    // A and B should be in parallelGroups, C in blocked
+    const parallelIds = data.parallelGroups.map((p: any) => p.phaseId);
+    expect(parallelIds).toContain(phaseAId);
+    expect(parallelIds).toContain(phaseBId);
+    expect(parallelIds).not.toContain(phaseCId);
+
+    const blockedIds = data.blocked.map((p: any) => p.phaseId);
+    expect(blockedIds).toContain(phaseCId);
+
+    // C's blockedBy should include both A and B
+    const blockedC = data.blocked.find((p: any) => p.phaseId === phaseCId);
+    expect(blockedC.blockedBy).toContain(phaseAId);
+    expect(blockedC.blockedBy).toContain(phaseBId);
+
+    // Mark A and B done, re-run — C should now be in parallelGroups
+    await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { planId, completedPhaseId: phaseAId, evidence: [{ kind: "note", value: "Phase A complete" }] },
+    });
+    await runDecode(["plan", "advance", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { planId, completedPhaseId: phaseBId, evidence: [{ kind: "note", value: "Phase B complete" }] },
+    });
+
+    const result2 = await runDecode(["plan", "dispatchables", planId, "--json"], { cwd, zenithHome });
+    expect(result2.exitCode).toBe(0);
+    const data2 = (result2.json as any).data;
+    const parallelIds2 = data2.parallelGroups.map((p: any) => p.phaseId);
+    expect(parallelIds2).toContain(phaseCId);
+    expect(data2.blocked.map((p: any) => p.phaseId)).not.toContain(phaseCId);
+  });
+
+  test("dispatch: prompts for A and B are different strings each containing their own phase title (regression)", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Regression Plan",
+        phases: [{ title: "Alpha Phase" }, { title: "Beta Phase" }],
+      },
+    });
+    const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+    const phaseBId = (created.json as any).data.phases[1].id;
+
+    const result = await runDecode(["dispatch", planId, "--json"], { cwd, zenithHome });
+    expect(result.exitCode).toBe(0);
+    const handoffs = (result.json as any).data.handoffs;
+    expect(handoffs.length).toBeGreaterThanOrEqual(2);
+
+    const handoffA = handoffs.find((h: any) => h.phaseId === phaseAId);
+    const handoffB = handoffs.find((h: any) => h.phaseId === phaseBId);
+
+    expect(handoffA).toBeDefined();
+    expect(handoffB).toBeDefined();
+
+    // Prompts must be different
+    expect(handoffA.prompt).not.toEqual(handoffB.prompt);
+
+    // Each prompt contains its own phase title
+    expect(handoffA.prompt).toContain("Alpha Phase");
+    expect(handoffB.prompt).toContain("Beta Phase");
+
+    // Each handoff uses the registered phase-show command and a phase-specific claim scope.
+    expect(handoffA.scope).toBe(`phase:${phaseAId}`);
+    expect(handoffB.scope).toBe(`phase:${phaseBId}`);
+    expect(handoffA.suggestedCommands).toContain(`zenith plan phase show ${phaseAId} --json`);
+    expect(handoffB.suggestedCommands).toContain(`zenith plan phase show ${phaseBId} --json`);
+    expect(handoffA.suggestedCommands).not.toContain(`zenith phase show ${phaseAId} --json`);
+    expect(handoffB.suggestedCommands).not.toContain(`zenith phase show ${phaseBId} --json`);
+  });
+
+  test("dispatch: needs_review phase appears in needsReview with reviewer role handoff", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Review Plan",
+        phases: [{ title: "Review Me", status: "needs_review" }],
+      },
+    });
+    const planId = (created.json as any).data.id;
+    const phaseId = (created.json as any).data.phases[0].id;
+
+    const dispResult = await runDecode(["plan", "dispatchables", planId, "--json"], { cwd, zenithHome });
+    expect(dispResult.exitCode).toBe(0);
+    const dispData = (dispResult.json as any).data;
+    const reviewIds = dispData.needsReview.map((p: any) => p.phaseId);
+    expect(reviewIds).toContain(phaseId);
+    expect(dispData.parallelGroups.map((p: any) => p.phaseId)).not.toContain(phaseId);
+
+    const result = await runDecode(["dispatch", planId, "--json"], { cwd, zenithHome });
+    expect(result.exitCode).toBe(0);
+    const handoffs = (result.json as any).data.handoffs;
+    const reviewHandoff = handoffs.find((h: any) => h.phaseId === phaseId);
+    expect(reviewHandoff).toBeDefined();
+    expect(reviewHandoff.role).toBe("reviewer");
+    expect(reviewHandoff.scope).toBe(`phase:${phaseId}`);
+    expect(reviewHandoff.suggestedCommands).toContain(`zenith plan phase show ${phaseId} --json`);
+  });
+
+  test("dispatch: open high-severity finding produces blockingFindings and warning", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Finding Plan", phases: [{ title: "Do Work" }] },
+    });
+
+    // Record a high-severity finding
+    await runDecode(["finding", "record", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: {
+        title: "Critical Bug",
+        description: "Something is broken",
+        type: "bug",
+        severity: "high",
+      },
+    });
+
+    const result = await runDecode(["plan", "dispatchables", "--json"], { cwd, zenithHome });
+    expect(result.exitCode).toBe(0);
+    const data = (result.json as any).data;
+    expect(data.blockingFindings.length).toBeGreaterThan(0);
+    expect(data.warnings.some((w: string) => w.includes("blocking findings"))).toBe(true);
+    // Implementation phases are still surfaced
+    expect(data.parallelGroups.length).toBeGreaterThan(0);
+  });
+
+  test("dispatch --format conductor: human output contains Workspace blocks; --json has expected keys", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Conductor Plan", phases: [{ title: "Phase One" }] },
+    });
+    const planId = (created.json as any).data.id;
+
+    // JSON output should have expected keys regardless of format
+    const jsonResult = await runDecode(["dispatch", planId, "--json", "--format", "conductor"], { cwd, zenithHome });
+    expect(jsonResult.exitCode).toBe(0);
+    const handoffs = (jsonResult.json as any).data.handoffs;
+    expect(handoffs.length).toBeGreaterThan(0);
+    const h = handoffs[0];
+    expect(h).toHaveProperty("phaseId");
+    expect(h).toHaveProperty("prompt");
+    expect(h).toHaveProperty("role");
+    expect(h).toHaveProperty("branchSuggestion");
+    expect(h).toHaveProperty("suggestedCommands");
+    // Branch suggestion must not double the "phase-" prefix for titles starting with "Phase".
+    expect(h.branchSuggestion).not.toContain("phase-phase-");
+    expect(h.branchSuggestion).toBe("phase-one");
+    expect((jsonResult.json as any).data.format).toBe("conductor");
+
+    // Human output (no --json) should contain "Workspace" blocks
+    const humanResult = await runRawZenith(["dispatch", planId, "--format", "conductor"], { cwd, zenithHome });
+    expect(humanResult.exitCode).toBe(0);
+    expect(humanResult.stdout).toContain("Workspace");
+  });
+
+  test("dispatch --claim: claimsCreated non-empty, follow-up dispatchables warns about claimed phase", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    tempDirs.push(cwd, zenithHome);
+
+    await runDecode(["init", "--json"], { cwd, zenithHome });
+    const created = await runDecode(["plan", "create", "--json", "--input", "-"], {
+      cwd,
+      zenithHome,
+      input: { title: "Claim Plan", phases: [{ title: "Phase To Claim" }, { title: "Another Phase To Claim" }] },
+    });
+    const planId = (created.json as any).data.id;
+    const phaseAId = (created.json as any).data.phases[0].id;
+    const phaseBId = (created.json as any).data.phases[1].id;
+
+    const dispatchResult = await runDecode(["dispatch", planId, "--json", "--claim"], { cwd, zenithHome });
+    expect(dispatchResult.exitCode).toBe(0);
+    const claimsCreated = (dispatchResult.json as any).data.claimsCreated;
+    expect(claimsCreated.length).toBe(2);
+
+    const claimListResult = await runDecode(["agent", "claim", "list", "--json"], { cwd, zenithHome });
+    expect(claimListResult.exitCode).toBe(0);
+    const scopes = (claimListResult.json as any).data.map((claim: any) => claim.scope);
+    expect(scopes).toContain(`phase:${phaseAId}`);
+    expect(scopes).toContain(`phase:${phaseBId}`);
+
+    // Follow-up dispatchables should warn the phase is claimed
+    const secondResult = await runDecode(["plan", "dispatchables", planId, "--json"], { cwd, zenithHome });
+    expect(secondResult.exitCode).toBe(0);
+    const secondData = (secondResult.json as any).data;
+    expect(secondData.warnings.some((w: string) => w.includes("claimed"))).toBe(true);
   });
 
   // -------------------------------------------------------------------------
