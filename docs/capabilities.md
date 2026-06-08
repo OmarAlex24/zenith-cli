@@ -39,7 +39,7 @@ Zenith encaja bien cuando un proyecto tiene una o mas de estas condiciones:
 - El equipo necesita un resumen compacto de "donde estamos y que sigue".
 - La documentacion del repo importa, pero no se quiere copiar documentos completos al contexto.
 - Se quiere trazabilidad ligera para decisiones, findings, evidencia y sesiones.
-- Varios agentes locales pueden trabajar en paralelo y necesitan claims, stage, watch o focus.
+- Varios agentes locales pueden trabajar en paralelo y necesitan dispatch por fases, claims, stage, watch o focus.
 - Se quiere detectar worktrees sucios, evidencia debil, docs stale, tags ambiguos o readiness bajo antes de continuar.
 
 ## Cuando No Encaja
@@ -70,6 +70,7 @@ Puede complementar esas herramientas, pero su alcance intencional es mas estrech
 - `context_doc`: ancla de documentacion pineada o ignorada.
 - `tag`: etiqueta normalizada para descubrimiento deterministico.
 - `claim`: lease local para coordinar quien trabaja en un scope.
+- `dispatchable`: fase lista para implementacion o review que puede entregarse a un agente.
 - `evidence`: prueba normalizada asociada a un registro de contexto, por ejemplo commits, archivos, comandos, tests, links, issues, PRs, ADRs o ramas.
 - `lifecycle`: proyeccion comun de estado, como active, done, blocked, stale, superseded o archived.
 
@@ -115,6 +116,8 @@ zenith plan create --json --input -
 zenith plan next --json
 zenith plan phase show <phase-id> --json
 zenith plan path <plan-id> --json
+zenith plan dispatchables [plan-id] --json
+zenith dispatch [plan-id] --json [--claim] [--format markdown|codex|conductor]
 ```
 
 Los roadmaps describen hacia donde va el proyecto. Los planes describen trabajo que ya se puede ejecutar. Las fases pueden tener dependencias con `dependsOn`, asi que Zenith puede decir si la siguiente fase esta lista o bloqueada por otra fase.
@@ -128,6 +131,8 @@ Estados de fase:
 - `blocked`
 
 `needs_review` es clave para flujos con agentes: permite marcar una implementacion como verificada y lista para review sin decir falsamente que ya esta terminada.
+
+`plan dispatchables` y `dispatch` son el fan-out paralelo del flujo serial `plan next`. `dispatchables` lista todas las fases que se pueden ejecutar ahora, las que estan bloqueadas por dependencias, las que necesitan review y los findings bloqueantes. `dispatch` genera un handoff por fase: prompt de implementer para fases listas, prompt de reviewer para fases en `needs_review`, rama sugerida, claim sugerido, scope por fase y comandos de verificacion. Con `--claim`, Zenith crea los claims por adelantado usando scopes no solapados como `phase:<phase-id>`. Con `--format conductor`, emite bloques `Workspace N` para abrir una sesion por fase.
 
 ### 4. Ready, Done Y Blocked
 
@@ -206,21 +211,25 @@ Para renderizado de prompt de bajo nivel:
 zenith agent prompt --format codex --role implementer --json
 ```
 
-### 9. Coordinacion Local De Agentes
+### 9. Coordinacion Local Y Dispatch Paralelo De Agentes
 
 Zenith puede coordinar agentes locales sin lanzar CLIs de proveedores:
 
 ```bash
+zenith plan dispatchables <plan-id> --json
+zenith dispatch <plan-id> --json --claim --format conductor
 zenith agent focus set <roadmap-id>
 zenith agent stage set --json --input -
 zenith agent watch --until stage=review,plan=<plan-id>,phase=<phase-id> --json
-zenith agent claim create <entity-id> --scope <path> --ttl 2h --role implementer
+zenith agent claim create <phase-id> --scope phase:<phase-id> --ttl 2h --role implementer
 zenith agent claim list --json
 zenith agent claim refresh <claim-id> --ttl 2h
 zenith agent claim release <claim-id-or-entity-id>
 ```
 
 Focus vincula el worktree actual con un roadmap. Stage y watch permiten wake-on-event choreography. Claims son leases locales con TTL para que los agentes no pisen el mismo scope de trabajo.
+
+El flujo paralelo recomendado es: el planner corre `plan dispatchables`, genera handoffs con `dispatch --format conductor`, abre una sesion por handoff, cada agente toma su claim de fase, implementa o revisa solo esa fase y marca su propio `stage=review` o avanza el plan cuando corresponde. Zenith emite el manifest y los claims, pero no lanza los agentes ni los CLIs de proveedores. La convergencia se serializa en la sesion de planificacion con `plan advance` o `plan done`.
 
 ### 10. Doctor Y Readiness
 
@@ -411,7 +420,9 @@ zenith finding close <finding-id> --evidence "Fix verified"
 Para coordinacion local de agentes:
 
 ```bash
-zenith agent claim create <entity-id> --scope src/app --ttl 2h --role implementer
+zenith plan dispatchables <plan-id> --json
+zenith dispatch <plan-id> --json --claim --format conductor
+zenith agent claim create <phase-id> --scope phase:<phase-id> --ttl 2h --role implementer
 zenith agent stage set --json --input -
 zenith agent watch --until stage=review --json
 zenith agent claim release <claim-id>
@@ -423,6 +434,8 @@ Zenith expone envelopes JSON estables para scripts, tests y agentes:
 
 ```bash
 zenith plan next --json
+zenith plan dispatchables --json
+zenith dispatch --json --format conductor
 zenith context compact --json
 zenith doctor --json
 zenith report timeline --json
@@ -438,6 +451,7 @@ Usa este checklist para decidir si Zenith encaja con un proyecto:
 - Los agentes necesitan un siguiente paso confiable en lugar de adivinar desde el repo?
 - Necesitamos contexto privado local en vez de depender de contexto cloud?
 - Necesitamos planes por fases con handoff a review?
+- Necesitamos despachar fases independientes a varios agentes sin que sus claims se solapen?
 - Nos importa exigir evidencia para estados ready, done o blocked?
 - Necesitamos recordar decisiones y findings sin crear tickets pesados?
 - Necesitamos prompts compactos para planner, implementer o reviewer?
@@ -449,4 +463,4 @@ Si la mayoria de respuestas son si, Zenith probablemente aporta valor. Si el pro
 
 ## Version De Un Parrafo
 
-Zenith CLI es una capa local-first de guia y coordinacion para desarrollo de software asistido por IA. Guarda en SQLite privado el brief del proyecto, roadmap, planes ejecutables, fases, decisiones, findings, sesiones, docs anchors, tags, evidencia, claims y eventos sanitizados. Ayuda a una persona o agente a retomar trabajo con `zenith continue`, elegir el siguiente paso con `plan next`, hacer handoff de roles con `handoff`, coordinar agentes locales con `agent stage/watch/claim`, validar readiness con `doctor` e inspeccionar progreso con reportes read-only y un TUI. Encaja mejor en proyectos donde importan continuidad, evidencia, privacidad y handoff entre agentes, y evita convertirse en issue tracker remoto, CI system, archivo de transcripts o almacen de secrets.
+Zenith CLI es una capa local-first de guia y coordinacion para desarrollo de software asistido por IA. Guarda en SQLite privado el brief del proyecto, roadmap, planes ejecutables, fases, decisiones, findings, sesiones, docs anchors, tags, evidencia, claims y eventos sanitizados. Ayuda a una persona o agente a retomar trabajo con `zenith continue`, elegir el siguiente paso con `plan next`, hacer handoff de roles con `handoff`, despachar fases independientes con `dispatch`, coordinar agentes locales con `agent stage/watch/claim`, validar readiness con `doctor` e inspeccionar progreso con reportes read-only y un TUI. Encaja mejor en proyectos donde importan continuidad, evidencia, privacidad y handoff entre agentes, y evita convertirse en issue tracker remoto, CI system, archivo de transcripts o almacen de secrets.
