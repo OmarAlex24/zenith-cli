@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { installAgentPack, type AgentKind } from "../agents/installer";
-import { createZenithApp } from "../app/factory";
+import { createZenithApp, type AppFactoryOptions } from "../app/factory";
 import { listBenchmarkScenarios, loadBenchmarkScenarios, renderBenchmarkTask } from "../benchmarks/scenarios";
 import { compareBenchmarkRuns, listBenchmarkRuns, recordBenchmarkRun } from "../benchmarks/store";
 import { getDemoGuide, listDemoGuides } from "../demo/guides";
@@ -13,7 +13,10 @@ export type RunCliOptions = {
   cwd?: string;
   zenithHome?: string;
   dbPath?: string;
+  tuiRunner?: TuiRunner;
 };
+
+type TuiRunner = (options: AppFactoryOptions) => Promise<void>;
 
 type CommandOptions = {
   json?: boolean;
@@ -71,6 +74,13 @@ type CommandOptions = {
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
   const program = new Command();
   program.name("zenith").description("Local-first project memory and agent coordination CLI");
+
+  program
+    .command("tui")
+    .description("Open the read-only OpenTUI dashboard")
+    .action(async () => {
+      await runTuiCommand(options);
+    });
 
   program
     .command("init")
@@ -1335,11 +1345,26 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   if (argv.slice(2).length === 0) {
-    program.outputHelp();
+    await runTuiCommand(options);
     return;
   }
 
   await program.parseAsync(argv);
+}
+
+async function runTuiCommand(options: RunCliOptions): Promise<void> {
+  const runner = options.tuiRunner ?? defaultTuiRunner;
+  await runner(toAppFactoryOptions(options));
+}
+
+async function defaultTuiRunner(options: AppFactoryOptions): Promise<void> {
+  const { runTui } = await import("../tui/run-tui");
+  await runTui(options);
+}
+
+function toAppFactoryOptions(options: RunCliOptions): AppFactoryOptions {
+  const { tuiRunner: _tuiRunner, ...appOptions } = options;
+  return appOptions;
 }
 
 async function handle<T>(
@@ -1348,7 +1373,7 @@ async function handle<T>(
   action: (app: ReturnType<typeof createZenithApp>["app"]) => Promise<T>,
   human: (data: T) => string,
 ): Promise<void> {
-  const services = createZenithApp(runOptions);
+  const services = createZenithApp(toAppFactoryOptions(runOptions));
   try {
     const data = await action(services.app);
     emit(commandOptions, data, human);

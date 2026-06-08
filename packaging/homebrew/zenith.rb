@@ -26,10 +26,12 @@ class Zenith < Formula
   end
 
   def install
-    libexec.install "zenith-headless.js"
+    libexec.install "zenith.js"
+    libexec.install Dir["*.wasm", "*.scm"]
+    libexec.install "node_modules"
     (bin/"zenith").write <<~SH
       #!/bin/sh
-      exec "#{Formula["bun"].opt_bin}/bun" "#{libexec}/zenith-headless.js" "$@"
+      exec "#{Formula["bun"].opt_bin}/bun" "#{libexec}/zenith.js" "$@"
     SH
   end
 

@@ -49,6 +49,13 @@ mkdir -p "$install_dir"
 curl -fsSL "$url" -o "$tmp_dir/$artifact"
 tar -xzf "$tmp_dir/$artifact" -C "$tmp_dir"
 install -m 0755 "$tmp_dir/zenith" "$install_dir/zenith"
-install -m 0644 "$tmp_dir/zenith-headless.js" "$install_dir/zenith-headless.js"
+install -m 0644 "$tmp_dir/zenith.js" "$install_dir/zenith.js"
+for asset in "$tmp_dir"/*.wasm "$tmp_dir"/*.scm; do
+  [ -e "$asset" ] || continue
+  install -m 0644 "$asset" "$install_dir/$(basename "$asset")"
+done
+rm -rf "$install_dir/node_modules/@opentui"
+mkdir -p "$install_dir/node_modules"
+cp -R "$tmp_dir/node_modules/@opentui" "$install_dir/node_modules/"
 
 echo "Installed zenith to $install_dir/zenith"

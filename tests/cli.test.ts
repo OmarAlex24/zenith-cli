@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { createZenithApp } from "../src/app/factory";
+import { runCli } from "../src/cli/program";
 import { cleanupTempDir, makeTempDir, runCommand, runDecode } from "./helpers";
 
 const tempDirs: string[] = [];
@@ -1460,8 +1461,29 @@ describe("cli json commands", () => {
         "search",
         "session",
         "tag",
+        "tui",
       ].sort(),
     );
+  });
+
+  test("top-level empty args and tui command launch OpenTUI through the shared runner", async () => {
+    const cwd = makeTempDir();
+    const zenithHome = makeTempDir();
+    const dbPath = join(zenithHome, "custom.db");
+    tempDirs.push(cwd, zenithHome);
+
+    const calls: unknown[] = [];
+    const tuiRunner = async (options: unknown) => {
+      calls.push(options);
+    };
+
+    await runCli(["bun", "zenith"], { cwd, zenithHome, dbPath, tuiRunner });
+    await runCli(["bun", "zenith", "tui"], { cwd, zenithHome, dbPath, tuiRunner });
+
+    expect(calls).toEqual([
+      { cwd, zenithHome, dbPath },
+      { cwd, zenithHome, dbPath },
+    ]);
   });
 
   test("removed top-level commands fail as unknown commands", async () => {

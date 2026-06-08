@@ -8,7 +8,7 @@ Zenith does not replace GitHub Issues, Linear, docs, or ADRs. Its job is narrowe
 
 ## Status
 
-Zenith is source-first while the repository is prepared for open-source distribution. The supported development and OpenTUI path is Bun from this checkout. A packaged headless launcher can be built locally for curl/Homebrew-style distribution templates; npm publication remains intentionally out of scope.
+Zenith is source-first while the repository is prepared for open-source distribution. The supported development path is Bun from this checkout, and the packaged launcher can be built locally for curl/Homebrew-style distribution templates. npm publication remains intentionally out of scope.
 
 ## Requirements
 
@@ -27,11 +27,12 @@ Run Zenith from the checkout:
 
 ```bash
 bun run zenith
+bun run zenith tui
 bun run zenith --help
 bun run zenith project detect --json
 ```
 
-Running `bun run zenith` with no arguments launches the read-only OpenTUI continuity cockpit. The first screen centers readiness, ROI, next action, active plan, findings, spikes, and benchmark run context; Pulse and Bench sections remain available from the sidebar. Use `↑`/`↓` to navigate within the current region, `enter` to move focus forward (sidebar → content, and between columns inside the Roadmap workspace), `backspace` (or `←`) to move focus backward, number keys `1–9` to jump to the main sections, `0` to open Search, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
+Running `bun run zenith` with no arguments or `bun run zenith tui` launches the read-only OpenTUI continuity cockpit. The first screen centers readiness, ROI, next action, active plan, findings, spikes, and benchmark run context; Pulse and Bench sections remain available from the sidebar. Use `↑`/`↓` to navigate within the current region, `enter` to move focus forward (sidebar → content, and between columns inside the Roadmap workspace), `backspace` (or `←`) to move focus backward, number keys `1–9` to jump to the main sections, `0` to open Search, `r` to refresh, and `q` or `esc` to quit. JSON commands remain available by passing command arguments.
 
 For a five-minute onboarding path, run the continuity demo guide:
 
@@ -51,6 +52,8 @@ bun run zenith init --json
 If a `zenith` binary is already available on `PATH`, the same commands work without `bun run`:
 
 ```bash
+zenith
+zenith tui
 zenith project detect --json
 zenith context compact --json
 ```
@@ -66,7 +69,7 @@ bun dist/index.js project detect --json
 
 The bundled JS entrypoint is a verified way to run built output.
 
-Build the local packaged headless executable:
+Build the local packaged executable:
 
 ```bash
 bun run compile
@@ -74,7 +77,7 @@ bun run compile
 ./dist/zenith project detect --json
 ```
 
-The `dist/zenith` launcher runs the bundled `dist/zenith-headless.js` with Bun. It is headless: it supports CLI commands and JSON smoke tests, but it does not launch the OpenTUI dashboard when run without arguments. Use `bun run zenith` from the source checkout for the dashboard.
+The `dist/zenith` launcher runs the bundled `dist/zenith.js` with Bun. It supports CLI commands and opens the OpenTUI dashboard with `./dist/zenith` or `./dist/zenith tui`.
 
 `bun run compile:standalone` remains available as an experimental Bun standalone build, but it is not the release packaging path until the compiled executable passes local smoke tests reliably.
 
@@ -84,7 +87,7 @@ Create a local release archive:
 ZENITH_VERSION=v0.1.0 bun run package:release
 ```
 
-This writes `dist/zenith-<os>-<arch>.tar.gz` plus a `.sha256` file. The archive contains the `zenith` launcher and `zenith-headless.js`; Bun must be installed on the target machine. Release URLs are templated until a repository remote is configured.
+This writes `dist/zenith-<os>-<arch>.tar.gz` plus a `.sha256` file. The archive contains the `zenith` launcher, `zenith.js`, emitted OpenTUI assets, and the matching native OpenTUI package; Bun must be installed on the target machine. Release URLs are templated until a repository remote is configured.
 
 ## Curl And Homebrew Templates
 
@@ -97,7 +100,7 @@ ZENITH_INSTALL_DIR="$HOME/.local/bin" \
 sh scripts/install.sh
 ```
 
-The install script requires Bun, downloads `zenith-<os>-<arch>.tar.gz`, extracts `zenith` plus `zenith-headless.js`, and installs both into `ZENITH_INSTALL_DIR`.
+The install script requires Bun, downloads `zenith-<os>-<arch>.tar.gz`, extracts `zenith` plus `zenith.js`, emitted OpenTUI assets, and the native OpenTUI package, then installs them into `ZENITH_INSTALL_DIR`.
 
 Homebrew packaging starts from [`packaging/homebrew/zenith.rb`](packaging/homebrew/zenith.rb). Replace `OWNER/REPO` and SHA placeholders after publishing release archives.
 
