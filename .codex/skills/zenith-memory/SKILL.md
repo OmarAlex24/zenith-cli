@@ -49,6 +49,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Use `zenith plan advance --json --input -` or `zenith plan done` only after clean review to mark a phase done, append evidence, and recompute the next step.
 - Use `zenith plan complete <plan-id> --json` to close a completed plan and advance its source roadmap item.
 - Use `zenith plan path <plan-id> --json` to view topological phase order with dependency and readiness information.
+- When a plan has independent phases, use `zenith plan dispatchables [plan-id] --json` to list every phase that can run in parallel now, and `zenith dispatch [plan-id] --json [--claim] [--format conductor]` to emit a per-phase handoff prompt for each parallel agent session; serialize the converging `plan advance` / `plan done` transitions in the planning session.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow

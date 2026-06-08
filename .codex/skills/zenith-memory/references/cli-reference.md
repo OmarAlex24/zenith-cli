@@ -41,8 +41,12 @@ Roadmap item status semantics: `in_progress` and `todo` are actionable for `plan
 - `zenith plan complete <plan-id> --json` — mark plan completed (all phases must be done); advances source roadmap item to `done`
 - `zenith plan advance --json --input -` — mark a phase done + append evidence + recompute next step (one transaction); returns `AdvanceResult`
 - `zenith plan path <plan-id> --json` — topological view of phases: `orderedPhases`, `criticalPath`, `remaining`, `ready` flags
+- `zenith plan dispatchables [plan-id] --json` — read-only analysis of work that can run in parallel now: `parallelGroups` (ready phases), `blocked` (with `blockedBy`), `needsReview`, `blockingFindings`, `warnings`. Defaults to the focus-resolved active plan when `plan-id` is omitted.
+- `zenith dispatch [plan-id] --json [--claim] [--format markdown|codex|conductor]` — emit one ready-to-paste handoff per dispatchable phase (implementer for ready phases, reviewer for `needs_review`), each with a phase-specific prompt, suggested claim, scope, branch, and verification commands. `--claim` creates the claims; `--format conductor` lays each out as a `Workspace N` block. Zenith only emits — it never spawns agents.
 
 `plan update-phase` JSON input accepts optional `dependsOn` (array of phase ids) to declare phase prerequisites. When all remaining `todo` phases are gated by unmet dependencies, `plan next` returns a recommendation prefixed `Blocked by dependency:` with a `blockedBy` array.
+
+Parallel dispatch (`plan dispatchables` / `dispatch`) is the fan-out counterpart to the serial `plan next`: the dependency graph already knows which phases are mutually independent, so `dispatchables` surfaces every ready phase at once and `dispatch` renders a handoff for each. Run the dispatched implementer phases in separate agent sessions; each takes its own `claim`, edits only its phase, and sets its own `stage=review`. Serialize the converging `plan advance` / `plan done` transitions (the moves to `done`) in the single planning session — phases live in their own rows, so parallel implementers never lost-update each other, but completion must be ordered.
 
 `plan next` will not auto-create work from deferred or discarded roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first. Discarded roadmap items are ignored until explicitly moved back to `todo` or `in_progress`.
 

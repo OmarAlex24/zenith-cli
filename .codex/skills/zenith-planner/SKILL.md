@@ -12,7 +12,6 @@ Use this skill when acting as the planner in a decentralized local agent workflo
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Keep long-running watcher agents in tmux or screen when their harness needs a live terminal.
 - Use explicit watch timeouts and poll intervals for every handoff.
-- Dispatch review when `zenith plan next --json` returns `review_phase`.
 - Stop instead of looping when `zenith plan next --json` returns `blocking_finding`, `ambiguous_focus`, `blocked_dependency`, `review_finding`, `review_deferred`, or `create_plan_empty`.
 - Use `bun run zenith ...` inside the Zenith source checkout if `zenith` is not on PATH.
 
@@ -50,5 +49,16 @@ zenith agent watch --until stage=done,plan=plan_id,phase=phase_id --json --timeo
 ```
 
 After a successful watch, run `zenith report diff --json` to inspect handoff activity before deciding whether more coordination is needed.
+
+## Fan Out To Parallel Implementers
+
+When the active plan has multiple independent phases (no unmet `dependsOn`), dispatch them in parallel instead of one at a time:
+
+```bash
+zenith plan dispatchables --json            # parallelGroups = phases ready now; blocked = gated (+blockedBy); needsReview = ready for a reviewer
+zenith dispatch --json --format conductor   # one handoff per ready phase (implementer) or needs_review phase (reviewer)
+```
+
+Each handoff carries a phase-specific prompt, a suggested `claim`, a branch, and verification commands. Open one agent session per handoff; each implementer takes its claim, edits only its phase, verifies, and sets its own `stage=review`. Add `--claim` to create the claims up front. Then collect the finished phases back in this planning session and serialize the `zenith plan advance --json --input -` calls (the transitions to `done`) — phases are stored independently so parallel work does not collide, but completion must be ordered. Re-run `zenith plan dispatchables --json` to release the next wave as dependencies clear.
 
 Generated for codex.

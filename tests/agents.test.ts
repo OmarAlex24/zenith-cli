@@ -257,6 +257,13 @@ describe("agent installer", () => {
     expect(workflows).toContain("zenith plan complete");
     expect(workflows).toContain("zenith plan path");
     expect(workflows).toContain("--since");
+
+    // Parallel dispatch (plan dispatchables / dispatch) documentation
+    expect(cliReference).toContain("zenith plan dispatchables");
+    expect(cliReference).toContain("zenith dispatch");
+    expect(skill).toContain("zenith plan dispatchables");
+    expect(workflows).toContain("Parallel Dispatch");
+    expect(workflows).toContain("zenith plan dispatchables");
   });
 
   test("updates only the marked block in existing agent file", () => {

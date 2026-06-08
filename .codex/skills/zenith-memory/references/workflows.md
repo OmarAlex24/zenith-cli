@@ -352,6 +352,23 @@ Payload:
 
 Use `zenith session summarize --json --input -` when there is no open session id.
 
+## Parallel Dispatch (fan-out across agent sessions)
+
+Use this when the active plan has independent phases and you want several agent sessions implementing at once instead of grinding one phase at a time. The serial `plan next` returns a single phase; `plan dispatchables` returns every phase that can run now.
+
+```bash
+zenith plan dispatchables plan_id --json          # parallelGroups, blocked (+blockedBy), needsReview, blockingFindings, warnings
+zenith dispatch plan_id --json --format conductor # one handoff per ready/needs_review phase, as Workspace N blocks
+zenith dispatch plan_id --json --claim            # same, and create the suggested claims up front
+```
+
+Per wave:
+
+1. Planner runs `plan dispatchables` to find the ready set, then `dispatch` to render per-phase handoffs (implementer prompt for ready phases, reviewer prompt for `needs_review`).
+2. Open one agent session per handoff. Each takes its `claim`, implements only its phase, verifies (`bun x tsc --noEmit && bun test && bun run build`), and sets its own `stage=review`.
+3. Back in the planning session, serialize completion: run `zenith plan advance --json --input -` per reviewed phase (the transitions to `done` must be ordered; phases store independently so parallel edits do not collide).
+4. Re-run `plan dispatchables` to release the next wave as dependencies clear. Stop when `parallelGroups` and `needsReview` are empty.
+
 ## Long-Running Loop (multi-phase roadmap grind)
 
 Use this workflow when driving a whole roadmap across one session (or resumed sessions).

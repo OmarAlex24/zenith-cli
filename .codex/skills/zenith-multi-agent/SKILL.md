@@ -64,4 +64,8 @@ For this common path, invoke the role-specific skills:
 - `zenith-implementer` waits for `stage=implement`, edits code, verifies, then runs `zenith plan ready` to mark `needs_review` and set `stage=review`.
 - `zenith-reviewer` waits for `stage=review`, records findings or runs `zenith plan advance --json --input -`, then sets `stage=done` or returns to `stage=implement` with a concrete note.
 
+## Parallel Fan-Out
+
+The standard handoff is one phase at a time, but independent phases (no unmet `dependsOn`) can run concurrently. The planner uses `zenith plan dispatchables --json` to list every ready phase and `zenith dispatch --json [--claim] [--format conductor]` to emit one handoff per phase, then opens a separate agent session per handoff. Each session takes its own `claim` to avoid scope collisions, edits only its phase, and sets its own `stage=review`. Convergence stays serialized: the planning session orders the `plan advance` calls that move phases to `done`. Zenith only emits the manifest — it never spawns the sessions.
+
 Generated for codex.

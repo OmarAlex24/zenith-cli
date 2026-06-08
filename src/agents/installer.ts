@@ -115,9 +115,9 @@ function rootInstructions(agent: AgentKind): string {
   const reviewerSkillPath = agent === "codex" ? ".codex/skills/zenith-reviewer/SKILL.md" : ".claude/skills/zenith-reviewer/SKILL.md";
 
   return `
-# Zenith Memory
+# Zenith Agent Guidance
 
-This repository uses Zenith CLI as private local project memory.
+This repository uses Zenith CLI as private local guidance context for agents.
 
 Use the zenith-memory skill at ${memorySkillPath} when:
 - recording the project brief or long-running roadmap
@@ -139,7 +139,7 @@ Use the zenith-pr-review skill at ${reviewSkillPath} when:
 - reviewing a PR, MR, branch, diff, staged changes, committed changes, or pre-merge changes
 - checking whether code is safe to merge
 - synthesizing existing PR comments with fresh review passes
-- recording validated actionable review findings into Zenith memory
+- recording validated actionable review findings into Zenith context
 
 Use the zenith-multi-agent skill at ${multiAgentSkillPath} when:
 - designing or debugging the shared wake-on-event choreography protocol
@@ -148,7 +148,8 @@ Use the zenith-multi-agent skill at ${multiAgentSkillPath} when:
 
 Use the zenith-planner skill at ${plannerSkillPath} when:
 - turning roadmap direction into executable plans for role-based handoffs
-- inspecting \`continue\`, \`plan next\`, and \`phase show\` before dispatch
+- inspecting \`continue\`, \`plan next\`, and \`plan phase show\` before dispatch
+- fanning out independent phases to parallel agent sessions (\`plan dispatchables\`, \`dispatch\`)
 - setting \`stage=implement\` for the implementer after the plan/phase is ready
 
 Use the zenith-implementer skill at ${implementerSkillPath} when:
@@ -171,7 +172,7 @@ Before planning:
 - If \`plan next\` recommends deferred roadmap work, reactivate the item before creating an executable plan.
 
 Prefer compact markdown commands for normal handoff. Use \`zenith ... --json\` and \`--input -\` for machine-readable commands.
-Use \`plan\` only for executable phased work. Use \`memory brief\`, \`roadmap\`, or \`memory spike\` for non-executable memory.
+Use \`plan\` only for executable phased work. Use \`memory brief\`, \`roadmap\`, or \`memory spike\` for non-executable guidance context.
 Use \`bun run zenith ...\` from this source checkout if the \`zenith\` binary is not on PATH.
 Do not store secrets, full diffs, or long transcripts in Zenith.
 `;
@@ -337,6 +338,10 @@ For this common path, invoke the role-specific skills:
 - \`zenith-implementer\` waits for \`stage=implement\`, edits code, verifies, then runs \`zenith plan ready\` to mark \`needs_review\` and set \`stage=review\`.
 - \`zenith-reviewer\` waits for \`stage=review\`, records findings or runs \`zenith plan advance --json --input -\`, then sets \`stage=done\` or returns to \`stage=implement\` with a concrete note.
 
+## Parallel Fan-Out
+
+The standard handoff is one phase at a time, but independent phases (no unmet \`dependsOn\`) can run concurrently. The planner uses \`zenith plan dispatchables --json\` to list every ready phase and \`zenith dispatch --json [--claim] [--format conductor]\` to emit one handoff per phase, then opens a separate agent session per handoff. Each session takes its own \`claim\` to avoid scope collisions, edits only its phase, and sets its own \`stage=review\`. Convergence stays serialized: the planning session orders the \`plan advance\` calls that move phases to \`done\`. Zenith only emits the manifest — it never spawns the sessions.
+
 Generated for ${agent}.
 `;
 }
@@ -393,6 +398,17 @@ zenith agent watch --until stage=done,plan=plan_id,phase=phase_id --json --timeo
 \`\`\`
 
 After a successful watch, run \`zenith report diff --json\` to inspect handoff activity before deciding whether more coordination is needed.
+
+## Fan Out To Parallel Implementers
+
+When the active plan has multiple independent phases (no unmet \`dependsOn\`), dispatch them in parallel instead of one at a time:
+
+\`\`\`bash
+zenith plan dispatchables --json            # parallelGroups = phases ready now; blocked = gated (+blockedBy); needsReview = ready for a reviewer
+zenith dispatch --json --format conductor   # one handoff per ready phase (implementer) or needs_review phase (reviewer)
+\`\`\`
+
+Each handoff carries a phase-specific prompt, a suggested \`claim\`, a branch, and verification commands. Open one agent session per handoff; each implementer takes its claim, edits only its phase, verifies, and sets its own \`stage=review\`. Add \`--claim\` to create the claims up front. Then collect the finished phases back in this planning session and serialize the \`zenith plan advance --json --input -\` calls (the transitions to \`done\`) — phases are stored independently so parallel work does not collide, but completion must be ordered. Re-run \`zenith plan dispatchables --json\` to release the next wave as dependencies clear.
 
 Generated for ${agent}.
 `;
@@ -843,6 +859,7 @@ Zenith CLI is the source of truth for private local project memory. It stores da
 - Use \`zenith plan advance --json --input -\` or \`zenith plan done\` only after clean review to mark a phase done, append evidence, and recompute the next step.
 - Use \`zenith plan complete <plan-id> --json\` to close a completed plan and advance its source roadmap item.
 - Use \`zenith plan path <plan-id> --json\` to view topological phase order with dependency and readiness information.
+- When a plan has independent phases, use \`zenith plan dispatchables [plan-id] --json\` to list every phase that can run in parallel now, and \`zenith dispatch [plan-id] --json [--claim] [--format conductor]\` to emit a per-phase handoff prompt for each parallel agent session; serialize the converging \`plan advance\` / \`plan done\` transitions in the planning session.
 - After verified implementation work, inspect the git status and propose committing the completed change set so future Zenith context does not remain dirty. Do not commit without user confirmation.
 
 ## Workflow
@@ -951,8 +968,12 @@ Roadmap item status semantics: \`in_progress\` and \`todo\` are actionable for \
 - \`zenith plan complete <plan-id> --json\` — mark plan completed (all phases must be done); advances source roadmap item to \`done\`
 - \`zenith plan advance --json --input -\` — mark a phase done + append evidence + recompute next step (one transaction); returns \`AdvanceResult\`
 - \`zenith plan path <plan-id> --json\` — topological view of phases: \`orderedPhases\`, \`criticalPath\`, \`remaining\`, \`ready\` flags
+- \`zenith plan dispatchables [plan-id] --json\` — read-only analysis of work that can run in parallel now: \`parallelGroups\` (ready phases), \`blocked\` (with \`blockedBy\`), \`needsReview\`, \`blockingFindings\`, \`warnings\`. Defaults to the focus-resolved active plan when \`plan-id\` is omitted.
+- \`zenith dispatch [plan-id] --json [--claim] [--format markdown|codex|conductor]\` — emit one ready-to-paste handoff per dispatchable phase (implementer for ready phases, reviewer for \`needs_review\`), each with a phase-specific prompt, suggested claim, scope, branch, and verification commands. \`--claim\` creates the claims; \`--format conductor\` lays each out as a \`Workspace N\` block. Zenith only emits — it never spawns agents.
 
 \`plan update-phase\` JSON input accepts optional \`dependsOn\` (array of phase ids) to declare phase prerequisites. When all remaining \`todo\` phases are gated by unmet dependencies, \`plan next\` returns a recommendation prefixed \`Blocked by dependency:\` with a \`blockedBy\` array.
+
+Parallel dispatch (\`plan dispatchables\` / \`dispatch\`) is the fan-out counterpart to the serial \`plan next\`: the dependency graph already knows which phases are mutually independent, so \`dispatchables\` surfaces every ready phase at once and \`dispatch\` renders a handoff for each. Run the dispatched implementer phases in separate agent sessions; each takes its own \`claim\`, edits only its phase, and sets its own \`stage=review\`. Serialize the converging \`plan advance\` / \`plan done\` transitions (the moves to \`done\`) in the single planning session — phases live in their own rows, so parallel implementers never lost-update each other, but completion must be ordered.
 
 \`plan next\` will not auto-create work from deferred or discarded roadmap items. If only deferred roadmap work remains, review or reactivate a roadmap item first. Discarded roadmap items are ignored until explicitly moved back to \`todo\` or \`in_progress\`.
 
@@ -1475,6 +1496,23 @@ Payload:
 \`\`\`
 
 Use \`zenith session summarize --json --input -\` when there is no open session id.
+
+## Parallel Dispatch (fan-out across agent sessions)
+
+Use this when the active plan has independent phases and you want several agent sessions implementing at once instead of grinding one phase at a time. The serial \`plan next\` returns a single phase; \`plan dispatchables\` returns every phase that can run now.
+
+\`\`\`bash
+zenith plan dispatchables plan_id --json          # parallelGroups, blocked (+blockedBy), needsReview, blockingFindings, warnings
+zenith dispatch plan_id --json --format conductor # one handoff per ready/needs_review phase, as Workspace N blocks
+zenith dispatch plan_id --json --claim            # same, and create the suggested claims up front
+\`\`\`
+
+Per wave:
+
+1. Planner runs \`plan dispatchables\` to find the ready set, then \`dispatch\` to render per-phase handoffs (implementer prompt for ready phases, reviewer prompt for \`needs_review\`).
+2. Open one agent session per handoff. Each takes its \`claim\`, implements only its phase, verifies (\`bun x tsc --noEmit && bun test && bun run build\`), and sets its own \`stage=review\`.
+3. Back in the planning session, serialize completion: run \`zenith plan advance --json --input -\` per reviewed phase (the transitions to \`done\` must be ordered; phases store independently so parallel edits do not collide).
+4. Re-run \`plan dispatchables\` to release the next wave as dependencies clear. Stop when \`parallelGroups\` and \`needsReview\` are empty.
 
 ## Long-Running Loop (multi-phase roadmap grind)
 

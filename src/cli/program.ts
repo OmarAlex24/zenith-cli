@@ -65,6 +65,7 @@ type CommandOptions = {
   variant?: string;
   scenario?: string;
   task?: string;
+  claim?: boolean;
 };
 
 export async function runCli(argv = process.argv, options: RunCliOptions = {}): Promise<void> {
@@ -438,6 +439,15 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
           ),
         ].join("\n"),
       );
+    });
+
+  plan
+    .command("dispatchables")
+    .argument("[plan-id]")
+    .description("Read-only analysis of which phases can run in parallel right now")
+    .option("--json", "Emit stable JSON")
+    .action(async (planId: string | undefined, commandOptions: CommandOptions) => {
+      await handle(commandOptions, options, async (app) => app.planDispatchables(planId), humanDispatchables);
     });
 
   const phase = plan.command("phase").description("Phase lookup");
@@ -1239,6 +1249,34 @@ export async function runCli(argv = process.argv, options: RunCliOptions = {}): 
     });
 
   program
+    .command("dispatch")
+    .argument("[plan-id]")
+    .description("Generate ready-to-paste parallel handoff prompts for each dispatchable phase")
+    .option("--json", "Emit stable JSON")
+    .option("--claim", "Create suggested claims for each handoff")
+    .option("--format <format>", "Output format: markdown | codex | conductor", "markdown")
+    .action(async (planId: string | undefined, commandOptions: CommandOptions) => {
+      await handle(
+        commandOptions,
+        options,
+        async (app) => {
+          const format = commandOptions.format ?? "markdown";
+          if (!["markdown", "codex", "conductor"].includes(format)) {
+            throw new ZenithError(`Invalid --format: ${format} (expected markdown|codex|conductor)`, {
+              code: "invalid_format",
+            });
+          }
+          return app.dispatch({
+            ...(planId !== undefined ? { planId } : {}),
+            ...(commandOptions.claim !== undefined ? { claim: commandOptions.claim } : {}),
+            format: format as "markdown" | "codex" | "conductor",
+          });
+        },
+        humanDispatch,
+      );
+    });
+
+  program
     .command("search")
     .description("Search project memory deterministically")
     .requiredOption("--query <text>", "Search query")
@@ -1579,6 +1617,133 @@ function humanClaim(claim: { id: string; entityId: string; scope: string; role: 
 function humanClaimList(claims: Array<{ id: string; entityId: string; scope: string; role: string; status: string; expiresAt: string }>): string {
   if (claims.length === 0) return "No claims.";
   return claims.map((claim) => `${claim.id} ${claim.status} ${claim.role} ${claim.scope} -> ${claim.entityId} until ${claim.expiresAt}`).join("\n");
+}
+
+function humanDispatchables(data: {
+  planId: string | null;
+  ambiguous: boolean;
+  parallelGroups: Array<{ phaseId: string; title: string; status: string; blockedBy: string[] }>;
+  blocked: Array<{ phaseId: string; title: string; status: string; blockedBy: string[] }>;
+  needsReview: Array<{ phaseId: string; title: string; status: string }>;
+  blockingFindings: Array<{ id: string; severity: string; title: string }>;
+  warnings: string[];
+}): string {
+  const lines: string[] = [];
+  lines.push(`Plan: ${data.planId ?? "none"}`);
+  if (data.ambiguous) lines.push("Ambiguous: multiple active plans detected. Use `zenith agent focus set <roadmap-id>`.");
+
+  if (data.parallelGroups.length > 0) {
+    lines.push(`\nParallel-ready (${data.parallelGroups.length}):`);
+    for (const item of data.parallelGroups) {
+      lines.push(`  ✓ [${item.status}] ${item.title} (${item.phaseId})`);
+    }
+  } else {
+    lines.push("\nParallel-ready: none");
+  }
+
+  if (data.needsReview.length > 0) {
+    lines.push(`\nNeeds review (${data.needsReview.length}):`);
+    for (const item of data.needsReview) {
+      lines.push(`  ⏳ [${item.status}] ${item.title} (${item.phaseId})`);
+    }
+  }
+
+  if (data.blocked.length > 0) {
+    lines.push(`\nBlocked (${data.blocked.length}):`);
+    for (const item of data.blocked) {
+      lines.push(`  ✗ [${item.status}] ${item.title} (${item.phaseId})${item.blockedBy.length > 0 ? ` — blocked by: ${item.blockedBy.join(", ")}` : ""}`);
+    }
+  }
+
+  if (data.blockingFindings.length > 0) {
+    lines.push(`\nBlocking findings (${data.blockingFindings.length}):`);
+    for (const f of data.blockingFindings) {
+      lines.push(`  ! [${f.severity}] ${f.title} (${f.id})`);
+    }
+  }
+
+  if (data.warnings.length > 0) {
+    lines.push(`\nWarnings:`);
+    for (const w of data.warnings) {
+      lines.push(`  - ${w}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function humanDispatch(data: {
+  planId: string | null;
+  format: string;
+  ambiguous: boolean;
+  handoffs: Array<{
+    kind: string;
+    planId: string;
+    phaseId: string;
+    title: string;
+    role: string;
+    branchSuggestion: string;
+    scope: string;
+    prompt: string;
+    suggestedCommands: string[];
+    acceptanceCriteria: string[];
+  }>;
+  claimsCreated: string[];
+  warnings: string[];
+}): string {
+  if (data.ambiguous || data.handoffs.length === 0) {
+    const lines = [`Plan: ${data.planId ?? "none"}`, `Format: ${data.format}`];
+    if (data.ambiguous) lines.push("Ambiguous: multiple active plans. Use `zenith agent focus set <roadmap-id>`.");
+    if (data.handoffs.length === 0 && !data.ambiguous) lines.push("No dispatchable handoffs.");
+    if (data.warnings.length > 0) {
+      lines.push("Warnings:");
+      for (const w of data.warnings) lines.push(`  - ${w}`);
+    }
+    return lines.join("\n");
+  }
+
+  const lines: string[] = [`Plan: ${data.planId}`, `Format: ${data.format}`, `Handoffs: ${data.handoffs.length}`, ""];
+
+  if (data.format === "conductor") {
+    data.handoffs.forEach((handoff, i) => {
+      lines.push(`### Workspace ${i + 1}: ${handoff.title} (${handoff.role})`);
+      lines.push(`Branch: ${handoff.branchSuggestion}`);
+      lines.push(`Scope: ${handoff.scope}`);
+      lines.push("");
+      lines.push(handoff.prompt);
+      lines.push("");
+      if (handoff.suggestedCommands.length > 0) {
+        lines.push("**Commands:**");
+        for (const cmd of handoff.suggestedCommands) lines.push(`  ${cmd}`);
+      }
+      lines.push("");
+    });
+  } else {
+    data.handoffs.forEach((handoff, i) => {
+      lines.push(`## Handoff ${i + 1}: ${handoff.title} [${handoff.role}]`);
+      lines.push(`Phase: ${handoff.phaseId}`);
+      lines.push(`Branch: ${handoff.branchSuggestion}`);
+      lines.push("");
+      lines.push(handoff.prompt);
+      lines.push("");
+      if (handoff.suggestedCommands.length > 0) {
+        lines.push("Commands:");
+        for (const cmd of handoff.suggestedCommands) lines.push(`  ${cmd}`);
+      }
+      lines.push("");
+    });
+  }
+
+  if (data.claimsCreated.length > 0) {
+    lines.push(`Claims created: ${data.claimsCreated.join(", ")}`);
+  }
+
+  if (data.warnings.length > 0) {
+    lines.push("Warnings:");
+    for (const w of data.warnings) lines.push(`  - ${w}`);
+  }
+
+  return lines.join("\n").trim();
 }
 
 function humanRawMemory(raw: { entityType: string; entityId: string; lifecycle?: string | undefined; tags: string[]; evidence: unknown[] }): string {

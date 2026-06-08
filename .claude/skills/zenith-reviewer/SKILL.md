@@ -11,7 +11,7 @@ Use this skill when acting as the reviewer in a decentralized local agent workfl
 
 - Do not make Zenith spawn Codex, Claude Code, OpenCode, or other provider CLIs.
 - Keep this role in tmux or screen when waiting in the background.
-- Always use explicit `zenith watch` timeouts and poll intervals.
+- Always use explicit `zenith agent watch` timeouts and poll intervals.
 - Stop instead of reviewing when `zenith plan next --json` returns `blocking_finding`, `ambiguous_focus`, `blocked_dependency`, `review_finding`, `review_deferred`, `create_plan_empty`, or a different plan/phase than the handoff.
 - Do not advance the phase until review is clean and verification evidence is available.
 
@@ -20,13 +20,14 @@ Use this skill when acting as the reviewer in a decentralized local agent workfl
 Wait for the scoped review stage:
 
 ```bash
-zenith watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
+zenith agent watch --until stage=review,plan=plan_id,phase=phase_id --json --timeout 3600000 --poll-interval 5000
 ```
 
 After waking:
 
-1. Run `zenith context compact --json`, `zenith plan next --json`, and `zenith phase show <phase-id> --json`.
-2. Run `zenith diff --json` to inspect what changed since the latest ended session.
+1. Run `zenith context compact --json`, `zenith plan next --json`, and `zenith plan phase show <phase-id> --json`.
+   `plan next` should normally return `kind=review_phase` for the scoped phase.
+2. Run `zenith report diff --json` to inspect what changed since the latest ended session.
 3. Review the scoped diff and rerun or inspect verification as needed.
 4. If issues are found, record actionable findings with `relatedPlanId` and `relatedPhaseId`.
 
@@ -68,10 +69,12 @@ zenith plan advance --json --input -
 }
 ```
 
+For the inferred current phase, `zenith plan done --plan plan_id --phase phase_id --evidence "Review passed" --json` is the shorthand.
+
 Then publish `stage=done`:
 
 ```bash
-zenith stage set --json --input -
+zenith agent stage set --json --input -
 ```
 
 ```json
