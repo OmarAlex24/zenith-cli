@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  HOMEBREW_TAP_REPO: OmarAlex24/homebrew-zenith
+
+jobs:
+  test:
+    name: Typecheck, Test, Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: bun run build
+
+  build:
+    name: Package ${{ matrix.artifact }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            artifact: zenith-darwin-arm64.tar.gz
+          - runner: macos-15-intel
+            artifact: zenith-darwin-x64.tar.gz
+          - runner: ubuntu-latest
+            artifact: zenith-linux-x64.tar.gz
+          - runner: ubuntu-24.04-arm
+            artifact: zenith-linux-arm64.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Package release
+        run: ZENITH_VERSION="${{ env.RELEASE_TAG }}" bun run package:release
+
+      - name: Verify artifact
+        run: |
+          test -f "dist/${{ matrix.artifact }}"
+          shasum -a 256 "dist/${{ matrix.artifact }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums and release notes
+        run: |
+          cd dist
+          shasum -a 256 zenith-*.tar.gz | tee checksums.txt
+
+          darwin_arm64="$(shasum -a 256 zenith-darwin-arm64.tar.gz | awk '{print $1}')"
+          darwin_x64="$(shasum -a 256 zenith-darwin-x64.tar.gz | awk '{print $1}')"
+          linux_arm64="$(shasum -a 256 zenith-linux-arm64.tar.gz | awk '{print $1}')"
+          linux_x64="$(shasum -a 256 zenith-linux-x64.tar.gz | awk '{print $1}')"
+
+          cat > formula.env <<HEREDOC
+          DARWIN_ARM64_SHA256=${darwin_arm64}
+          DARWIN_X64_SHA256=${darwin_x64}
+          LINUX_ARM64_SHA256=${linux_arm64}
+          LINUX_X64_SHA256=${linux_x64}
+          HEREDOC
+
+          cat > release-notes.md <<HEREDOC
+          ## Artifacts
+
+          - zenith-darwin-arm64.tar.gz
+          - zenith-darwin-x64.tar.gz
+          - zenith-linux-arm64.tar.gz
+          - zenith-linux-x64.tar.gz
+          - checksums.txt
+
+          ## Homebrew
+
+          The release workflow updates \`${{ env.HOMEBREW_TAP_REPO }}\` automatically when \`HOMEBREW_TAP_GITHUB_TOKEN\` is configured.
+
+          Install with:
+
+          \`\`\`bash
+          brew tap OmarAlex24/zenith
+          brew install omaralex24/zenith/zenith-cli
+          \`\`\`
+          HEREDOC
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: |
+            dist/checksums.txt
+            dist/formula.env
+            dist/release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.RELEASE_TAG }}
+          body_path: dist/release-notes.md
+          files: |
+            dist/zenith-darwin-arm64.tar.gz
+            dist/zenith-darwin-x64.tar.gz
+            dist/zenith-linux-arm64.tar.gz
+            dist/zenith-linux-x64.tar.gz
+            dist/checksums.txt
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: dist
+
+      - name: Update tap repository
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: scripts/update-homebrew-tap.sh dist/formula.env
